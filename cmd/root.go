@@ -10,9 +10,19 @@ func Execute() {
 }
 
 func NewRootCmd() *cobra.Command {
-	return &cobra.Command{
+	root := &cobra.Command{
 		Use:   "scraper",
 		Short: "Media scraper CLI tool",
 		Long:  `Download media from various sites with a beautiful terminal UI.`,
 	}
+
+	root.AddCommand(
+		newYouTubeCmd(),
+		newGoFileCmd(),
+		newCyberDropCmd(),
+		newBunkerCmd(),
+		newTUICmd(),
+	)
+
+	return root
 }
