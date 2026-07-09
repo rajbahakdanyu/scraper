@@ -18,9 +18,13 @@ type Downloader struct {
 	progress    chan model.ProgressEvent
 	cancelMap   map[string]chan struct{}
 	mu          sync.Mutex
+	sem         chan struct{}
 }
 
 func NewDownloader(concurrency int) *Downloader {
+	if concurrency < 1 {
+		concurrency = 1
+	}
 	return &Downloader{
 		client: &http.Client{
 			Timeout: 30 * time.Second,
@@ -28,10 +32,17 @@ func NewDownloader(concurrency int) *Downloader {
 		concurrency: concurrency,
 		progress:    make(chan model.ProgressEvent, 100),
 		cancelMap:   make(map[string]chan struct{}),
+		sem:         make(chan struct{}, concurrency),
 	}
 }
 
 func (d *Downloader) Download(item model.MediaItem, dest string) error {
+	// Block until a concurrency slot is free so at most d.concurrency
+	// downloads run at once, regardless of how many callers invoke
+	// Download concurrently.
+	d.sem <- struct{}{}
+	defer func() { <-d.sem }()
+
 	cancel := make(chan struct{})
 	d.mu.Lock()
 	d.cancelMap[item.URL] = cancel
