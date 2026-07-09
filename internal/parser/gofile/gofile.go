@@ -11,12 +11,29 @@ import (
 )
 
 type Scraper struct {
-	client  *http.Client
-	baseURL string
+	client    *http.Client
+	baseURL   string
+	userAgent string
 }
 
 func NewGoFileScraper() *Scraper {
-	return &Scraper{client: &http.Client{}, baseURL: "https://api.gofile.io/contents/"}
+	return &Scraper{
+		client:    &http.Client{},
+		baseURL:   "https://api.gofile.io/contents/",
+		userAgent: "Scraper/1.0",
+	}
+}
+
+// NewGoFileScraperWithConfig creates a scraper with a custom user agent.
+func NewGoFileScraperWithConfig(userAgent string) *Scraper {
+	if userAgent == "" {
+		userAgent = "Scraper/1.0"
+	}
+	return &Scraper{
+		client:    &http.Client{},
+		baseURL:   "https://api.gofile.io/contents/",
+		userAgent: userAgent,
+	}
 }
 
 func (s *Scraper) Name() string {
@@ -30,7 +47,13 @@ func (s *Scraper) Parse(url string) ([]model.MediaItem, error) {
 	}
 
 	apiURL := s.baseURL + contentID
-	resp, err := s.client.Get(apiURL)
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", s.userAgent)
+
+	resp, err := s.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -61,30 +84,32 @@ func (s *Scraper) Parse(url string) ([]model.MediaItem, error) {
 			continue
 		}
 
-		mediaType := model.MediaTypeVideo
-		if strings.HasSuffix(strings.ToLower(child.Name), ".jpg") ||
-			strings.HasSuffix(strings.ToLower(child.Name), ".jpeg") ||
-			strings.HasSuffix(strings.ToLower(child.Name), ".png") ||
-			strings.HasSuffix(strings.ToLower(child.Name), ".gif") {
-			mediaType = model.MediaTypeImage
-		}
-
 		items = append(items, model.MediaItem{
 			URL:      child.Link,
 			Title:    child.Name,
 			Size:     child.Size,
 			MimeType: "application/octet-stream",
-			Type:     mediaType,
+			Type:     model.MediaTypeForName(child.Name),
 		})
 	}
 
 	return items, nil
 }
 
-func extractContentID(url string) string {
-	parts := strings.Split(url, "/")
+func extractContentID(rawURL string) string {
+	for _, prefix := range []string{"/s/", "/d/", "/v/", "/c/"} {
+		if idx := strings.Index(rawURL, prefix); idx >= 0 {
+			rest := rawURL[idx+len(prefix):]
+			return strings.SplitN(rest, "/", 2)[0]
+		}
+	}
+	parts := strings.Split(rawURL, "/")
 	if len(parts) < 2 {
 		return ""
 	}
-	return parts[len(parts)-1]
+	last := parts[len(parts)-1]
+	if last != "" {
+		return last
+	}
+	return parts[len(parts)-2]
 }

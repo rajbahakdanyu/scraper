@@ -231,6 +231,9 @@ func (d *Dashboard) startSelectedDownloads() tea.Cmd {
 		if anySelected && !d.states[i].selected {
 			continue
 		}
+		if d.states[i].status == model.StatusDownloading || d.states[i].status == model.StatusCompleted {
+			continue
+		}
 		d.states[i].status = model.StatusDownloading
 		cmds = append(cmds, startDownload(d.downloader, d.states[i].item, d.dest))
 	}

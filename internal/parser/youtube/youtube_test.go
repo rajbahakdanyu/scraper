@@ -2,45 +2,77 @@
 package youtube
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/user/scraper/internal/model"
 )
 
 func TestParseYouTubeURL(t *testing.T) {
-	// Create a mock server that simulates YouTube's oembed endpoint
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Verify the request has the expected URL parameter
 		if r.URL.Query().Get("url") == "" {
 			t.Errorf("expected url query parameter")
 		}
 		if r.URL.Query().Get("format") != "json" {
 			t.Errorf("expected format=json")
 		}
-		
+
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"title": "Test Video Title"}`))
+		w.Write([]byte(`{"title": "Test Video Title", "author_name": "TestAuthor"}`))
 	}))
 	defer ts.Close()
 
-	// Create scraper with custom client pointing to our test server
-	scraper := NewYouTubeScraper()
-	
-	// Test extractVideoID function directly
-	videoID := scraper.extractVideoID("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
-	if videoID != "dQw4w9WgXcQ" {
-		t.Errorf("expected dQw4w9WgXcQ, got %s", videoID)
+	scraper := newYouTubeScraperWithBase(ts.URL)
+	items, err := scraper.Parse("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+
+	if !errors.Is(err, ErrStreamExtractionUnsupported) {
+		t.Fatalf("expected ErrStreamExtractionUnsupported, got: %v", err)
 	}
 
-	videoID = scraper.extractVideoID("https://youtu.be/dQw4w9WgXcQ")
-	if videoID != "dQw4w9WgXcQ" {
-		t.Errorf("expected dQw4w9WgXcQ from youtu.be, got %s", videoID)
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
 	}
-	
-	// Test URL without video ID
-	videoID = scraper.extractVideoID("https://www.youtube.com/")
-	if videoID != "" {
-		t.Errorf("expected empty string, got %s", videoID)
+
+	if items[0].Title != "Test Video Title" {
+		t.Errorf("expected title 'Test Video Title', got %s", items[0].Title)
+	}
+	if items[0].Type != model.MediaTypeVideo {
+		t.Errorf("expected video type, got %s", items[0].Type)
+	}
+	if items[0].URL != "" {
+		t.Errorf("expected empty URL (no stream extraction), got %s", items[0].URL)
+	}
+}
+
+func TestParseYouTubeInvalidURL(t *testing.T) {
+	scraper := NewYouTubeScraper()
+	_, err := scraper.Parse("https://www.youtube.com/")
+	if err == nil {
+		t.Fatal("expected error for URL without video ID")
+	}
+}
+
+func TestExtractVideoID(t *testing.T) {
+	scraper := NewYouTubeScraper()
+
+	tests := []struct {
+		url      string
+		expected string
+	}{
+		{"https://www.youtube.com/watch?v=dQw4w9WgXcQ", "dQw4w9WgXcQ"},
+		{"https://youtu.be/dQw4w9WgXcQ", "dQw4w9WgXcQ"},
+		{"https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42", "dQw4w9WgXcQ"},
+		{"https://youtu.be/dQw4w9WgXcQ?si=abc", "dQw4w9WgXcQ"},
+		{"https://www.youtube.com/", ""},
+	}
+
+	for _, tt := range tests {
+		got := scraper.extractVideoID(tt.url)
+		if got != tt.expected {
+			t.Errorf("extractVideoID(%s) = %s, want %s", tt.url, got, tt.expected)
+		}
 	}
 }

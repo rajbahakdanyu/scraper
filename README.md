@@ -31,13 +31,15 @@ scraper cyberdrop https://cyberdrop.me/a/xxx
 scraper bunker https://bunkr.sv/a/xxx
 ```
 
-Common flags (available on every site subcommand):
+Common flags (available on every site subcommand as persistent flags):
 
-| Flag           | Default | Description                                  |
-|----------------|---------|-----------------------------------------------|
-| `-u, --url`    | (none)  | Content URL (alternative to positional arg)  |
-| `-o, --output` | `.`     | Output directory                             |
-| `--concurrent` | `5`     | Maximum concurrent downloads                 |
+| Flag             | Default | Description                                  |
+|------------------|---------|-----------------------------------------------|
+| `-u, --url`      | (none)  | Content URL (alternative to positional arg)  |
+| `-o, --output`   | `.`     | Output directory                             |
+| `--concurrent`   | `5`     | Maximum concurrent downloads                 |
+| `--config`       | (none)  | Config file path (default: `~/.scraper.yaml`)|
+| `--ui-mode`      | `minimal` | UI mode: full, minimal, quiet              |
 
 ### Interactive TUI
 
@@ -71,8 +73,8 @@ timeout: 30s
 user_agent: "Scraper/1.0"
 ```
 
-> Note: the CLI subcommands currently take their settings from flags only;
-> wiring a `--config` flag into each subcommand is tracked as future work.
+The config file is loaded automatically from `~/.scraper.yaml` (or a path
+specified via `--config`). CLI flags override config file values.
 
 ## Project Structure
 
@@ -92,8 +94,8 @@ for the original design doc.
 - **CyberDrop / Bunker**: use best-effort CSS selectors that may not match
   every page layout; treat them as a starting point to adapt against the
   live site markup.
-- No resume support for partial downloads, no bandwidth throttling, and no
-  per-item pause/cancel from the TUI yet.
+- No bandwidth throttling yet; per-item pause/cancel is available via the
+  downloader API but not wired into the TUI keybindings.
 
 ## Development
 

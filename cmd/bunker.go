@@ -1,39 +1,31 @@
 package cmd
 
 import (
-	"errors"
-
 	"github.com/spf13/cobra"
 
 	"github.com/user/scraper/internal/parser/bunker"
 )
 
-func newBunkerCmd() *cobra.Command {
+func newBunkerCmd(opts globalOptions) *cobra.Command {
 	var urlFlag string
-	var output string
-	var concurrency int
 
 	cmd := &cobra.Command{
 		Use:   "bunker <url>",
 		Short: "Scrape and download Bunker content",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			targetURL := urlFlag
-			if len(args) > 0 {
-				targetURL = args[0]
-			}
-			if targetURL == "" {
-				return errors.New("a Bunker URL is required (positional argument or --url)")
+			targetURL, err := resolveURL(args, urlFlag, "Bunker")
+			if err != nil {
+				return err
 			}
 
+			cfg := loadGlobalConfig(opts)
 			scraper := bunker.NewBunkerScraper()
-			return runScrape(scraper, targetURL, output, concurrency)
+			return runScrape(scraper, targetURL, cfg.OutputDir, cfg)
 		},
 	}
 
 	cmd.Flags().StringVarP(&urlFlag, "url", "u", "", "Bunker URL")
-	cmd.Flags().StringVarP(&output, "output", "o", ".", "Output directory")
-	cmd.Flags().IntVar(&concurrency, "concurrent", 5, "Maximum concurrent downloads")
 
 	return cmd
 }

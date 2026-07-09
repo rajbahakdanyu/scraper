@@ -18,4 +18,17 @@ func TestNewRootCmdRegistersSubcommands(t *testing.T) {
 			t.Errorf("expected root command to register %q subcommand", name)
 		}
 	}
+
+	if root.PersistentFlags().Lookup("config") == nil {
+		t.Error("expected --config persistent flag")
+	}
+	if root.PersistentFlags().Lookup("output") == nil {
+		t.Error("expected --output persistent flag")
+	}
+	if root.PersistentFlags().Lookup("concurrent") == nil {
+		t.Error("expected --concurrent persistent flag")
+	}
+	if root.PersistentFlags().Lookup("ui-mode") == nil {
+		t.Error("expected --ui-mode persistent flag")
+	}
 }

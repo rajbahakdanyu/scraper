@@ -15,8 +15,6 @@ import (
 	"github.com/user/scraper/internal/ui/dashboard"
 )
 
-// scraperRegistry maps a site name to its scraper, used to look up the
-// right parser for `scraper tui <site> <url>`.
 func scraperRegistry() map[string]model.Scraper {
 	return map[string]model.Scraper{
 		"youtube":   youtube.NewYouTubeScraper(),
@@ -26,10 +24,7 @@ func scraperRegistry() map[string]model.Scraper {
 	}
 }
 
-func newTUICmd() *cobra.Command {
-	var output string
-	var concurrency int
-
+func newTUICmd(opts globalOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "tui <site> <url>",
 		Short: "Launch the interactive terminal UI for a site",
@@ -43,22 +38,25 @@ func newTUICmd() *cobra.Command {
 				return fmt.Errorf("unknown site %q (available: youtube, gofile, cyberdrop, bunker)", site)
 			}
 
+			cfg := loadGlobalConfig(opts)
+
 			items, err := scraper.Parse(targetURL)
-			if err != nil {
+			if err != nil && len(items) == 0 {
 				return fmt.Errorf("%s: %w", scraper.Name(), err)
 			}
 
-			dl := downloader.NewDownloader(concurrency)
-			d := dashboard.New(items, dl, output)
+			dl := downloader.NewDownloaderWithConfig(
+				cfg.ConcurrentDownloads,
+				cfg.Timeout,
+				cfg.UserAgent,
+			)
+			d := dashboard.New(items, dl, cfg.OutputDir)
 
 			p := tea.NewProgram(d, tea.WithAltScreen())
 			_, err = p.Run()
 			return err
 		},
 	}
-
-	cmd.Flags().StringVarP(&output, "output", "o", ".", "Output directory")
-	cmd.Flags().IntVar(&concurrency, "concurrent", 5, "Maximum concurrent downloads")
 
 	return cmd
 }

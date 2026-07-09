@@ -3,16 +3,11 @@ package cmd
 import "testing"
 
 func TestNewTUICmd(t *testing.T) {
-	cmd := newTUICmd()
+	opts := globalOptions{}
+	cmd := newTUICmd(opts)
 
 	if cmd.Use != "tui <site> <url>" {
 		t.Errorf("unexpected Use: %s", cmd.Use)
-	}
-	if cmd.Flags().Lookup("output") == nil {
-		t.Error("expected --output flag")
-	}
-	if cmd.Flags().Lookup("concurrent") == nil {
-		t.Error("expected --concurrent flag")
 	}
 
 	err := cmd.RunE(cmd, []string{"unknown-site", "https://example.com"})

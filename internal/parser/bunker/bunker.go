@@ -12,14 +12,22 @@ import (
 	"github.com/user/scraper/internal/model"
 )
 
-// Scraper parses Bunker (bunkr) gallery pages for downloadable media links.
 type Scraper struct {
-	client *http.Client
+	client    *http.Client
+	userAgent string
 }
 
 // NewBunkerScraper creates a new Bunker scraper using the default HTTP client.
 func NewBunkerScraper() *Scraper {
-	return &Scraper{client: &http.Client{}}
+	return &Scraper{client: &http.Client{}, userAgent: "Scraper/1.0"}
+}
+
+// NewBunkerScraperWithConfig creates a scraper with a custom user agent.
+func NewBunkerScraperWithConfig(userAgent string) *Scraper {
+	if userAgent == "" {
+		userAgent = "Scraper/1.0"
+	}
+	return &Scraper{client: &http.Client{}, userAgent: userAgent}
 }
 
 // Name returns the logical scraper name used for CLI dispatch.
@@ -29,7 +37,13 @@ func (s *Scraper) Name() string {
 
 // Parse fetches a Bunker gallery page and extracts its media items.
 func (s *Scraper) Parse(url string) ([]model.MediaItem, error) {
-	resp, err := s.client.Get(url)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", s.userAgent)
+
+	resp, err := s.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -60,22 +74,9 @@ func (s *Scraper) Parse(url string) ([]model.MediaItem, error) {
 			URL:      href,
 			Title:    title,
 			MimeType: "application/octet-stream",
-			Type:     mediaTypeForName(title),
+			Type:     model.MediaTypeForName(title),
 		})
 	})
 
 	return items, nil
-}
-
-// mediaTypeForName infers the media type from a filename's extension.
-func mediaTypeForName(name string) model.MediaType {
-	lower := strings.ToLower(name)
-	switch {
-	case strings.HasSuffix(lower, ".jpg"), strings.HasSuffix(lower, ".jpeg"),
-		strings.HasSuffix(lower, ".png"), strings.HasSuffix(lower, ".gif"),
-		strings.HasSuffix(lower, ".webp"):
-		return model.MediaTypeImage
-	default:
-		return model.MediaTypeVideo
-	}
 }

@@ -14,7 +14,7 @@ func TestMediaItemFields(t *testing.T) {
 		Type:      MediaTypeVideo,
 		Thumbnail: "https://example.com/thumb.jpg",
 	}
-	
+
 	if item.URL != "https://example.com/video.mp4" {
 		t.Errorf("unexpected URL: %s", item.URL)
 	}
@@ -39,7 +39,7 @@ func TestProgressEventFields(t *testing.T) {
 		Filename: "output.mp4",
 		Start:    start,
 	}
-	
+
 	if event.Bytes != 512 {
 		t.Errorf("unexpected bytes: %d", event.Bytes)
 	}
@@ -48,5 +48,28 @@ func TestProgressEventFields(t *testing.T) {
 	}
 	if event.Status != StatusDownloading {
 		t.Errorf("unexpected status: %d", event.Status)
+	}
+}
+
+func TestMediaTypeForName(t *testing.T) {
+	tests := []struct {
+		name     string
+		expected MediaType
+	}{
+		{"photo.jpg", MediaTypeImage},
+		{"photo.JPEG", MediaTypeImage},
+		{"pic.PNG", MediaTypeImage},
+		{"anim.gif", MediaTypeImage},
+		{"art.webp", MediaTypeImage},
+		{"clip.mp4", MediaTypeVideo},
+		{"movie.mkv", MediaTypeVideo},
+		{"unknown.xyz", MediaTypeVideo},
+	}
+
+	for _, tt := range tests {
+		got := MediaTypeForName(tt.name)
+		if got != tt.expected {
+			t.Errorf("MediaTypeForName(%s) = %s, want %s", tt.name, got, tt.expected)
+		}
 	}
 }

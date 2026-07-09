@@ -3,16 +3,11 @@ package cmd
 import "testing"
 
 func TestNewBunkerCmd(t *testing.T) {
-	cmd := newBunkerCmd()
+	opts := globalOptions{}
+	cmd := newBunkerCmd(opts)
 
 	if cmd.Use != "bunker <url>" {
 		t.Errorf("unexpected Use: %s", cmd.Use)
-	}
-	if cmd.Flags().Lookup("output") == nil {
-		t.Error("expected --output flag")
-	}
-	if cmd.Flags().Lookup("concurrent") == nil {
-		t.Error("expected --concurrent flag")
 	}
 
 	if err := cmd.RunE(cmd, []string{}); err == nil {

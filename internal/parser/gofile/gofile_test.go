@@ -13,7 +13,7 @@ func TestParseGoFileURL(t *testing.T) {
 		if len(r.URL.Path) < 2 {
 			t.Error("expected content ID in path")
 		}
-		
+
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		resp := map[string]interface{}{
@@ -55,7 +55,7 @@ func TestExtractContentID(t *testing.T) {
 	}{
 		{"https://gofile.io/s/abc123", "abc123"},
 		{"https://gofile.io/v/abc123", "abc123"},
-		{"https://gofile.io/c/abc123/details", "details"},
+		{"https://gofile.io/c/abc123/details", "abc123"},
 	}
 
 	for _, tt := range tests {
