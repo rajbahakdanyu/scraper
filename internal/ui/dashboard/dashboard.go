@@ -1,3 +1,4 @@
+package dashboard
 // internal/ui/dashboard/dashboard.go
 package dashboard
 

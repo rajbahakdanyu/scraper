@@ -1,3 +1,4 @@
+package styles
 // internal/ui/styles/styles_test.go
 package styles
 

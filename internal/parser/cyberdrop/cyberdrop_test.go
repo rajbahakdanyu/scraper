@@ -1,3 +1,4 @@
+package cyberdrop
 // internal/parser/cyberdrop/cyberdrop_test.go
 package cyberdrop
 

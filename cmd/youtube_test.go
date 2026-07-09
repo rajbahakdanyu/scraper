@@ -1,3 +1,4 @@
+package cmd
 // cmd/youtube_test.go
 package cmd
 
