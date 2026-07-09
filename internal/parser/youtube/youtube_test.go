@@ -5,8 +5,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	"github.com/user/scraper/internal/model"
 )
 
 func TestParseYouTubeURL(t *testing.T) {
@@ -29,8 +27,7 @@ func TestParseYouTubeURL(t *testing.T) {
 	// Create scraper with custom client pointing to our test server
 	scraper := NewYouTubeScraper()
 	
-	// We need to override the client to use our test server
-	// For now, let's test the extractVideoID function directly
+	// Test extractVideoID function directly
 	videoID := scraper.extractVideoID("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
 	if videoID != "dQw4w9WgXcQ" {
 		t.Errorf("expected dQw4w9WgXcQ, got %s", videoID)

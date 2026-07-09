@@ -25,7 +25,7 @@ func (s *Scraper) Name() string {
 
 func (s *Scraper) Parse(url string) ([]model.MediaItem, error) {
 	// Extract video ID
-	videoID := s.extractVideoID(url)
+	_ = s.extractVideoID(url)
 	
 	// Fetch video info (simplified - real implementation would use YouTube API or scraping)
 	resp, err := s.client.Get("https://www.youtube.com/oembed?url=" + url + "&format=json")
