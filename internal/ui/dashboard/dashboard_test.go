@@ -30,21 +30,13 @@ func (f *fakeDownloader) Progress() <-chan model.ProgressEvent {
 
 func TestDashboardInit(t *testing.T) {
 	items := []model.MediaItem{{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100}}
-	d := New(items, nil, t.TempDir())
+	d := New(items, nil, t.TempDir(), "test")
 	if d == nil {
 		t.Fatal("expected dashboard to initialize")
 	}
 
 	if cmd := d.Init(); cmd == nil {
 		t.Error("expected Init to return a command")
-	}
-
-	view := d.View()
-	if !strings.Contains(view, "1 item") {
-		t.Errorf("expected view to mention item count, got: %s", view)
-	}
-	if !strings.Contains(view, "a.mp4") {
-		t.Errorf("expected view to list item title, got: %s", view)
 	}
 }
 
@@ -53,7 +45,7 @@ func TestDashboardToggleSelection(t *testing.T) {
 		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100},
 		{URL: "https://example.com/b.mp4", Title: "b.mp4", Size: 200},
 	}
-	d := New(items, nil, t.TempDir())
+	d := New(items, nil, t.TempDir(), "test")
 
 	newModel, _ := d.Update(tea.KeyMsg{Type: tea.KeySpace})
 	dash, ok := newModel.(*Dashboard)
@@ -73,7 +65,7 @@ func TestDashboardToggleSelection(t *testing.T) {
 
 func TestDashboardQuit(t *testing.T) {
 	items := []model.MediaItem{{URL: "u", Title: "t"}}
-	d := New(items, nil, t.TempDir())
+	d := New(items, nil, t.TempDir(), "test")
 
 	_, cmd := d.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	if cmd == nil {
@@ -115,7 +107,7 @@ func TestStartDownloadCommand(t *testing.T) {
 func TestDashboardEnterTriggersDownload(t *testing.T) {
 	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 1)}
 	items := []model.MediaItem{{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 10}}
-	d := New(items, fd, t.TempDir())
+	d := New(items, fd, t.TempDir(), "test")
 
 	_, cmd := d.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil {
@@ -130,11 +122,29 @@ func TestDashboardEnterTriggersDownload(t *testing.T) {
 	}
 }
 
+func TestDashboardEnterDoesNotRedownload(t *testing.T) {
+	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 1)}
+	items := []model.MediaItem{{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 10}}
+	d := New(items, fd, t.TempDir(), "test")
+
+	d.states[0].status = model.StatusCompleted
+	_, cmd := d.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		cmd()
+	}
+
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+	if len(fd.calls) != 0 {
+		t.Fatalf("expected 0 download calls for completed item, got %d", len(fd.calls))
+	}
+}
+
 func TestDashboardProgressUpdatesRows(t *testing.T) {
 	ch := make(chan model.ProgressEvent, 1)
 	fd := &fakeDownloader{ch: ch}
 	items := []model.MediaItem{{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100}}
-	d := New(items, fd, t.TempDir())
+	d := New(items, fd, t.TempDir(), "test")
 
 	newModel, cmd := d.Update(progressMsg(model.ProgressEvent{
 		Item:   items[0],
@@ -151,5 +161,27 @@ func TestDashboardProgressUpdatesRows(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Error("expected dashboard to keep listening for more progress events")
+	}
+}
+
+func TestDashboardViewContainsStats(t *testing.T) {
+	items := []model.MediaItem{
+		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100},
+		{URL: "https://example.com/b.mp4", Title: "b.mp4", Size: 200},
+	}
+	d := New(items, nil, t.TempDir(), "youtube")
+
+	d.width = 100
+	d.height = 30
+	d.ready = true
+	d.table.SetWidth(96)
+	d.progress.Width = 76
+
+	view := d.View()
+	if !strings.Contains(view, "Pending") {
+		t.Error("expected view to contain stats")
+	}
+	if !strings.Contains(view, "youtube") {
+		t.Error("expected view to contain site name")
 	}
 }

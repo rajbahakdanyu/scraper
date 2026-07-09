@@ -3,8 +3,11 @@ package dashboard
 
 import (
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/progress"
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -14,7 +17,6 @@ import (
 )
 
 // Downloader is the subset of download behavior the dashboard depends on.
-// *downloader.Downloader satisfies this interface.
 type Downloader interface {
 	Download(item model.MediaItem, dest string) error
 	Progress() <-chan model.ProgressEvent
@@ -26,14 +28,17 @@ type itemState struct {
 	status   model.DownloadStatus
 	bytes    int64
 	total    int64
+	speed    float64
 	selected bool
+	started  time.Time
 }
 
 // Dashboard is a Bubble Tea model that displays a queue of media items and
-// drives their downloads with live progress.
+// drives their downloads with live progress, stats, and rich styling.
 type Dashboard struct {
 	table    table.Model
 	progress progress.Model
+	spinner  spinner.Model
 	theme    styles.Theme
 
 	states []itemState
@@ -47,17 +52,25 @@ type Dashboard struct {
 
 	quitting bool
 	status   string
+	site     string
 }
 
-// New creates a Dashboard for the given items. dl may be nil if the
-// dashboard is only used for display (no downloads will be triggered).
-func New(items []model.MediaItem, dl Downloader, dest string) *Dashboard {
+const banner = `
+ ___  ___  ___  ___  __   ___ ___ ___
+| _ \/ _ \| _ \/ __|  \ / __| __/ __|
+|  _/ (_) |   / (__    | (__| _|\__ \
+|_|  \___/|_|_\\___|  / \___|___|___/
+                  |__/`
+
+// New creates a Dashboard for the given items.
+func New(items []model.MediaItem, dl Downloader, dest string, site string) *Dashboard {
 	columns := []table.Column{
-		{Title: "", Width: 3},
-		{Title: "Title", Width: 32},
+		{Title: "  ", Width: 3},
+		{Title: "Title", Width: 36},
 		{Title: "Size", Width: 10},
-		{Title: "Type", Width: 8},
-		{Title: "Status", Width: 12},
+		{Title: "Type", Width: 7},
+		{Title: "Status", Width: 13},
+		{Title: "Progress", Width: 12},
 	}
 
 	states := make([]itemState, len(items))
@@ -69,8 +82,8 @@ func New(items []model.MediaItem, dl Downloader, dest string) *Dashboard {
 	if height > 15 {
 		height = 15
 	}
-	if height < 3 {
-		height = 3
+	if height < 4 {
+		height = 4
 	}
 
 	t := table.New(
@@ -79,35 +92,44 @@ func New(items []model.MediaItem, dl Downloader, dest string) *Dashboard {
 		table.WithHeight(height),
 	)
 
+	sp := spinner.New()
+	sp.Spinner = spinner.Dot
+	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+
 	d := &Dashboard{
 		table:      t,
 		progress:   progress.New(progress.WithDefaultGradient()),
+		spinner:    sp,
 		theme:      styles.DefaultTheme(),
 		states:     states,
 		downloader: dl,
 		dest:       dest,
+		site:       site,
 	}
 	d.refreshRows()
 	return d
 }
 
-// Init starts listening for download progress events.
+// Init starts the spinner and listening for download progress events.
 func (d *Dashboard) Init() tea.Cmd {
-	cmds := []tea.Cmd{tea.EnterAltScreen}
+	cmds := []tea.Cmd{
+		tea.EnterAltScreen,
+		d.spinner.Tick,
+	}
 	if d.downloader != nil {
 		cmds = append(cmds, listenForProgress(d.downloader.Progress()))
 	}
 	return tea.Batch(cmds...)
 }
 
-// progressMsg carries a download progress update into the Bubble Tea loop.
 type progressMsg model.ProgressEvent
 
-// downloadDoneMsg reports the terminal outcome of a single item's download.
 type downloadDoneMsg struct {
 	url string
 	err error
 }
+
+type tickMsg time.Time
 
 func listenForProgress(ch <-chan model.ProgressEvent) tea.Cmd {
 	return func() tea.Msg {
@@ -126,14 +148,13 @@ func startDownload(dl Downloader, item model.MediaItem, dest string) tea.Cmd {
 	}
 }
 
-// Update handles key presses, window resizes, and progress events.
 func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		d.width = msg.Width
 		d.height = msg.Height
 		d.ready = true
-		d.table.SetWidth(msg.Width)
+		d.table.SetWidth(msg.Width - 4)
 		barWidth := msg.Width - 4
 		if barWidth > 80 {
 			barWidth = 80
@@ -143,9 +164,19 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return d, nil
 
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		d.spinner, cmd = d.spinner.Update(msg)
+		return d, cmd
+
+	case tickMsg:
+		return d, tea.Tick(time.Second, func(t time.Time) tea.Msg {
+			return tickMsg(t)
+		})
+
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "q", "ctrl+c":
+		case "q", "ctrl+c", "esc":
 			d.quitting = true
 			return d, tea.Quit
 		case " ":
@@ -186,6 +217,10 @@ func (d *Dashboard) applyProgress(evt model.ProgressEvent) {
 			if evt.Total > 0 {
 				d.states[i].total = evt.Total
 			}
+			d.states[i].speed = evt.Speed
+			if d.states[i].started.IsZero() {
+				d.states[i].started = time.Now()
+			}
 			return
 		}
 	}
@@ -205,14 +240,12 @@ func (d *Dashboard) applyDone(msg downloadDoneMsg) {
 	}
 
 	if msg.err != nil {
-		d.status = fmt.Sprintf("failed: %s (%v)", msg.url, msg.err)
+		d.status = fmt.Sprintf("  ✗ failed: %s (%v)", msg.url, msg.err)
 	} else {
-		d.status = fmt.Sprintf("finished: %s", msg.url)
+		d.status = fmt.Sprintf("  ✓ finished: %s", msg.url)
 	}
 }
 
-// startSelectedDownloads kicks off downloads for the selected items, or all
-// items if none are explicitly selected.
 func (d *Dashboard) startSelectedDownloads() tea.Cmd {
 	if d.downloader == nil {
 		return nil
@@ -235,6 +268,7 @@ func (d *Dashboard) startSelectedDownloads() tea.Cmd {
 			continue
 		}
 		d.states[i].status = model.StatusDownloading
+		d.states[i].started = time.Now()
 		cmds = append(cmds, startDownload(d.downloader, d.states[i].item, d.dest))
 	}
 	d.refreshRows()
@@ -245,38 +279,124 @@ func (d *Dashboard) startSelectedDownloads() tea.Cmd {
 func (d *Dashboard) refreshRows() {
 	rows := make([]table.Row, len(d.states))
 	for i, st := range d.states {
-		mark := " "
+		mark := "○"
 		if st.selected {
-			mark = "x"
+			mark = "●"
 		}
 		rows[i] = table.Row{
 			mark,
-			st.item.Title,
+			truncate(st.item.Title, 34),
 			humanizeBytes(st.total),
-			string(st.item.Type),
+			mediaTypeIcon(st.item.Type),
 			statusLabel(st.status),
+			progressBar(st),
 		}
 	}
 	d.table.SetRows(rows)
 }
 
-// View renders the dashboard.
+// View renders the full dashboard.
 func (d *Dashboard) View() string {
 	if d.quitting {
 		return ""
 	}
-
-	header := d.theme.Header.Render(fmt.Sprintf("Scraper — %d item(s)", len(d.states)))
-	help := d.theme.Secondary.Render("↑/↓ navigate • space select • enter download • q quit")
-	bar := d.progress.ViewAs(d.overallPercent())
-
-	sections := []string{header, d.table.View(), bar}
-	if d.status != "" {
-		sections = append(sections, d.status)
+	if !d.ready {
+		return d.spinner.View() + "  Loading..."
 	}
-	sections = append(sections, help)
+
+	bannerStyled := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("213")).
+		Render(banner)
+
+	siteLabel := d.theme.Subtitle.Render(
+		fmt.Sprintf("  Site: %s  •  Items: %d  •  Output: %s", d.site, len(d.states), d.dest),
+	)
+
+	header := lipgloss.JoinVertical(lipgloss.Left, bannerStyled, siteLabel)
+
+	tablePanel := d.theme.Border.Render(d.table.View())
+
+	stats := d.renderStats()
+
+	bar := d.progress.ViewAs(d.overallPercent())
+	progressPanel := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("99")).
+		Padding(0, 1).
+		Render(
+			lipgloss.JoinVertical(lipgloss.Left,
+				lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Render("Overall Progress"),
+				bar,
+			),
+		)
+
+	footer := d.theme.Footer.Render(
+		"  ↑/↓ navigate  •  space select  •  enter download  •  q quit  ",
+	)
+
+	sections := []string{
+		header,
+		"",
+		stats,
+		"",
+		tablePanel,
+		"",
+		progressPanel,
+	}
+
+	if d.status != "" {
+		sections = append(sections, "", d.status)
+	}
+
+	sections = append(sections, "", footer)
 
 	return lipgloss.JoinVertical(lipgloss.Left, sections...)
+}
+
+// renderStats produces a compact stats panel.
+func (d *Dashboard) renderStats() string {
+	var pending, downloading, completed, failed int
+	for _, st := range d.states {
+		switch st.status {
+		case model.StatusPending:
+			pending++
+		case model.StatusDownloading:
+			downloading++
+		case model.StatusCompleted:
+			completed++
+		case model.StatusFailed:
+			failed++
+		}
+	}
+
+	total := len(d.states)
+	var downloadedBytes, totalBytes int64
+	for _, st := range d.states {
+		downloadedBytes += st.bytes
+		totalBytes += st.total
+	}
+
+	spin := d.spinner.View()
+
+	stat := func(label, value string) string {
+		return fmt.Sprintf("  %s%s  %s",
+			d.theme.StatLabel.Render(label),
+			d.theme.Muted.Render(":"),
+			d.theme.StatValue.Render(value),
+		)
+	}
+
+	statsLine1 := fmt.Sprintf("%s %s  %s  %s  %s  %s  %s",
+		spin,
+		stat("Pending", fmt.Sprintf("%d/%d", pending, total)),
+		stat("Active", fmt.Sprintf("%d", downloading)),
+		stat("Done", fmt.Sprintf("%d", completed)),
+		stat("Failed", fmt.Sprintf("%d", failed)),
+		stat("Size", fmt.Sprintf("%s / %s", humanizeBytes(downloadedBytes), humanizeBytes(totalBytes))),
+		stat("ETA", d.eta()),
+	)
+
+	return d.theme.StatusBar.Render(statsLine1)
 }
 
 func (d *Dashboard) overallPercent() float64 {
@@ -293,25 +413,92 @@ func (d *Dashboard) overallPercent() float64 {
 	return float64(done) / float64(total)
 }
 
+func (d *Dashboard) eta() string {
+	var downloadedBytes, totalBytes int64
+	var elapsed time.Duration
+	active := 0
+	for _, st := range d.states {
+		if st.total > 0 {
+			totalBytes += st.total
+			downloadedBytes += st.bytes
+		}
+		if st.status == model.StatusDownloading && !st.started.IsZero() {
+			elapsed += time.Since(st.started)
+			active++
+		}
+	}
+	if totalBytes == 0 || downloadedBytes == 0 || active == 0 {
+		return "—"
+	}
+	speed := float64(downloadedBytes) / elapsed.Seconds()
+	if speed <= 0 {
+		return "—"
+	}
+	remaining := float64(totalBytes-downloadedBytes) / speed
+	return formatDuration(time.Duration(remaining) * time.Second)
+}
+
 func statusLabel(s model.DownloadStatus) string {
 	switch s {
 	case model.StatusPending:
-		return "pending"
+		return "○ pending"
 	case model.StatusDownloading:
-		return "downloading"
+		return "◐ downloading"
 	case model.StatusCompleted:
-		return "done"
+		return "✓ done"
 	case model.StatusFailed:
-		return "failed"
+		return "✗ failed"
 	case model.StatusCancelled:
-		return "cancelled"
+		return "⊘ cancelled"
 	default:
-		return "unknown"
+		return "? unknown"
 	}
+}
+
+func mediaTypeIcon(t model.MediaType) string {
+	switch t {
+	case model.MediaTypeVideo:
+		return "🎬 video"
+	case model.MediaTypeImage:
+		return "🖼 image"
+	default:
+		return "📁 file"
+	}
+}
+
+func progressBar(st itemState) string {
+	if st.status == model.StatusPending {
+		return dotedBar(0)
+	}
+	if st.total <= 0 {
+		if st.status == model.StatusCompleted {
+			return "████████ done"
+		}
+		return "▒▒▒▒▒▒▒▒ ?"
+	}
+	pct := float64(st.bytes) / float64(st.total)
+	if pct > 1 {
+		pct = 1
+	}
+	return dotedBar(pct)
+}
+
+const barWidth = 10
+
+func dotedBar(pct float64) string {
+	filled := int(pct * float64(barWidth))
+	if filled > barWidth {
+		filled = barWidth
+	}
+	bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
+	return bar
 }
 
 func humanizeBytes(n int64) string {
 	const unit = 1024
+	if n < 0 {
+		return "?"
+	}
 	if n < unit {
 		return fmt.Sprintf("%dB", n)
 	}
@@ -321,4 +508,24 @@ func humanizeBytes(n int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f%ciB", float64(n)/float64(div), "KMGTPE"[exp])
+}
+
+func formatDuration(d time.Duration) string {
+	if d <= 0 {
+		return "—"
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm%ds", int(d.Minutes()), int(d.Seconds())%60)
+	}
+	return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
+}
+
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max-1] + "…"
 }

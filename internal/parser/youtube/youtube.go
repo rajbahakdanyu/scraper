@@ -52,7 +52,7 @@ func (s *Scraper) Parse(rawURL string) ([]model.MediaItem, error) {
 		return nil, fmt.Errorf("youtube: no downloadable stream formats found for %s", videoID)
 	}
 
-	best := formats[0]
+	best := pickBestFormat(formats)
 	url, err := s.video.GetStreamURL(video, &best)
 	if err != nil {
 		return nil, fmt.Errorf("youtube: failed to get stream URL: %w", err)
@@ -93,7 +93,7 @@ func (s *Scraper) DownloadVideo(videoID, dest string) error {
 		return fmt.Errorf("youtube: no downloadable formats")
 	}
 
-	best := formats[0]
+	best := pickBestFormat(formats)
 
 	title := video.Title
 	if title == "" {
@@ -155,4 +155,16 @@ func sanitizeFilename(s string) string {
 		}
 	}
 	return string(clean)
+}
+
+// pickBestFormat selects the highest-quality format by resolution (Height),
+// then bitrate. Falls back to the first format if none have resolution info.
+func pickBestFormat(formats ytdl.FormatList) ytdl.Format {
+	best := formats[0]
+	for _, f := range formats[1:] {
+		if f.Height > best.Height || (f.Height == best.Height && f.Bitrate > best.Bitrate) {
+			best = f
+		}
+	}
+	return best
 }

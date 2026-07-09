@@ -50,7 +50,7 @@ func newTUICmd(opts globalOptions) *cobra.Command {
 				cfg.Timeout,
 				cfg.UserAgent,
 			)
-			d := dashboard.New(items, dl, cfg.OutputDir)
+			d := dashboard.New(items, dl, cfg.OutputDir, site)
 
 			p := tea.NewProgram(d, tea.WithAltScreen())
 			_, err = p.Run()
