@@ -18,10 +18,7 @@ func newCyberDropCmd(opts globalOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-
-			cfg := loadGlobalConfig(opts)
-			scraper := cyberdrop.NewCyberDropScraper()
-			return runScrape(scraper, targetURL, cfg.OutputDir, cfg)
+			return runWithScraper(cyberdrop.NewCyberDropScraper(), targetURL, "cyberdrop", opts)
 		},
 	}
 

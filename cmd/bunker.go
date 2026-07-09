@@ -18,10 +18,7 @@ func newBunkerCmd(opts globalOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-
-			cfg := loadGlobalConfig(opts)
-			scraper := bunker.NewBunkerScraper()
-			return runScrape(scraper, targetURL, cfg.OutputDir, cfg)
+			return runWithScraper(bunker.NewBunkerScraper(), targetURL, "bunker", opts)
 		},
 	}
 

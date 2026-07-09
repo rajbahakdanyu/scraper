@@ -157,11 +157,31 @@ func sanitizeFilename(s string) string {
 	return string(clean)
 }
 
-// pickBestFormat selects the highest-quality format by resolution (Height),
-// then bitrate. Falls back to the first format if none have resolution info.
+// pickBestFormat selects the highest-quality combined (muxed video+audio)
+// format by resolution, then bitrate. If no combined formats exist, falls
+// back to the highest-resolution video-only format.
 func pickBestFormat(formats ytdl.FormatList) ytdl.Format {
-	best := formats[0]
-	for _, f := range formats[1:] {
+	combined := formats.Select(func(f ytdl.Format) bool {
+		return f.Height > 0 && f.AudioChannels > 0
+	})
+	if len(combined) > 0 {
+		best := combined[0]
+		for _, f := range combined[1:] {
+			if f.Height > best.Height || (f.Height == best.Height && f.Bitrate > best.Bitrate) {
+				best = f
+			}
+		}
+		return best
+	}
+
+	videoOnly := formats.Select(func(f ytdl.Format) bool {
+		return f.Height > 0
+	})
+	if len(videoOnly) == 0 {
+		return formats[0]
+	}
+	best := videoOnly[0]
+	for _, f := range videoOnly[1:] {
 		if f.Height > best.Height || (f.Height == best.Height && f.Bitrate > best.Bitrate) {
 			best = f
 		}

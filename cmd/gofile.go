@@ -18,10 +18,7 @@ func newGoFileCmd(opts globalOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-
-			cfg := loadGlobalConfig(opts)
-			scraper := gofile.NewGoFileScraper()
-			return runScrape(scraper, targetURL, cfg.OutputDir, cfg)
+			return runWithScraper(gofile.NewGoFileScraper(), targetURL, "gofile", opts)
 		},
 	}
 

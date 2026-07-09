@@ -16,25 +16,12 @@ type youtubeDownloader interface {
 	DownloadVideo(videoID, dest string) error
 }
 
-// runScrape parses targetURL with the given scraper and downloads every
-// resulting item into output, using up to concurrency simultaneous
-// downloads. It blocks until all downloads finish and prints a short
-// progress summary to stdout. The progress channel is drained in a
-// background goroutine to prevent deadlock.
-func runScrape(scraper model.Scraper, targetURL, output string, cfg *config.Config) error {
-	items, err := scraper.Parse(targetURL)
-	if err != nil && len(items) == 0 {
-		return fmt.Errorf("%s: %w", scraper.Name(), err)
-	}
-
-	if len(items) == 0 {
-		fmt.Println("No media items found.")
-		return nil
-	}
-
+// runScrape downloads pre-parsed items into output. For YouTube, it uses
+// the scraper's DownloadVideo method; for everything else, the generic
+// HTTP downloader with concurrency.
+func runScrape(scraper model.Scraper, items []model.MediaItem, targetURL, output string, cfg *config.Config) error {
 	fmt.Printf("Found %d item(s). Downloading to %s (concurrency=%d)...\n", len(items), output, cfg.ConcurrentDownloads)
 
-	// If the scraper handles its own downloads (YouTube), use that path.
 	if yd, ok := scraper.(youtubeDownloader); ok {
 		return runYouTubeDownload(yd, scraper, targetURL, output)
 	}
@@ -82,10 +69,9 @@ func runScrape(scraper model.Scraper, targetURL, output string, cfg *config.Conf
 	return nil
 }
 
-// runYouTubeDownload uses the scraper's built-in download method which
-// handles YouTube's stream signature deciphering.
 func runYouTubeDownload(yd youtubeDownloader, scraper model.Scraper, targetURL, output string) error {
-	videoID := extractYouTubeVideoID(targetURL)
+	yt := youtube.NewYouTubeScraper()
+	videoID := yt.ExtractVideoID(targetURL)
 	if videoID == "" {
 		return fmt.Errorf("%s: could not extract video ID from %s", scraper.Name(), targetURL)
 	}
@@ -97,9 +83,4 @@ func runYouTubeDownload(yd youtubeDownloader, scraper model.Scraper, targetURL, 
 
 	fmt.Println("Download complete.")
 	return nil
-}
-
-func extractYouTubeVideoID(rawURL string) string {
-	yt := youtube.NewYouTubeScraper()
-	return yt.ExtractVideoID(rawURL)
 }

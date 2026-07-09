@@ -50,9 +50,10 @@ type Dashboard struct {
 	height int
 	ready  bool
 
-	quitting bool
-	status   string
-	site     string
+	quitting  bool
+	status    string
+	site      string
+	autoStart bool
 }
 
 const banner = `
@@ -110,6 +111,11 @@ func New(items []model.MediaItem, dl Downloader, dest string, site string) *Dash
 	return d
 }
 
+// AutoStart marks all items for download immediately on Init.
+func (d *Dashboard) AutoStart() {
+	d.autoStart = true
+}
+
 // Init starts the spinner and listening for download progress events.
 func (d *Dashboard) Init() tea.Cmd {
 	cmds := []tea.Cmd{
@@ -118,6 +124,9 @@ func (d *Dashboard) Init() tea.Cmd {
 	}
 	if d.downloader != nil {
 		cmds = append(cmds, listenForProgress(d.downloader.Progress()))
+	}
+	if d.autoStart {
+		cmds = append(cmds, d.startSelectedDownloads())
 	}
 	return tea.Batch(cmds...)
 }

@@ -18,10 +18,7 @@ func newYouTubeCmd(opts globalOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-
-			cfg := loadGlobalConfig(opts)
-			scraper := youtube.NewYouTubeScraper()
-			return runScrape(scraper, targetURL, cfg.OutputDir, cfg)
+			return runWithScraper(youtube.NewYouTubeScraper(), targetURL, "youtube", opts)
 		},
 	}
 
