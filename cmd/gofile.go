@@ -1,4 +1,3 @@
-package cmd
 // cmd/gofile.go
 package cmd
 

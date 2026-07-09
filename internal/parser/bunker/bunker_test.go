@@ -1,4 +1,3 @@
-package bunker
 // internal/parser/bunker/bunker_test.go
 package bunker
 

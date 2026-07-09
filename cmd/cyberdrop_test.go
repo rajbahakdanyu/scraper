@@ -1,4 +1,3 @@
-// cmd/cyberdrop_test.go
 package cmd
 
 import "testing"

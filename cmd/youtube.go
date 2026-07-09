@@ -1,4 +1,3 @@
-// cmd/youtube.go
 package cmd
 
 import (

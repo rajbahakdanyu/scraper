@@ -1,4 +1,3 @@
-// cmd/root_test.go
 package cmd
 
 import "testing"

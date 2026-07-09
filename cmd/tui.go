@@ -1,4 +1,3 @@
-// cmd/tui.go
 package cmd
 
 import (

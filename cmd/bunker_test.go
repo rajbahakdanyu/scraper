@@ -1,4 +1,3 @@
-// cmd/bunker_test.go
 package cmd
 
 import "testing"

@@ -1,4 +1,3 @@
-// cmd/cyberdrop.go
 package cmd
 
 import (
