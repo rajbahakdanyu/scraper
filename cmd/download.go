@@ -7,7 +7,14 @@ import (
 	"github.com/user/scraper/internal/config"
 	"github.com/user/scraper/internal/downloader"
 	"github.com/user/scraper/internal/model"
+	"github.com/user/scraper/internal/parser/youtube"
 )
+
+// youtubeDownloader is an optional interface that a scraper can implement
+// to handle its own downloads (e.g. YouTube needs signature deciphering).
+type youtubeDownloader interface {
+	DownloadVideo(videoID, dest string) error
+}
 
 // runScrape parses targetURL with the given scraper and downloads every
 // resulting item into output, using up to concurrency simultaneous
@@ -27,13 +34,17 @@ func runScrape(scraper model.Scraper, targetURL, output string, cfg *config.Conf
 
 	fmt.Printf("Found %d item(s). Downloading to %s (concurrency=%d)...\n", len(items), output, cfg.ConcurrentDownloads)
 
+	// If the scraper handles its own downloads (YouTube), use that path.
+	if yd, ok := scraper.(youtubeDownloader); ok {
+		return runYouTubeDownload(yd, scraper, targetURL, output)
+	}
+
 	dl := downloader.NewDownloaderWithConfig(
 		cfg.ConcurrentDownloads,
 		cfg.Timeout,
 		cfg.UserAgent,
 	)
 
-	// Drain the progress channel so download goroutines never block on send.
 	go func() {
 		for range dl.Progress() {
 		}
@@ -69,4 +80,26 @@ func runScrape(scraper model.Scraper, targetURL, output string, cfg *config.Conf
 
 	fmt.Println("All downloads complete.")
 	return nil
+}
+
+// runYouTubeDownload uses the scraper's built-in download method which
+// handles YouTube's stream signature deciphering.
+func runYouTubeDownload(yd youtubeDownloader, scraper model.Scraper, targetURL, output string) error {
+	videoID := extractYouTubeVideoID(targetURL)
+	if videoID == "" {
+		return fmt.Errorf("%s: could not extract video ID from %s", scraper.Name(), targetURL)
+	}
+
+	fmt.Printf("Downloading video %s...\n", videoID)
+	if err := yd.DownloadVideo(videoID, output); err != nil {
+		return fmt.Errorf("%s: %w", scraper.Name(), err)
+	}
+
+	fmt.Println("Download complete.")
+	return nil
+}
+
+func extractYouTubeVideoID(rawURL string) string {
+	yt := youtube.NewYouTubeScraper()
+	return yt.ExtractVideoID(rawURL)
 }
