@@ -11,11 +11,12 @@ import (
 )
 
 type Scraper struct {
-	client *http.Client
+	client  *http.Client
+	baseURL string
 }
 
 func NewGoFileScraper() *Scraper {
-	return &Scraper{client: &http.Client{}}
+	return &Scraper{client: &http.Client{}, baseURL: "https://api.gofile.io/contents/"}
 }
 
 func (s *Scraper) Name() string {
@@ -28,7 +29,7 @@ func (s *Scraper) Parse(url string) ([]model.MediaItem, error) {
 		return nil, fmt.Errorf("could not extract content ID from URL: %s", url)
 	}
 
-	apiURL := "https://api.gofile.io/contents/" + contentID
+	apiURL := s.baseURL + contentID
 	resp, err := s.client.Get(apiURL)
 	if err != nil {
 		return nil, err

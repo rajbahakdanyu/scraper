@@ -17,7 +17,7 @@ func TestParseGoFileURL(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		resp := map[string]interface{}{
-			"status": "success",
+			"status": "ok",
 			"data": map[string]interface{}{
 				"children": map[string]interface{}{
 					"abc123": map[string]interface{}{
@@ -33,6 +33,7 @@ func TestParseGoFileURL(t *testing.T) {
 	defer ts.Close()
 
 	scraper := NewGoFileScraper()
+	scraper.baseURL = ts.URL + "/"
 	items, err := scraper.Parse(ts.URL + "/s/abc123")
 	if err != nil {
 		t.Fatalf("Parse failed: %v", err)
