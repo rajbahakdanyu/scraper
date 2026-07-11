@@ -18,7 +18,7 @@ func TestNewTUICmd(t *testing.T) {
 
 func TestScraperRegistry(t *testing.T) {
 	reg := scraperRegistry()
-	for _, name := range []string{"youtube", "gofile", "cyberdrop", "bunker"} {
+	for _, name := range []string{"youtube", "cyberdrop", "bunker"} {
 		if _, ok := reg[name]; !ok {
 			t.Errorf("expected registry to contain %q", name)
 		}

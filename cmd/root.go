@@ -62,7 +62,6 @@ func NewRootCmd() *cobra.Command {
 
 	root.AddCommand(
 		newYouTubeCmd(opts),
-		newGoFileCmd(opts),
 		newCyberDropCmd(opts),
 		newBunkerCmd(opts),
 		newTUICmd(opts),
