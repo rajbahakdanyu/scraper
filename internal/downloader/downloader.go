@@ -102,6 +102,16 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 	finalPath := filepath.Join(dest, filename)
 	tempPath := finalPath + ".part"
 
+	// Skip if file already exists and is non-empty
+	if info, err := os.Stat(finalPath); err == nil && info.Size() > 0 {
+		d.sendProgress(model.ProgressEvent{
+			Item:     item,
+			Status:   model.StatusCompleted,
+			Filename: finalPath,
+		})
+		return nil
+	}
+
 	d.sendProgress(model.ProgressEvent{
 		Item:   item,
 		Status: model.StatusDownloading,
