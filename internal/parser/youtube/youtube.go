@@ -227,20 +227,36 @@ func (s *Scraper) downloadAndMux(video *ytdl.Video, videoFmt, audioFmt *ytdl.For
 	audioPath := filepath.Join(tmpDir, "audio."+audioExt)
 	outputPath := filepath.Join(dest, sanitizeFilename(title)+".mp4")
 
+	videoSize := videoFmt.ContentLength
+	audioSize := audioFmt.ContentLength
+	if videoSize <= 0 {
+		videoSize = 1
+	}
+	if audioSize <= 0 {
+		audioSize = 1
+	}
+	combinedTotal := videoSize + audioSize
+
+	var videoRead, audioRead int64
+
 	// Download video stream.
-	fmt.Printf("  Downloading video stream (%dp)...\n", videoFmt.Height)
-	if err := s.downloadStreamToFile(video, videoFmt, videoPath); err != nil {
+	if err := s.downloadStreamToFileProgress(video, videoFmt, videoPath, func(n int64, total int64) {
+		videoRead = n
+		s.reportProgress(videoRead+audioRead, combinedTotal)
+	}); err != nil {
 		return fmt.Errorf("youtube: failed to download video: %w", err)
 	}
 
 	// Download audio stream.
-	fmt.Printf("  Downloading audio stream...\n")
-	if err := s.downloadStreamToFile(video, audioFmt, audioPath); err != nil {
+	if err := s.downloadStreamToFileProgress(video, audioFmt, audioPath, func(n int64, total int64) {
+		audioRead = n
+		s.reportProgress(videoRead+audioRead, combinedTotal)
+	}); err != nil {
 		return fmt.Errorf("youtube: failed to download audio: %w", err)
 	}
 
-	// Mux with ffmpeg.
-	fmt.Printf("  Muxing video+audio with ffmpeg...\n")
+	// Mux with ffmpeg — report as nearly complete while muxing.
+	s.reportProgress(combinedTotal-1, combinedTotal)
 	cmd := exec.Command("ffmpeg", "-y",
 		"-i", videoPath,
 		"-i", audioPath,
@@ -255,11 +271,17 @@ func (s *Scraper) downloadAndMux(video *ytdl.Video, videoFmt, audioFmt *ytdl.For
 		return fmt.Errorf("youtube: ffmpeg mux failed: %w", err)
 	}
 
-	fmt.Printf("  Saved: %s\n", outputPath)
+	s.reportProgress(combinedTotal, combinedTotal)
 	return nil
 }
 
-func (s *Scraper) downloadStreamToFile(video *ytdl.Video, format *ytdl.Format, path string) error {
+func (s *Scraper) reportProgress(bytes, total int64) {
+	if s.progress != nil {
+		s.progress(bytes, total)
+	}
+}
+
+func (s *Scraper) downloadStreamToFileProgress(video *ytdl.Video, format *ytdl.Format, path string, onProgress func(int64, int64)) error {
 	stream, size, err := s.video.GetStream(video, format)
 	if err != nil {
 		return err
@@ -281,8 +303,8 @@ func (s *Scraper) downloadStreamToFile(video *ytdl.Video, format *ytdl.Format, p
 				return werr
 			}
 			read += int64(n)
-			if s.progress != nil {
-				s.progress(read, size)
+			if onProgress != nil {
+				onProgress(read, size)
 			}
 		}
 		if readErr == io.EOF {
