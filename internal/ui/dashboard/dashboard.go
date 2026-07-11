@@ -607,6 +607,8 @@ func (d *Dashboard) renderStats() string {
 	sizeStr := humanizeBytes(downloadedBytes)
 	if itemsWithKnownSize > 0 && totalBytes > 0 {
 		sizeStr = fmt.Sprintf("%s / %s", humanizeBytes(downloadedBytes), humanizeBytes(totalBytes))
+	} else if downloadedBytes > 0 {
+		sizeStr = humanizeBytes(downloadedBytes) + " downloaded"
 	}
 	parts = append(parts,
 		d.theme.Dim.Render("speed ")+d.theme.Cyan.Render(fmt.Sprintf("%s/s", humanizeBytes(int64(totalSpeed)))),
@@ -624,8 +626,10 @@ func (d *Dashboard) overallPercent() float64 {
 	if len(d.states) == 0 {
 		return 0
 	}
+
 	var knownTotal, knownDone int64
 	var itemsWithKnownSize, completedItems, totalItems int
+
 	for _, st := range d.states {
 		totalItems++
 		if st.total > 0 {
@@ -637,9 +641,13 @@ func (d *Dashboard) overallPercent() float64 {
 			completedItems++
 		}
 	}
+
+	// All items have known sizes — byte-based progress
 	if itemsWithKnownSize == totalItems && knownTotal > 0 {
 		return float64(knownDone) / float64(knownTotal)
 	}
+
+	// Some items have known sizes — blend byte + count progress
 	if itemsWithKnownSize > 0 && knownTotal > 0 {
 		knownPct := float64(knownDone) / float64(knownTotal)
 		unknownItems := totalItems - itemsWithKnownSize
@@ -655,31 +663,79 @@ func (d *Dashboard) overallPercent() float64 {
 		}
 		return (knownPct*float64(itemsWithKnownSize) + unknownPct*float64(unknownItems)) / float64(totalItems)
 	}
-	return float64(completedItems) / float64(totalItems)
+
+	// No size info — count completed items, but also give partial credit
+	// for items currently downloading based on their byte progress
+	var partialCredit float64
+	for _, st := range d.states {
+		if st.status == model.StatusCompleted {
+			partialCredit += 1.0
+		} else if st.status == model.StatusDownloading && st.total > 0 {
+			partialCredit += float64(st.bytes) / float64(st.total)
+		}
+	}
+	return partialCredit / float64(totalItems)
 }
 
 func (d *Dashboard) eta() string {
 	var downloadedBytes, totalBytes int64
 	var elapsed time.Duration
 	active := 0
+	var totalSpeed float64
+
 	for _, st := range d.states {
 		if st.total > 0 {
 			totalBytes += st.total
+			downloadedBytes += st.bytes
+		} else {
 			downloadedBytes += st.bytes
 		}
 		if st.status == model.StatusDownloading && !st.started.IsZero() {
 			elapsed += time.Since(st.started)
 			active++
+			totalSpeed += st.speed
 		}
 	}
-	if totalBytes == 0 || downloadedBytes == 0 || active == 0 {
+
+	// If we know total sizes, compute ETA from remaining bytes
+	if totalBytes > 0 && active > 0 {
+		avgSpeed := float64(downloadedBytes) / elapsed.Seconds()
+		if avgSpeed <= 0 {
+			return "—"
+		}
+		remaining := totalBytes - downloadedBytes
+		if remaining <= 0 {
+			return "0s"
+		}
+		return formatDuration(time.Duration(float64(remaining)/avgSpeed) * time.Second)
+	}
+
+	// No total sizes — estimate from current speed and remaining items
+	remaining := 0
+	for _, st := range d.states {
+		if st.status != model.StatusCompleted && st.status != model.StatusFailed {
+			remaining++
+		}
+	}
+	if active == 0 || remaining == 0 || totalSpeed <= 0 {
 		return "—"
 	}
-	speed := float64(downloadedBytes) / elapsed.Seconds()
-	if speed <= 0 {
-		return "—"
+	// Estimate: remaining items × average bytes per item / current speed
+	var avgItemSize int64
+	completed := 0
+	for _, st := range d.states {
+		if st.status == model.StatusCompleted && st.bytes > 0 {
+			avgItemSize += st.bytes
+			completed++
+		}
 	}
-	return formatDuration(time.Duration(float64(totalBytes-downloadedBytes)/speed) * time.Second)
+	if completed > 0 && avgItemSize > 0 {
+		avgItemSize /= int64(completed)
+		estRemainingBytes := int64(remaining) * avgItemSize
+		return formatDuration(time.Duration(float64(estRemainingBytes)/totalSpeed) * time.Second)
+	}
+
+	return "—"
 }
 
 func (d *Dashboard) ytETA() string {
