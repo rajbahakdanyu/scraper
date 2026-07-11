@@ -1,21 +1,21 @@
-# Binaries for programs and plugins
+# Binaries
+/scraper
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
-
-# Test binary, built with `go test -c`
 *.test
 
-# Output of the go coverage tool, specifically when used with LiteIDE
+# Go workspace
+go.work
+go.work.sum
+
+# Coverage
 *.out
 
-# Dependency directories (remove the comment below to include it)
-# vendor/
-
-# Go workspace file
-go.work
-
+# Docs (generated/specs/plans)
 /docs/
-/scraper/
+
+# Superpowers working files
+/.superpowers/
