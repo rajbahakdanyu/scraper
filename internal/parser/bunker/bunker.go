@@ -18,6 +18,7 @@ type Scraper struct {
 	client    *http.Client
 	userAgent string
 	baseURL   string
+	signURL   string
 }
 
 // NewBunkerScraper creates a new Bunker scraper using the default HTTP client.
@@ -26,6 +27,7 @@ func NewBunkerScraper() *Scraper {
 		client:    &http.Client{},
 		userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
 		baseURL:   "https://bunkr.cr",
+		signURL:   "https://glb-apisign.cdn.cr/sign",
 	}
 }
 
@@ -34,7 +36,12 @@ func NewBunkerScraperWithConfig(userAgent string) *Scraper {
 	if userAgent == "" {
 		userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 	}
-	return &Scraper{client: &http.Client{}, userAgent: userAgent, baseURL: "https://bunkr.cr"}
+	return &Scraper{
+		client:    &http.Client{},
+		userAgent: userAgent,
+		baseURL:   "https://bunkr.cr",
+		signURL:   "https://glb-apisign.cdn.cr/sign",
+	}
 }
 
 func (s *Scraper) Name() string {
@@ -42,8 +49,8 @@ func (s *Scraper) Name() string {
 }
 
 // Parse fetches a Bunker album page, extracts file links, visits each file
-// page to get the direct download URL (via the bunkr API + signing service),
-// and returns resolved media items.
+// page to get the dl.bunkr.cr link, then uses the bunkr API + signing service
+// to resolve the final signed CDN download URL.
 func (s *Scraper) Parse(albumURL string) ([]model.MediaItem, error) {
 	doc, err := s.fetchDoc(albumURL)
 	if err != nil {
@@ -80,8 +87,8 @@ func (s *Scraper) Parse(albumURL string) ([]model.MediaItem, error) {
 	return items, nil
 }
 
-// parseFilePage visits a /f/<id> page, extracts the file ID, then uses the
-// bunkr API to get the CDN path and signs the URL for direct download.
+// parseFilePage visits a /f/<id> page to get the dl.bunkr.cr download link,
+// then resolves the signed CDN URL via the API.
 func (s *Scraper) parseFilePage(fileURL string) (model.MediaItem, error) {
 	doc, err := s.fetchDoc(fileURL)
 	if err != nil {
@@ -93,52 +100,46 @@ func (s *Scraper) parseFilePage(fileURL string) (model.MediaItem, error) {
 		title = strings.TrimSpace(title[:idx])
 	}
 
-	// Find the download button with data-id
-	dlBtn := doc.Find("#download-btn")
-	if dlBtn.Length() == 0 {
-		return model.MediaItem{}, fmt.Errorf("no download button on %s", fileURL)
-	}
-	fileID, _ := dlBtn.Attr("data-id")
-	if fileID == "" {
-		return model.MediaItem{}, fmt.Errorf("no file ID on %s", fileURL)
-	}
-
-	// Extract the ogname from script
-	var ogName string
-	doc.Find("script").Each(func(_ int, sel *goquery.Selection) {
-		text := sel.Text()
-		if idx := strings.Index(text, `var ogname = "`); idx >= 0 {
-			start := idx + len(`var ogname = "`)
-			end := strings.Index(text[start:], `"`)
-			if end >= 0 {
-				ogName = text[start : start+end]
-			}
+	// Find the download link (dl.bunkr.cr link or any /file/ link)
+	var dlLink string
+	doc.Find(`a`).Each(func(_ int, sel *goquery.Selection) {
+		if dlLink != "" {
+			return
+		}
+		href, ok := sel.Attr("href")
+		if !ok || href == "" {
+			return
+		}
+		if strings.Contains(href, "dl.bunkr") || strings.Contains(href, "/file/") {
+			dlLink = href
 		}
 	})
 
-	if title == "" {
-		title = ogName
+	if dlLink == "" {
+		return model.MediaItem{}, fmt.Errorf("no download link on %s", fileURL)
 	}
 
-	// POST to the API to get the media URL
-	mediaURL, err := s.getMediaURL(fileURL, fileID)
+	// Extract the numeric file ID from the dl.bunkr.cr URL
+	// e.g. https://dl.bunkr.cr/file/61567794
+	fileID := path.Base(dlLink)
+	if fileID == "" || fileID == "/" {
+		return model.MediaItem{}, fmt.Errorf("could not extract file ID from %s", dlLink)
+	}
+
+	// Extract the dl.bunkr.cr origin for the API call
+	dlURL, _ := url.Parse(dlLink)
+	if dlURL == nil {
+		return model.MediaItem{}, fmt.Errorf("invalid dl.bunkr URL: %s", dlLink)
+	}
+
+	if title == "" {
+		title = fileID
+	}
+
+	// Use the API to get the signed CDN URL
+	mediaURL, err := s.getSignedMediaURL(dlURL, fileID, title)
 	if err != nil {
 		return model.MediaItem{}, err
-	}
-
-	// Add original name as query param
-	if title != "" {
-		u, _ := url.Parse(mediaURL)
-		if u != nil {
-			q := u.Query()
-			q.Set("n", title)
-			u.RawQuery = q.Encode()
-			mediaURL = u.String()
-		}
-	}
-
-	if title == "" {
-		title = path.Base(mediaURL)
 	}
 
 	return model.MediaItem{
@@ -149,16 +150,11 @@ func (s *Scraper) parseFilePage(fileURL string) (model.MediaItem, error) {
 	}, nil
 }
 
-// getMediaURL replicates the bunkr download flow:
-// 1. POST to /api/_001_v2 with the file ID to get CDN base + path
+// getSignedMediaURL replicates the bunkr download flow:
+// 1. POST to /api/_001_v2 with the file ID → get CDN base + path
 // 2. Sign the URL via glb-apisign.cdn.cr/sign
-func (s *Scraper) getMediaURL(filePageURL, fileID string) (string, error) {
-	// Extract the dl.bunkr.cr origin from the file page URL
-	u, err := url.Parse(filePageURL)
-	if err != nil {
-		return "", err
-	}
-	apiURL := u.Scheme + "://" + u.Host + "/api/_001_v2"
+func (s *Scraper) getSignedMediaURL(dlURL *url.URL, fileID, originalName string) (string, error) {
+	apiURL := dlURL.Scheme + "://" + dlURL.Host + "/api/_001_v2"
 
 	// Step 1: POST to get media metadata
 	req, err := http.NewRequest("POST", apiURL, strings.NewReader(`{"id":"`+fileID+`"}`))
@@ -166,7 +162,7 @@ func (s *Scraper) getMediaURL(filePageURL, fileID string) (string, error) {
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Referer", filePageURL)
+	req.Header.Set("Referer", dlURL.String())
 	req.Header.Set("User-Agent", s.userAgent)
 
 	resp, err := s.client.Do(req)
@@ -182,7 +178,6 @@ func (s *Scraper) getMediaURL(filePageURL, fileID string) (string, error) {
 	var meta struct {
 		MediaFiles string `json:"mediafiles"`
 		Path       string `json:"path"`
-		Original   string `json:"original"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&meta); err != nil {
 		return "", err
@@ -193,17 +188,17 @@ func (s *Scraper) getMediaURL(filePageURL, fileID string) (string, error) {
 	}
 
 	rawURL := meta.MediaFiles + meta.Path
+	parsedURL, _ := url.Parse(rawURL)
+	if parsedURL == nil {
+		return rawURL, nil
+	}
 
 	// Step 2: Sign the URL
-	parsedURL, _ := url.Parse(rawURL)
-	signedPath := parsedURL.Path
-
-	signReq, _ := http.NewRequest("GET", "https://glb-apisign.cdn.cr/sign?path="+url.QueryEscape(signedPath), nil)
+	signReq, _ := http.NewRequest("GET", s.signURL+"?path="+url.QueryEscape(parsedURL.Path), nil)
 	signReq.Header.Set("User-Agent", s.userAgent)
 
 	signResp, err := s.client.Do(signReq)
 	if err != nil {
-		// If signing fails, return the unsigned URL as fallback
 		return rawURL, nil
 	}
 	defer signResp.Body.Close()
@@ -223,6 +218,9 @@ func (s *Scraper) getMediaURL(filePageURL, fileID string) (string, error) {
 	q := parsedURL.Query()
 	q.Set("token", sign.Token)
 	q.Set("ex", fmt.Sprintf("%d", sign.Ex))
+	if originalName != "" {
+		q.Set("n", originalName)
+	}
 	parsedURL.RawQuery = q.Encode()
 
 	return parsedURL.String(), nil
