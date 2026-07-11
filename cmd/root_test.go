@@ -28,7 +28,4 @@ func TestNewRootCmdRegistersSubcommands(t *testing.T) {
 	if root.PersistentFlags().Lookup("concurrent") == nil {
 		t.Error("expected --concurrent persistent flag")
 	}
-	if root.PersistentFlags().Lookup("no-tui") == nil {
-		t.Error("expected --no-tui persistent flag")
-	}
 }

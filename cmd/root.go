@@ -18,7 +18,6 @@ type globalOptions struct {
 	configPath  string
 	output      string
 	concurrency int
-	noTUI       bool
 }
 
 // loadGlobalConfig loads the config file and applies CLI flag overrides.
@@ -60,7 +59,6 @@ func NewRootCmd() *cobra.Command {
 	root.PersistentFlags().StringVar(&opts.configPath, "config", "", "Config file path (default: ~/.scraper.yaml)")
 	root.PersistentFlags().StringVarP(&opts.output, "output", "o", ".", "Output directory")
 	root.PersistentFlags().IntVar(&opts.concurrency, "concurrent", 5, "Maximum concurrent downloads")
-	root.PersistentFlags().BoolVar(&opts.noTUI, "no-tui", false, "Disable TUI, use plain output")
 
 	root.AddCommand(
 		newYouTubeCmd(opts),
@@ -85,9 +83,8 @@ func resolveURL(args []string, urlFlag, siteName string) (string, error) {
 	return targetURL, nil
 }
 
-// runWithScrrape is the shared entry point for all site subcommands.
-// It parses the URL, then either launches the TUI (default) or falls
-// back to plain CLI output (--no-tui).
+// runWithScraper is the shared entry point for all site subcommands.
+// It parses the URL and launches the TUI with auto-downloading.
 func runWithScraper(scraper model.Scraper, targetURL string, siteName string, opts globalOptions) error {
 	cfg := loadGlobalConfig(opts)
 
@@ -101,28 +98,14 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 		return nil
 	}
 
-	if opts.noTUI {
-		return runScrape(scraper, items, targetURL, cfg.OutputDir, cfg)
-	}
-
-	return launchTUI(items, scraper, cfg, siteName)
-}
-
-// launchTUI starts the interactive dashboard for the given items.
-func launchTUI(items []model.MediaItem, scraper model.Scraper, cfg *config.Config, site string) error {
 	dl := downloader.NewDownloaderWithConfig(
 		cfg.ConcurrentDownloads,
 		cfg.Timeout,
 		cfg.UserAgent,
 	)
-	d := dashboard.New(items, dl, cfg.OutputDir, site)
-
-	// Start downloads automatically for YouTube (single item, no selection needed)
-	if site == "youtube" {
-		d.AutoStart()
-	}
+	d := dashboard.New(items, dl, cfg.OutputDir, siteName)
 
 	p := tea.NewProgram(d, tea.WithAltScreen())
-	_, err := p.Run()
+	_, err = p.Run()
 	return err
 }

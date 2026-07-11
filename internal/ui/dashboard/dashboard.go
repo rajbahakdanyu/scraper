@@ -106,6 +106,7 @@ func New(items []model.MediaItem, dl Downloader, dest string, site string) *Dash
 		downloader: dl,
 		dest:       dest,
 		site:       site,
+		autoStart:  true,
 	}
 	d.refreshRows()
 	return d
@@ -340,7 +341,7 @@ func (d *Dashboard) View() string {
 		)
 
 	footer := d.theme.Footer.Render(
-		"  ↑/↓ navigate  •  space select  •  enter download  •  q quit  ",
+		"  ↑/↓ navigate  •  q quit  ",
 	)
 
 	sections := []string{
