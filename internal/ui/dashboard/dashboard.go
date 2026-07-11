@@ -16,29 +16,24 @@ import (
 	"github.com/user/scraper/internal/ui/styles"
 )
 
-// Downloader is the subset of download behavior the dashboard depends on.
 type Downloader interface {
 	Download(item model.MediaItem, dest string) error
 	Progress() <-chan model.ProgressEvent
 }
 
-// YouTubeDownloader is an optional interface for scrapers that handle
-// their own download with quality selection (e.g. video+audio muxing).
 type YouTubeDownloader interface {
 	DownloadVideoWithQuality(videoID, dest string, height int) error
 }
 
-// phase indicates which screen the dashboard is showing.
 type phase int
 
 const (
-	phaseLoading  phase = iota // fetching media items
-	phaseSelect                // quality / item selection
-	phaseDownload              // downloading with progress
-	phaseDone                  // finished
+	phaseLoading phase = iota
+	phaseSelect
+	phaseDownload
+	phaseDone
 )
 
-// itemState tracks the live download state of a single queued item.
 type itemState struct {
 	item    model.MediaItem
 	status  model.DownloadStatus
@@ -48,18 +43,13 @@ type itemState struct {
 	started time.Time
 }
 
-// Dashboard is a Bubble Tea model with two phases:
-//
-//	YouTube: select quality → download single video with progress
-//	Other:   auto-download all items with live progress table
 type Dashboard struct {
 	table    table.Model
 	progress progress.Model
 	spinner  spinner.Model
 	theme    styles.Theme
 
-	states []itemState
-
+	states     []itemState
 	downloader Downloader
 	dest       string
 
@@ -72,12 +62,9 @@ type Dashboard struct {
 	site     string
 	phase    phase
 
-	// Loading phase
 	scraperFn  func() ([]model.MediaItem, error)
-	scrapeURL  string
 	loadingErr string
 
-	// YouTube-specific
 	ytDownloader YouTubeDownloader
 	ytVideoID    string
 	ytTitle      string
@@ -89,51 +76,42 @@ type Dashboard struct {
 	sendFunc     func(tea.Msg)
 }
 
-const banner = `
- ___  ___  ___  ___  __   ___ ___ ___
-| _ \/ _ \| _ \/ __|  \ / __| __/ __|
-|  _/ (_) |   / (__    | (__| _|\__ \
-|_|  \___/|_|_\\___|  / \___|___|___/
-                  |__/`
+// Futuristic logo — clean, minimal
+const logo = "◢◤  SCRAPER  ◢◤"
 
-// New creates a Dashboard. The scraperFn is called in the background to
-// fetch media items; the TUI shows a loading spinner until results arrive.
 func New(scraperFn func() ([]model.MediaItem, error), dl Downloader, dest string, site string) *Dashboard {
 	isYouTube := site == "youtube"
 
 	var columns []table.Column
 	if isYouTube {
 		columns = []table.Column{
-			{Title: "  ", Width: 3},
-			{Title: "Quality", Width: 12},
-			{Title: "Size", Width: 10},
-			{Title: "Note", Width: 28},
+			{Title: "", Width: 2},
+			{Title: "QUALITY", Width: 12},
+			{Title: "SIZE", Width: 10},
+			{Title: "NOTE", Width: 30},
 		}
 	} else {
 		columns = []table.Column{
-			{Title: "  ", Width: 3},
-			{Title: "Filename", Width: 40},
-			{Title: "Type", Width: 8},
-			{Title: "Status", Width: 14},
-			{Title: "Progress", Width: 14},
+			{Title: "", Width: 2},
+			{Title: "FILE", Width: 42},
+			{Title: "STATUS", Width: 12},
+			{Title: "PROGRESS", Width: 16},
 		}
 	}
-
-	height := 4
 
 	t := table.New(
 		table.WithColumns(columns),
 		table.WithFocused(true),
-		table.WithHeight(height),
+		table.WithHeight(4),
 	)
 
 	sp := spinner.New()
-	sp.Spinner = spinner.Dot
-	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+	sp.Spinner = spinner.MiniDot
+	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(styles.ColorCyan))
 
 	d := &Dashboard{
 		table:      t,
-		progress:   progress.New(progress.WithDefaultGradient()),
+		progress:   progress.New(progress.WithSolidFill(styles.ColorAccent)),
 		spinner:    sp,
 		theme:      styles.DefaultTheme(),
 		downloader: dl,
@@ -145,99 +123,38 @@ func New(scraperFn func() ([]model.MediaItem, error), dl Downloader, dest string
 	return d
 }
 
-// SetYouTubeDownloader enables quality-select mode for YouTube downloads.
 func (d *Dashboard) SetYouTubeDownloader(yd YouTubeDownloader, videoID string) {
 	d.ytDownloader = yd
 	d.ytVideoID = videoID
 }
 
-// SetSendFunc allows the dashboard to send messages to the tea.Program.
 func (d *Dashboard) SetSendFunc(send func(tea.Msg)) {
 	d.sendFunc = send
 }
 
-// Init starts the spinner and kicks off the background scrape.
 func (d *Dashboard) Init() tea.Cmd {
-	return tea.Batch(
-		tea.EnterAltScreen,
-		d.spinner.Tick,
-		d.startScrape(),
-	)
+	return tea.Batch(tea.EnterAltScreen, d.spinner.Tick, d.startScrape())
 }
 
-// handleScrapeResult processes the background scrape result, populates the
-// table, and transitions to the appropriate phase.
-func (d *Dashboard) handleScrapeResult(msg scrapeResultMsg) (tea.Model, tea.Cmd) {
-	if msg.err != nil && len(msg.items) == 0 {
-		d.loadingErr = msg.err.Error()
-		d.phase = phaseDone
-		return d, nil
-	}
+// --- Messages ---
 
-	if len(msg.items) == 0 {
-		d.loadingErr = "no media items found"
-		d.phase = phaseDone
-		return d, nil
-	}
-
-	// Populate states
-	d.states = make([]itemState, len(msg.items))
-	for i, it := range msg.items {
-		d.states[i] = itemState{item: it, status: model.StatusPending, total: it.Size}
-	}
-
-	height := len(msg.items)
-	if height > 15 {
-		height = 15
-	}
-	if height < 4 {
-		height = 4
-	}
-	d.table.SetHeight(height)
-
-	isYouTube := d.site == "youtube"
-	if isYouTube {
-		d.phase = phaseSelect
-	} else {
-		d.phase = phaseDownload
-	}
-	d.refreshRows()
-
-	// Auto-start downloads for non-YouTube
-	var cmds []tea.Cmd
-	if !isYouTube && d.downloader != nil {
-		cmds = append(cmds, listenForProgress(d.downloader.Progress()))
-		cmds = append(cmds, d.startAllDownloads())
-	}
-	return d, tea.Batch(cmds...)
+type progressMsg model.ProgressEvent
+type downloadDoneMsg struct {
+	url string
+	err error
+}
+type youtubeDoneMsg struct{ err error }
+type tickMsg time.Time
+type scrapeResultMsg struct {
+	items []model.MediaItem
+	err   error
 }
 
-// startScrape runs the scraper in a background goroutine and sends the
-// results back as a scrapeResultMsg.
 func (d *Dashboard) startScrape() tea.Cmd {
 	return func() tea.Msg {
 		items, err := d.scraperFn()
 		return scrapeResultMsg{items: items, err: err}
 	}
-}
-
-type progressMsg model.ProgressEvent
-
-type downloadDoneMsg struct {
-	url string
-	err error
-}
-
-type youtubeDoneMsg struct {
-	err error
-}
-
-type tickMsg time.Time
-
-// scrapeResultMsg carries the result of the background scrape operation.
-type scrapeResultMsg struct {
-	items []model.MediaItem
-	err   error
 }
 
 func listenForProgress(ch <-chan model.ProgressEvent) tea.Cmd {
@@ -257,19 +174,19 @@ func startDownload(dl Downloader, item model.MediaItem, dest string) tea.Cmd {
 	}
 }
 
+// --- Update ---
+
 func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		d.width = msg.Width
-		d.height = msg.Height
-		d.ready = true
-		d.table.SetWidth(msg.Width - 4)
-		barWidth := msg.Width - 8
-		if barWidth > 80 {
-			barWidth = 80
+		d.width, d.height, d.ready = msg.Width, msg.Height, true
+		d.table.SetWidth(msg.Width - 6)
+		bw := msg.Width - 8
+		if bw > 80 {
+			bw = 80
 		}
-		if barWidth > 0 {
-			d.progress.Width = barWidth
+		if bw > 0 {
+			d.progress.Width = bw
 		}
 		return d, nil
 
@@ -279,9 +196,7 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return d, cmd
 
 	case tickMsg:
-		return d, tea.Tick(time.Second, func(t time.Time) tea.Msg {
-			return tickMsg(t)
-		})
+		return d, tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
 
 	case scrapeResultMsg:
 		return d.handleScrapeResult(msg)
@@ -334,13 +249,12 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case youtubeDoneMsg:
 		if msg.err != nil {
 			d.ytFailed = true
-			d.status = fmt.Sprintf("✗ failed: %v", msg.err)
-			d.phase = phaseDone
+			d.status = fmt.Sprintf("✗ %v", msg.err)
 		} else {
 			d.ytBytes = d.ytTotal
 			d.status = "✓ download complete"
-			d.phase = phaseDone
 		}
+		d.phase = phaseDone
 		return d, nil
 	}
 
@@ -349,14 +263,54 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return d, cmd
 }
 
-// --- YouTube download ---
+func (d *Dashboard) handleScrapeResult(msg scrapeResultMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil && len(msg.items) == 0 {
+		d.loadingErr = msg.err.Error()
+		d.phase = phaseDone
+		return d, nil
+	}
+	if len(msg.items) == 0 {
+		d.loadingErr = "no media items found"
+		d.phase = phaseDone
+		return d, nil
+	}
+
+	d.states = make([]itemState, len(msg.items))
+	for i, it := range msg.items {
+		d.states[i] = itemState{item: it, status: model.StatusPending, total: it.Size}
+	}
+
+	h := len(msg.items)
+	if h > 15 {
+		h = 15
+	}
+	if h < 4 {
+		h = 4
+	}
+	d.table.SetHeight(h)
+
+	if d.site == "youtube" {
+		d.phase = phaseSelect
+	} else {
+		d.phase = phaseDownload
+	}
+	d.refreshRows()
+
+	var cmds []tea.Cmd
+	if d.site != "youtube" && d.downloader != nil {
+		cmds = append(cmds, listenForProgress(d.downloader.Progress()))
+		cmds = append(cmds, d.startAllDownloads())
+	}
+	return d, tea.Batch(cmds...)
+}
+
+// --- YouTube ---
 
 func (d *Dashboard) startYouTubeDownload() tea.Cmd {
 	idx := d.table.Cursor()
 	if idx < 0 || idx >= len(d.states) {
 		return nil
 	}
-
 	height := d.parseHeightFromTitle(d.states[idx].item.Title)
 	d.ytTitle = d.extractTitle(d.states[idx].item.Title)
 	d.ytStarted = time.Now()
@@ -366,12 +320,10 @@ func (d *Dashboard) startYouTubeDownload() tea.Cmd {
 
 	return func() tea.Msg {
 		if yt, ok := d.ytDownloader.(interface{ SetProgressFunc(func(int64, int64)) }); ok {
-			yt.SetProgressFunc(func(bytes int64, total int64) {
+			yt.SetProgressFunc(func(bytes, total int64) {
 				if d.sendFunc != nil {
 					d.sendFunc(progressMsg(model.ProgressEvent{
-						Bytes:  bytes,
-						Total:  total,
-						Status: model.StatusDownloading,
+						Bytes: bytes, Total: total, Status: model.StatusDownloading,
 					}))
 				}
 			})
@@ -390,21 +342,19 @@ func (d *Dashboard) parseHeightFromTitle(title string) int {
 	if end < 0 {
 		return 0
 	}
-	heightStr := title[idx+1 : idx+end]
 	var h int
-	fmt.Sscanf(heightStr, "%d", &h)
+	fmt.Sscanf(title[idx+1:idx+end], "%d", &h)
 	return h
 }
 
 func (d *Dashboard) extractTitle(title string) string {
-	idx := strings.Index(title, " [")
-	if idx < 0 {
-		return title
+	if idx := strings.Index(title, " ["); idx >= 0 {
+		return title[:idx]
 	}
-	return title[:idx]
+	return title
 }
 
-// --- Batch download (non-YouTube) ---
+// --- Batch ---
 
 func (d *Dashboard) startAllDownloads() tea.Cmd {
 	if d.downloader == nil {
@@ -425,21 +375,22 @@ func (d *Dashboard) startAllDownloads() tea.Cmd {
 
 func (d *Dashboard) applyProgress(evt model.ProgressEvent) {
 	for i := range d.states {
-		if d.states[i].item.URL == evt.Item.URL {
-			if d.states[i].started.IsZero() {
-				d.states[i].started = time.Now()
-			}
-			elapsed := time.Since(d.states[i].started).Seconds()
-			d.states[i].status = evt.Status
-			d.states[i].bytes = evt.Bytes
-			if evt.Total > 0 {
-				d.states[i].total = evt.Total
-			}
-			if elapsed > 0 && evt.Bytes > 0 {
-				d.states[i].speed = float64(evt.Bytes) / elapsed
-			}
-			return
+		if d.states[i].item.URL != evt.Item.URL {
+			continue
 		}
+		if d.states[i].started.IsZero() {
+			d.states[i].started = time.Now()
+		}
+		elapsed := time.Since(d.states[i].started).Seconds()
+		d.states[i].status = evt.Status
+		d.states[i].bytes = evt.Bytes
+		if evt.Total > 0 {
+			d.states[i].total = evt.Total
+		}
+		if elapsed > 0 && evt.Bytes > 0 {
+			d.states[i].speed = float64(evt.Bytes) / elapsed
+		}
+		return
 	}
 }
 
@@ -458,11 +409,6 @@ func (d *Dashboard) applyDone(msg downloadDoneMsg) {
 		}
 		break
 	}
-	if msg.err != nil {
-		d.status = fmt.Sprintf("✗ failed: %s", msg.url)
-	} else {
-		d.status = fmt.Sprintf("✓ finished: %s", msg.url)
-	}
 }
 
 // --- Rendering ---
@@ -470,33 +416,29 @@ func (d *Dashboard) applyDone(msg downloadDoneMsg) {
 func (d *Dashboard) refreshRows() {
 	rows := make([]table.Row, len(d.states))
 	for i, st := range d.states {
-		mark := "○"
-		if st.status == model.StatusDownloading {
-			mark = "◐"
-		} else if st.status == model.StatusCompleted {
+		mark := " "
+		switch st.status {
+		case model.StatusDownloading:
+			mark = d.spinner.View()
+		case model.StatusCompleted:
 			mark = "✓"
-		} else if st.status == model.StatusFailed {
+		case model.StatusFailed:
 			mark = "✗"
+		case model.StatusPending:
+			mark = "·"
 		}
 
 		if d.site == "youtube" {
-			quality, note := d.splitQualityNote(st.item.Title)
-			rows[i] = table.Row{mark, quality, humanizeBytes(st.total), note}
+			q, note := d.splitQualityNote(st.item.Title)
+			rows[i] = table.Row{mark, q, humanizeBytes(st.total), note}
 		} else {
-			rows[i] = table.Row{
-				mark,
-				truncate(st.item.Title, 38),
-				mediaTypeIcon(st.item.Type),
-				statusLabel(st.status),
-				batchProgressBar(st),
-			}
+			rows[i] = table.Row{mark, truncate(st.item.Title, 40), statusShort(st.status), miniBar(st)}
 		}
 	}
 	d.table.SetRows(rows)
 }
 
 func (d *Dashboard) splitQualityNote(title string) (quality, note string) {
-	// Title format: "Video Title [1080p] (video-only (will mux audio))"
 	sIdx := strings.Index(title, " [")
 	if sIdx < 0 {
 		return title, ""
@@ -511,33 +453,23 @@ func (d *Dashboard) splitQualityNote(title string) (quality, note string) {
 	return quality, note
 }
 
+// --- View ---
+
 func (d *Dashboard) View() string {
 	if d.quitting {
 		return ""
 	}
 
-	bannerStyled := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("213")).
-		Render(banner)
-
-	siteLabel := d.theme.Subtitle.Render(
-		fmt.Sprintf("  Site: %s  •  Output: %s", d.site, d.dest),
-	)
-
-	header := lipgloss.JoinVertical(lipgloss.Left, bannerStyled, siteLabel)
+	logo := d.theme.Cyan.Bold(true).Render(logo)
+	site := d.theme.Dim.Render(fmt.Sprintf(" %s → %s", d.site, d.dest))
+	header := lipgloss.JoinVertical(lipgloss.Left, logo, site)
 
 	if d.phase == phaseLoading {
 		return d.viewLoading(header)
 	}
-
 	if d.phase == phaseDone && d.loadingErr != "" && len(d.states) == 0 {
-		return lipgloss.JoinVertical(lipgloss.Left,
-			header, "",
-			d.theme.Error.Render("  ✗ "+d.loadingErr), "",
-			d.theme.Footer.Render("  q quit  "),
-		)
+		return d.viewError(header)
 	}
-
 	if d.ytDownloader != nil {
 		return d.viewYouTube(header)
 	}
@@ -545,20 +477,22 @@ func (d *Dashboard) View() string {
 }
 
 func (d *Dashboard) viewLoading(header string) string {
-	msg := d.spinner.View() + "  Fetching media items..."
+	msg := d.spinner.View() + " " + d.theme.Dim.Render("fetching media items...")
 	return lipgloss.JoinVertical(lipgloss.Left,
-		header, "",
-		lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("99")).
-			Padding(1, 2).
-			Render(msg),
-		"",
-		d.theme.Footer.Render("  q quit  "),
+		"", header, "",
+		d.theme.PanelSlim.Render(msg), "",
+		d.theme.Footer.Render("  q quit"),
 	)
 }
 
-// viewYouTube renders the two-phase YouTube flow.
+func (d *Dashboard) viewError(header string) string {
+	return lipgloss.JoinVertical(lipgloss.Left,
+		"", header, "",
+		d.theme.Error.Render("  ✗ "+d.loadingErr), "",
+		d.theme.Footer.Render("  q quit"),
+	)
+}
+
 func (d *Dashboard) viewYouTube(header string) string {
 	if d.phase == phaseSelect {
 		return d.viewYouTubeSelect(header)
@@ -567,34 +501,16 @@ func (d *Dashboard) viewYouTube(header string) string {
 }
 
 func (d *Dashboard) viewYouTubeSelect(header string) string {
-	titleBox := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("99")).
-		Padding(0, 2).
-		Render(d.theme.Highlight.Render("Video: ") + d.ytTitle)
-
-	tablePanel := d.theme.Border.Render(d.table.View())
-
-	instruction := d.theme.Footer.Render(
-		"  ↑/↓ select quality  •  enter download  •  q quit  ",
-	)
-
+	titleLine := d.theme.Dim.Render("  video  ") + d.theme.Bright.Render(d.ytTitle)
+	tablePanel := d.theme.PanelSlim.Render(d.table.View())
+	footer := d.theme.Footer.Render("  ↑↓ select quality  •  enter download  •  q quit")
 	return lipgloss.JoinVertical(lipgloss.Left,
-		header, "",
-		titleBox, "",
-		lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Render("  Available qualities:"),
-		tablePanel, "",
-		instruction,
+		"", header, "",
+		titleLine, "", tablePanel, "", footer,
 	)
 }
 
 func (d *Dashboard) viewYouTubeProgress(header string) string {
-	titleBox := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("99")).
-		Padding(0, 2).
-		Render(d.theme.Highlight.Render("Video: ") + d.ytTitle)
-
 	var pct float64
 	if d.ytTotal > 0 {
 		pct = float64(d.ytBytes) / float64(d.ytTotal)
@@ -603,69 +519,67 @@ func (d *Dashboard) viewYouTubeProgress(header string) string {
 		}
 	}
 
-	bigBar := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("63")).
-		Padding(1, 2).
-		Render(
-			lipgloss.JoinVertical(lipgloss.Left,
-				d.spinner.View()+" "+statusLabelYT(d.phase, d.ytFailed),
-				"",
-				d.progress.ViewAs(pct),
-				fmt.Sprintf("  %s / %s  (%.0f%%)", humanizeBytes(d.ytBytes), humanizeBytes(d.ytTotal), pct*100),
-				fmt.Sprintf("  Speed: %s/s  •  ETA: %s", humanizeBytes(int64(d.ytSpeed)), d.ytETA()),
-			),
-		)
+	statusIcon := d.spinner.View()
+	statusText := "downloading"
+	if d.phase == phaseDone {
+		if d.ytFailed {
+			statusIcon = "✗"
+			statusText = "failed"
+		} else {
+			statusIcon = "✓"
+			statusText = "complete"
+		}
+	}
 
-	footer := d.theme.Footer.Render("  q quit  ")
+	titleLine := d.theme.Dim.Render("  video  ") + d.theme.Bright.Render(d.ytTitle)
 
-	sections := []string{header, "", titleBox, "", bigBar}
+	progressBlock := lipgloss.JoinVertical(lipgloss.Left,
+		fmt.Sprintf("  %s %s", statusIcon, d.theme.Accent.Render(statusText)),
+		"",
+		"  "+d.progress.ViewAs(pct),
+		fmt.Sprintf("  %s / %s  ·  %.0f%%", humanizeBytes(d.ytBytes), humanizeBytes(d.ytTotal), pct*100),
+		fmt.Sprintf("  %s/s  ·  ETA %s", humanizeBytes(int64(d.ytSpeed)), d.ytETA()),
+	)
+
+	footer := d.theme.Footer.Render("  q quit")
+
+	sections := []string{"", header, "", titleLine, "", d.theme.PanelSlim.Render(progressBlock)}
 	if d.status != "" {
-		sections = append(sections, "", d.status)
+		sections = append(sections, "", d.theme.Dim.Render("  "+d.status))
 	}
 	sections = append(sections, "", footer)
-
 	return lipgloss.JoinVertical(lipgloss.Left, sections...)
 }
 
-// viewBatch renders the multi-file batch download view.
 func (d *Dashboard) viewBatch(header string) string {
-	tablePanel := d.theme.Border.Render(d.table.View())
-
+	tablePanel := d.theme.PanelSlim.Render(d.table.View())
 	stats := d.renderStats()
 
-	bigBar := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("63")).
-		Padding(0, 1).
-		Render(
-			lipgloss.JoinVertical(lipgloss.Left,
-				lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Render("Overall Progress"),
-				d.progress.ViewAs(d.overallPercent()),
-			),
-		)
+	var pct float64 = d.overallPercent()
+	progressBlock := lipgloss.JoinVertical(lipgloss.Left,
+		d.theme.Dim.Render("  overall"),
+		"  "+d.progress.ViewAs(pct),
+		fmt.Sprintf("  %.0f%%", pct*100),
+	)
 
-	footer := d.theme.Footer.Render("  q quit  ")
+	footer := d.theme.Footer.Render("  q quit")
 
-	sections := []string{header, "", stats, "", tablePanel, "", bigBar}
+	sections := []string{"", header, "", stats, "", tablePanel, "", d.theme.PanelSlim.Render(progressBlock)}
 	if d.status != "" {
-		sections = append(sections, "", d.status)
+		sections = append(sections, "", d.theme.Dim.Render("  "+d.status))
 	}
 	sections = append(sections, "", footer)
-
 	return lipgloss.JoinVertical(lipgloss.Left, sections...)
 }
 
 func (d *Dashboard) renderStats() string {
-	var pending, downloading, completed, failed int
+	var downloading, completed, failed int
 	var downloadedBytes, totalBytes int64
-	var itemsWithKnownSize, itemsCompleted int
+	var itemsWithKnownSize int
 	var totalSpeed float64
 
 	for _, st := range d.states {
 		switch st.status {
-		case model.StatusPending:
-			pending++
 		case model.StatusDownloading:
 			downloading++
 		case model.StatusCompleted:
@@ -673,14 +587,10 @@ func (d *Dashboard) renderStats() string {
 		case model.StatusFailed:
 			failed++
 		}
-
 		downloadedBytes += st.bytes
 		if st.total > 0 {
 			totalBytes += st.total
 			itemsWithKnownSize++
-		}
-		if st.status == model.StatusCompleted {
-			itemsCompleted++
 		}
 		if st.status == model.StatusDownloading {
 			totalSpeed += st.speed
@@ -688,45 +598,34 @@ func (d *Dashboard) renderStats() string {
 	}
 
 	total := len(d.states)
-	spin := d.spinner.View()
-	stat := func(label, value string) string {
-		return fmt.Sprintf("  %s%s %s",
-			d.theme.StatLabel.Render(label),
-			d.theme.Muted.Render(":"),
-			d.theme.StatValue.Render(value),
-		)
+	parts := []string{
+		fmt.Sprintf("%s/%s", d.theme.Value.Render(fmt.Sprintf("%d", completed)), d.theme.Dim.Render(fmt.Sprintf("%d", total))),
+		d.theme.Dim.Render("active ") + d.theme.Cyan.Render(fmt.Sprintf("%d", downloading)),
+		d.theme.Dim.Render("failed ") + d.theme.Error.Render(fmt.Sprintf("%d", failed)),
 	}
 
-	// Size display: show downloaded / total when sizes are known,
-	// otherwise show downloaded (no total).
-	sizeStr := ""
+	sizeStr := humanizeBytes(downloadedBytes)
 	if itemsWithKnownSize > 0 && totalBytes > 0 {
 		sizeStr = fmt.Sprintf("%s / %s", humanizeBytes(downloadedBytes), humanizeBytes(totalBytes))
-	} else {
-		sizeStr = humanizeBytes(downloadedBytes)
 	}
-
-	line := fmt.Sprintf("%s %s %s %s %s %s %s",
-		spin,
-		stat("Done", fmt.Sprintf("%d/%d", completed, total)),
-		stat("Active", fmt.Sprintf("%d", downloading)),
-		stat("Failed", fmt.Sprintf("%d", failed)),
-		stat("Speed", fmt.Sprintf("%s/s", humanizeBytes(int64(totalSpeed)))),
-		stat("Size", sizeStr),
-		stat("ETA", d.eta()),
+	parts = append(parts,
+		d.theme.Dim.Render("speed ")+d.theme.Cyan.Render(fmt.Sprintf("%s/s", humanizeBytes(int64(totalSpeed)))),
+		d.theme.Dim.Render("size ")+d.theme.Value.Render(sizeStr),
+		d.theme.Dim.Render("eta ")+d.theme.Accent.Render(d.eta()),
 	)
 
+	line := d.spinner.View() + " " + d.theme.Dim.Render("done ") + strings.Join(parts, "  ")
 	return d.theme.StatusBar.Render(line)
 }
+
+// --- Calculations ---
 
 func (d *Dashboard) overallPercent() float64 {
 	if len(d.states) == 0 {
 		return 0
 	}
-
 	var knownTotal, knownDone int64
 	var itemsWithKnownSize, completedItems, totalItems int
-
 	for _, st := range d.states {
 		totalItems++
 		if st.total > 0 {
@@ -738,13 +637,9 @@ func (d *Dashboard) overallPercent() float64 {
 			completedItems++
 		}
 	}
-
-	// If ALL items have known sizes, use byte-based progress
 	if itemsWithKnownSize == totalItems && knownTotal > 0 {
 		return float64(knownDone) / float64(knownTotal)
 	}
-
-	// If SOME items have known sizes, blend: known items by bytes, unknown by count
 	if itemsWithKnownSize > 0 && knownTotal > 0 {
 		knownPct := float64(knownDone) / float64(knownTotal)
 		unknownItems := totalItems - itemsWithKnownSize
@@ -758,11 +653,8 @@ func (d *Dashboard) overallPercent() float64 {
 		if unknownItems > 0 {
 			unknownPct = float64(completedUnknown) / float64(unknownItems)
 		}
-		// Weight each portion by its share of total items
 		return (knownPct*float64(itemsWithKnownSize) + unknownPct*float64(unknownItems)) / float64(totalItems)
 	}
-
-	// No size info at all — use item-count-based progress
 	return float64(completedItems) / float64(totalItems)
 }
 
@@ -787,46 +679,32 @@ func (d *Dashboard) eta() string {
 	if speed <= 0 {
 		return "—"
 	}
-	remaining := float64(totalBytes-downloadedBytes) / speed
-	return formatDuration(time.Duration(remaining) * time.Second)
+	return formatDuration(time.Duration(float64(totalBytes-downloadedBytes)/speed) * time.Second)
 }
 
 func (d *Dashboard) ytETA() string {
 	if d.ytTotal == 0 || d.ytBytes == 0 || d.ytSpeed <= 0 {
 		return "—"
 	}
-	remaining := float64(d.ytTotal-d.ytBytes) / d.ytSpeed
-	return formatDuration(time.Duration(remaining) * time.Second)
+	return formatDuration(time.Duration(float64(d.ytTotal-d.ytBytes)/d.ytSpeed) * time.Second)
 }
 
-func statusLabelYT(p phase, failed bool) string {
-	switch p {
-	case phaseDownload:
-		return "Downloading..."
-	case phaseDone:
-		if failed {
-			return "✗ Failed"
-		}
-		return "✓ Complete"
-	default:
-		return "Ready"
-	}
-}
+// --- Helpers ---
 
 func humanizeBytes(n int64) string {
-	const unit = 1024
 	if n < 0 {
 		return "?"
 	}
-	if n < unit {
+	const u = 1024
+	if n < u {
 		return fmt.Sprintf("%dB", n)
 	}
-	div, exp := int64(unit), 0
-	for n2 := n / unit; n2 >= unit; n2 /= unit {
-		div *= unit
+	div, exp := int64(u), 0
+	for n2 := n / u; n2 >= u; n2 /= u {
+		div *= u
 		exp++
 	}
-	return fmt.Sprintf("%.1f%ciB", float64(n)/float64(div), "KMGTPE"[exp])
+	return fmt.Sprintf("%.1f%c", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
 func formatDuration(d time.Duration) string {
@@ -842,60 +720,40 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
 }
 
-func statusLabel(s model.DownloadStatus) string {
+func statusShort(s model.DownloadStatus) string {
 	switch s {
 	case model.StatusPending:
-		return "○ pending"
+		return "queued"
 	case model.StatusDownloading:
-		return "◐ downloading"
+		return "active"
 	case model.StatusCompleted:
-		return "✓ done"
+		return "done"
 	case model.StatusFailed:
-		return "✗ failed"
-	case model.StatusCancelled:
-		return "⊘ cancelled"
+		return "failed"
 	default:
-		return "? unknown"
+		return "—"
 	}
 }
 
-func mediaTypeIcon(t model.MediaType) string {
-	switch t {
-	case model.MediaTypeVideo:
-		return "🎬"
-	case model.MediaTypeImage:
-		return "🖼"
-	default:
-		return "📁"
-	}
-}
-
-func batchProgressBar(st itemState) string {
+func miniBar(st itemState) string {
 	if st.status == model.StatusCompleted {
-		return "██████████ 100%"
+		return "▰▰▰▰▰▰▰▰▰▰ 100%"
 	}
 	if st.status == model.StatusPending {
-		return "░░░░░░░░░░   0%"
+		return "▱▱▱▱▱▱▱▱▱▱ 0%"
 	}
 	if st.status == model.StatusFailed {
 		return "✗ failed"
 	}
 	if st.total <= 0 {
-		return "▒▒▒▒▒▒▒▒▒▒ ???"
+		return "▰▰▱▱▱▱▱▱▱▱ ???"
 	}
 	pct := float64(st.bytes) / float64(st.total)
 	if pct > 1 {
 		pct = 1
 	}
-	return fmt.Sprintf("%s %3d%%", barString(pct, 10), int(pct*100))
-}
-
-func barString(pct float64, width int) string {
-	filled := int(pct * float64(width))
-	if filled > width {
-		filled = width
-	}
-	return strings.Repeat("█", filled) + strings.Repeat("░", width-filled)
+	filled := int(pct * 10)
+	return strings.Repeat("▰", filled) + strings.Repeat("▱", 10-filled) + fmt.Sprintf(" %3d%%", int(pct*100))
 }
 
 func truncate(s string, max int) string {
