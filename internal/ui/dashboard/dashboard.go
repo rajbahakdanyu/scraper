@@ -565,17 +565,9 @@ func (d *Dashboard) viewYouTubeProgress(header string) string {
 func (d *Dashboard) viewBatch(header string) string {
 	tablePanel := d.theme.PanelSlim.Render(d.table.View())
 	stats := d.renderStats()
-
-	var pct float64 = d.overallPercent()
-	progressBlock := lipgloss.JoinVertical(lipgloss.Left,
-		d.theme.Dim.Render("  overall"),
-		"  "+d.progress.ViewAs(pct),
-		fmt.Sprintf("  %.0f%%", pct*100),
-	)
-
 	footer := d.theme.Footer.Render("  q quit")
 
-	sections := []string{"", header, "", stats, "", tablePanel, "", d.theme.PanelSlim.Render(progressBlock)}
+	sections := []string{"", header, "", stats, "", tablePanel}
 	if d.status != "" {
 		sections = append(sections, "", d.theme.Dim.Render("  "+d.status))
 	}
@@ -585,8 +577,6 @@ func (d *Dashboard) viewBatch(header string) string {
 
 func (d *Dashboard) renderStats() string {
 	var downloading, completed, failed int
-	var downloadedBytes, totalBytes int64
-	var itemsWithKnownSize int
 	var totalSpeed float64
 
 	for _, st := range d.states {
@@ -597,14 +587,6 @@ func (d *Dashboard) renderStats() string {
 			completed++
 		case model.StatusFailed:
 			failed++
-		}
-		// For completed items with unknown size, keep their final bytes value.
-		// For downloading items, use their current bytes.
-		// For pending items, bytes is 0.
-		downloadedBytes += st.bytes
-		if st.total > 0 {
-			totalBytes += st.total
-			itemsWithKnownSize++
 		}
 		if st.status == model.StatusDownloading {
 			totalSpeed += st.speed
@@ -618,18 +600,9 @@ func (d *Dashboard) renderStats() string {
 		d.theme.Dim.Render("failed ") + d.theme.Error.Render(fmt.Sprintf("%d", failed)),
 	}
 
-	// Size: always show cumulative downloaded bytes.
-	// If total is known, show "downloaded / total".
-	// If not, show "downloaded" (monotonically increasing).
-	sizeStr := humanizeBytes(downloadedBytes)
-	if itemsWithKnownSize > 0 && totalBytes > 0 {
-		sizeStr = fmt.Sprintf("%s / %s", humanizeBytes(downloadedBytes), humanizeBytes(totalBytes))
+	if totalSpeed > 0 {
+		parts = append(parts, d.theme.Dim.Render("speed ")+d.theme.Cyan.Render(fmt.Sprintf("%s/s", humanizeBytes(int64(totalSpeed)))))
 	}
-	parts = append(parts,
-		d.theme.Dim.Render("speed ")+d.theme.Cyan.Render(fmt.Sprintf("%s/s", humanizeBytes(int64(totalSpeed)))),
-		d.theme.Dim.Render("size ")+d.theme.Value.Render(sizeStr),
-		d.theme.Dim.Render("eta ")+d.theme.Accent.Render(d.eta()),
-	)
 
 	line := d.spinner.View() + " " + d.theme.Dim.Render("done ") + strings.Join(parts, "  ")
 	return d.theme.StatusBar.Render(line)
