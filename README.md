@@ -1,37 +1,55 @@
 # Scraper CLI
 
-A Go-based CLI tool for scraping and downloading media from YouTube, GoFile,
-CyberDrop, and Bunker, with an interactive terminal UI for managing downloads.
+A Go-based CLI tool for scraping and downloading media from YouTube,
+CyberDrop, Bunker, and GoonBox — with a futuristic terminal UI that
+launches instantly and shows live download progress.
 
 ## Requirements
 
-- Go 1.21 or newer (developed/tested with Go 1.26)
+- Go 1.21 or newer
+- `ffmpeg` (for YouTube downloads above 360p — video+audio are muxed automatically)
 
-## Install / Build
+## Build
 
 ```bash
 go build -o scraper ./cmd/scraper
 ```
 
-Or install directly:
-
-```bash
-go install github.com/user/scraper/cmd/scraper@latest
-```
-
 ## Usage
 
-Each site has its own subcommand. The target URL can be passed positionally
-or via `--url`/`-u`.
+Every command launches the TUI immediately. The scraper runs in the
+background with a loading spinner, then transitions to the download view.
 
 ```bash
-scraper youtube https://youtube.com/watch?v=xxx --output ./downloads
-scraper gofile https://gofile.io/d/xxx
-scraper cyberdrop https://cyberdrop.me/a/xxx
-scraper bunker https://bunkr.sv/a/xxx
+./scraper youtube https://youtu.be/VIDEO_ID
+./scraper cyberdrop https://cyberdrop.cr/f/FILE_ID
+./scraper bunker https://bunkr.cr/a/ALBUM_ID
+./scraper goonbox https://goonbox.cr/a/ALBUM_ID
 ```
 
-Common flags (available on every site subcommand as persistent flags):
+### YouTube
+
+Shows a quality selector (144p–2160p). Pick a resolution and press Enter
+to download. For resolutions above 360p, video and audio streams are
+downloaded separately and muxed with ffmpeg.
+
+### Albums (Bunker, GoonBox, CyberDrop)
+
+All files in an album are auto-downloaded concurrently into a subfolder
+named after the album ID:
+
+```
+./downloads/
+  k4OuX4pJ/        ← album subfolder
+    image1.png
+    video1.mp4
+    ...
+```
+
+Single files (e.g. CyberDrop `/f/` links) download directly to the
+output directory.
+
+### Flags
 
 | Flag             | Default | Description                                  |
 |------------------|---------|-----------------------------------------------|
@@ -39,32 +57,18 @@ Common flags (available on every site subcommand as persistent flags):
 | `-o, --output`   | `.`     | Output directory                             |
 | `--concurrent`   | `5`     | Maximum concurrent downloads                 |
 | `--config`       | (none)  | Config file path (default: `~/.scraper.yaml`)|
-| `--ui-mode`      | `minimal` | UI mode: full, minimal, quiet              |
 
-### Interactive TUI
+### TUI Keybindings
 
-Launch a full-screen dashboard that lists parsed items and lets you select
-and download them interactively:
-
-```bash
-scraper tui <site> <url>
-```
-
-`<site>` is one of `youtube`, `gofile`, `cyberdrop`, `bunker`.
-
-Keybindings inside the dashboard:
-
-| Key             | Action                                              |
-|-----------------|------------------------------------------------------|
-| `↑/k`, `↓/j`    | Navigate the item list                               |
-| `space`         | Toggle selection of the current item                 |
-| `enter`         | Download selected items (or all, if none selected)   |
-| `q`, `ctrl+c`   | Quit                                                  |
+| Key             | Action                           |
+|-----------------|-----------------------------------|
+| `↑/k`, `↓/j`    | Navigate / select quality        |
+| `enter`         | Start download (YouTube)         |
+| `q`, `ctrl+c`   | Quit                              |
 
 ## Configuration
 
-`internal/config` supports loading a YAML config file (default
-`~/.scraper.yaml`):
+A YAML config file can be placed at `~/.scraper.yaml`:
 
 ```yaml
 output_dir: ~/Downloads
@@ -73,29 +77,16 @@ timeout: 30s
 user_agent: "Scraper/1.0"
 ```
 
-The config file is loaded automatically from `~/.scraper.yaml` (or a path
-specified via `--config`). CLI flags override config file values.
+CLI flags override config file values.
 
-## Project Structure
+## Supported Sites
 
-See [docs/usage.md](docs/usage.md) for a per-command reference, and
-[docs/superpowers/specs/2026-07-08-cli-scraper-design.md](docs/superpowers/specs/2026-07-08-cli-scraper-design.md)
-for the original design doc.
-
-## Known Limitations
-
-- **YouTube**: uses the public oEmbed endpoint for metadata only; it does not
-  resolve real downloadable video stream URLs. Real stream extraction is
-  legally/technically involved (signature deciphering, format negotiation)
-  and is out of scope here.
-- **GoFile**: calls the unauthenticated `/contents/{id}` API; GoFile now
-  generally requires an account token for most content, so live results may
-  return an API error.
-- **CyberDrop / Bunker**: use best-effort CSS selectors that may not match
-  every page layout; treat them as a starting point to adapt against the
-  live site markup.
-- No bandwidth throttling yet; per-item pause/cancel is available via the
-  downloader API but not wired into the TUI keybindings.
+| Site      | URL format                          | Notes                                |
+|-----------|-------------------------------------|--------------------------------------|
+| YouTube   | `youtu.be/ID` or `youtube.com/watch?v=ID` | Quality selector + ffmpeg muxing |
+| CyberDrop | `cyberdrop.cr/f/SLUG` or `/a/SLUG` | API-based, signed CDN URLs           |
+| Bunker    | `bunkr.cr/a/ALBUM_ID`              | API + token signing, parallel fetch  |
+| GoonBox   | `goonbox.cr/a/ALBUM_ID`            | JSON API, paginated albums           |
 
 ## Development
 
