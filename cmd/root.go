@@ -106,6 +106,9 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 	)
 	d := dashboard.New(items, dl, cfg.OutputDir, siteName)
 
+	p := tea.NewProgram(d, tea.WithAltScreen())
+	d.SetSendFunc(func(msg tea.Msg) { p.Send(msg) })
+
 	// YouTube: show quality selector, let user pick one, then download
 	// via DownloadVideoWithQuality (handles video+audio muxing).
 	if siteName == "youtube" {
@@ -121,7 +124,6 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 		}
 	}
 
-	p := tea.NewProgram(d, tea.WithAltScreen())
 	_, err = p.Run()
 	return err
 }

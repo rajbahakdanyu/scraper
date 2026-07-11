@@ -16,10 +16,14 @@ import (
 	"github.com/user/scraper/internal/model"
 )
 
+// ProgressFunc is called with cumulative bytes downloaded.
+type ProgressFunc func(bytes int64, total int64)
+
 type Scraper struct {
-	client  *http.Client
-	video   *ytdl.Client
-	baseURL string
+	client   *http.Client
+	video    *ytdl.Client
+	baseURL  string
+	progress ProgressFunc
 }
 
 // NewYouTubeScraper creates a YouTube scraper using the kkdai/youtube library
@@ -30,6 +34,11 @@ func NewYouTubeScraper() *Scraper {
 		video:   &ytdl.Client{},
 		baseURL: "https://www.youtube.com",
 	}
+}
+
+// SetProgressFunc sets a callback for download progress reporting.
+func (s *Scraper) SetProgressFunc(fn ProgressFunc) {
+	s.progress = fn
 }
 
 func (s *Scraper) Name() string {
@@ -251,7 +260,7 @@ func (s *Scraper) downloadAndMux(video *ytdl.Video, videoFmt, audioFmt *ytdl.For
 }
 
 func (s *Scraper) downloadStreamToFile(video *ytdl.Video, format *ytdl.Format, path string) error {
-	stream, _, err := s.video.GetStream(video, format)
+	stream, size, err := s.video.GetStream(video, format)
 	if err != nil {
 		return err
 	}
@@ -263,8 +272,27 @@ func (s *Scraper) downloadStreamToFile(video *ytdl.Video, format *ytdl.Format, p
 	}
 	defer out.Close()
 
-	_, err = io.Copy(out, stream)
-	return err
+	var read int64
+	buf := make([]byte, 32*1024)
+	for {
+		n, readErr := stream.Read(buf)
+		if n > 0 {
+			if _, werr := out.Write(buf[:n]); werr != nil {
+				return werr
+			}
+			read += int64(n)
+			if s.progress != nil {
+				s.progress(read, size)
+			}
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return readErr
+		}
+	}
+	return nil
 }
 
 func (s *Scraper) ExtractVideoID(rawURL string) string {

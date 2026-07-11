@@ -64,6 +64,7 @@ type Dashboard struct {
 	ytDownloader  YouTubeDownloader
 	ytVideoID     string
 	ytDownloading bool
+	sendFunc      func(tea.Msg)
 }
 
 const banner = `
@@ -128,6 +129,12 @@ func (d *Dashboard) SetYouTubeDownloader(yd YouTubeDownloader, videoID string) {
 	d.ytVideoID = videoID
 }
 
+// SetSendFunc allows the dashboard to send messages to the tea.Program
+// from background goroutines (used for YouTube progress reporting).
+func (d *Dashboard) SetSendFunc(send func(tea.Msg)) {
+	d.sendFunc = send
+}
+
 // AutoStart marks all items for download immediately on Init.
 func (d *Dashboard) AutoStart() {
 	d.autoStart = true
@@ -185,12 +192,10 @@ func (d *Dashboard) startYouTubeDownload() tea.Cmd {
 		return nil
 	}
 
-	// Extract height from the item's Thumbnail field (which stores itag as string).
-	// We parse the quality label from the title.
 	height := d.parseHeightFromTitle(d.states[idx].item.Title)
+	selectedItem := d.states[idx].item
 	d.ytDownloading = true
 
-	// Mark all as pending except the selected one.
 	for i := range d.states {
 		if i == idx {
 			d.states[i].status = model.StatusDownloading
@@ -202,6 +207,18 @@ func (d *Dashboard) startYouTubeDownload() tea.Cmd {
 	d.refreshRows()
 
 	return func() tea.Msg {
+		if yt, ok := d.ytDownloader.(interface{ SetProgressFunc(func(int64, int64)) }); ok {
+			yt.SetProgressFunc(func(bytes int64, total int64) {
+				if d.sendFunc != nil {
+					d.sendFunc(progressMsg(model.ProgressEvent{
+						Item:   selectedItem,
+						Bytes:  bytes,
+						Total:  total,
+						Status: model.StatusDownloading,
+					}))
+				}
+			})
+		}
 		err := d.ytDownloader.DownloadVideoWithQuality(d.ytVideoID, d.dest, height)
 		return youtubeDoneMsg{err: err}
 	}
