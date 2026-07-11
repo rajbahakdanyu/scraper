@@ -65,6 +65,7 @@ func NewRootCmd() *cobra.Command {
 		newYouTubeCmd(opts),
 		newCyberDropCmd(opts),
 		newBunkerCmd(opts),
+		newGoonBoxCmd(opts),
 		newTUICmd(opts),
 	)
 

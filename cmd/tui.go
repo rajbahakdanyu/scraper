@@ -8,6 +8,7 @@ import (
 	"github.com/user/scraper/internal/model"
 	"github.com/user/scraper/internal/parser/bunker"
 	"github.com/user/scraper/internal/parser/cyberdrop"
+	"github.com/user/scraper/internal/parser/goonbox"
 	"github.com/user/scraper/internal/parser/youtube"
 )
 
@@ -16,6 +17,7 @@ func scraperRegistry() map[string]model.Scraper {
 		"youtube":   youtube.NewYouTubeScraper(),
 		"cyberdrop": cyberdrop.NewCyberDropScraper(),
 		"bunker":    bunker.NewBunkerScraper(),
+		"goonbox":   goonbox.NewGoonBoxScraper(),
 	}
 }
 

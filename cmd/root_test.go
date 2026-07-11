@@ -5,7 +5,7 @@ import "testing"
 func TestNewRootCmdRegistersSubcommands(t *testing.T) {
 	root := NewRootCmd()
 
-	want := []string{"youtube", "cyberdrop", "bunker", "tui"}
+	want := []string{"youtube", "cyberdrop", "bunker", "goonbox", "tui"}
 	for _, name := range want {
 		found := false
 		for _, c := range root.Commands() {
