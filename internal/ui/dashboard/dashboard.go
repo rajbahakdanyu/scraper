@@ -452,7 +452,9 @@ func (d *Dashboard) applyDone(msg downloadDoneMsg) {
 			d.states[i].status = model.StatusFailed
 		} else {
 			d.states[i].status = model.StatusCompleted
-			d.states[i].bytes = d.states[i].total
+			if d.states[i].total > 0 {
+				d.states[i].bytes = d.states[i].total
+			}
 		}
 		break
 	}
@@ -656,6 +658,10 @@ func (d *Dashboard) viewBatch(header string) string {
 
 func (d *Dashboard) renderStats() string {
 	var pending, downloading, completed, failed int
+	var downloadedBytes, totalBytes int64
+	var itemsWithKnownSize, itemsCompleted int
+	var totalSpeed float64
+
 	for _, st := range d.states {
 		switch st.status {
 		case model.StatusPending:
@@ -667,19 +673,21 @@ func (d *Dashboard) renderStats() string {
 		case model.StatusFailed:
 			failed++
 		}
-	}
 
-	total := len(d.states)
-	var downloadedBytes, totalBytes int64
-	var totalSpeed float64
-	for _, st := range d.states {
 		downloadedBytes += st.bytes
-		totalBytes += st.total
+		if st.total > 0 {
+			totalBytes += st.total
+			itemsWithKnownSize++
+		}
+		if st.status == model.StatusCompleted {
+			itemsCompleted++
+		}
 		if st.status == model.StatusDownloading {
 			totalSpeed += st.speed
 		}
 	}
 
+	total := len(d.states)
 	spin := d.spinner.View()
 	stat := func(label, value string) string {
 		return fmt.Sprintf("  %s%s %s",
@@ -689,14 +697,22 @@ func (d *Dashboard) renderStats() string {
 		)
 	}
 
-	line := fmt.Sprintf("%s %s %s %s %s %s %s %s",
+	// Size display: show downloaded / total when sizes are known,
+	// otherwise show downloaded (no total).
+	sizeStr := ""
+	if itemsWithKnownSize > 0 && totalBytes > 0 {
+		sizeStr = fmt.Sprintf("%s / %s", humanizeBytes(downloadedBytes), humanizeBytes(totalBytes))
+	} else {
+		sizeStr = humanizeBytes(downloadedBytes)
+	}
+
+	line := fmt.Sprintf("%s %s %s %s %s %s %s",
 		spin,
-		stat("Pending", fmt.Sprintf("%d/%d", pending, total)),
+		stat("Done", fmt.Sprintf("%d/%d", completed, total)),
 		stat("Active", fmt.Sprintf("%d", downloading)),
-		stat("Done", fmt.Sprintf("%d", completed)),
 		stat("Failed", fmt.Sprintf("%d", failed)),
 		stat("Speed", fmt.Sprintf("%s/s", humanizeBytes(int64(totalSpeed)))),
-		stat("Size", fmt.Sprintf("%s/%s", humanizeBytes(downloadedBytes), humanizeBytes(totalBytes))),
+		stat("Size", sizeStr),
 		stat("ETA", d.eta()),
 	)
 
@@ -704,29 +720,49 @@ func (d *Dashboard) renderStats() string {
 }
 
 func (d *Dashboard) overallPercent() float64 {
-	var total, done int64
-	var itemsWithSize, completedItems, totalItems int
+	if len(d.states) == 0 {
+		return 0
+	}
+
+	var knownTotal, knownDone int64
+	var itemsWithKnownSize, completedItems, totalItems int
+
 	for _, st := range d.states {
 		totalItems++
 		if st.total > 0 {
-			total += st.total
-			done += st.bytes
-			itemsWithSize++
+			knownTotal += st.total
+			knownDone += st.bytes
+			itemsWithKnownSize++
 		}
 		if st.status == model.StatusCompleted {
 			completedItems++
 		}
 	}
 
-	// If we have size info, use byte-based progress
-	if total > 0 {
-		return float64(done) / float64(total)
+	// If ALL items have known sizes, use byte-based progress
+	if itemsWithKnownSize == totalItems && knownTotal > 0 {
+		return float64(knownDone) / float64(knownTotal)
 	}
 
-	// No size info — use item-count-based progress
-	if totalItems == 0 {
-		return 0
+	// If SOME items have known sizes, blend: known items by bytes, unknown by count
+	if itemsWithKnownSize > 0 && knownTotal > 0 {
+		knownPct := float64(knownDone) / float64(knownTotal)
+		unknownItems := totalItems - itemsWithKnownSize
+		completedUnknown := 0
+		for _, st := range d.states {
+			if st.total <= 0 && st.status == model.StatusCompleted {
+				completedUnknown++
+			}
+		}
+		unknownPct := 0.0
+		if unknownItems > 0 {
+			unknownPct = float64(completedUnknown) / float64(unknownItems)
+		}
+		// Weight each portion by its share of total items
+		return (knownPct*float64(itemsWithKnownSize) + unknownPct*float64(unknownItems)) / float64(totalItems)
 	}
+
+	// No size info at all — use item-count-based progress
 	return float64(completedItems) / float64(totalItems)
 }
 
