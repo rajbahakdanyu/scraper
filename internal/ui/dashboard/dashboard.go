@@ -33,6 +33,12 @@ type itemState struct {
 	started  time.Time
 }
 
+// YouTubeDownloader is an optional interface for scrapers that handle
+// their own download with quality selection (e.g. video+audio muxing).
+type YouTubeDownloader interface {
+	DownloadVideoWithQuality(videoID, dest string, height int) error
+}
+
 // Dashboard is a Bubble Tea model that displays a queue of media items and
 // drives their downloads with live progress, stats, and rich styling.
 type Dashboard struct {
@@ -54,6 +60,10 @@ type Dashboard struct {
 	status    string
 	site      string
 	autoStart bool
+
+	ytDownloader  YouTubeDownloader
+	ytVideoID     string
+	ytDownloading bool
 }
 
 const banner = `
@@ -106,10 +116,16 @@ func New(items []model.MediaItem, dl Downloader, dest string, site string) *Dash
 		downloader: dl,
 		dest:       dest,
 		site:       site,
-		autoStart:  true,
+		autoStart:  site != "youtube",
 	}
 	d.refreshRows()
 	return d
+}
+
+// SetYouTubeDownloader enables quality-select mode for YouTube downloads.
+func (d *Dashboard) SetYouTubeDownloader(yd YouTubeDownloader, videoID string) {
+	d.ytDownloader = yd
+	d.ytVideoID = videoID
 }
 
 // AutoStart marks all items for download immediately on Init.
@@ -158,6 +174,55 @@ func startDownload(dl Downloader, item model.MediaItem, dest string) tea.Cmd {
 	}
 }
 
+// youtubeDoneMsg signals a YouTube quality-selected download has finished.
+type youtubeDoneMsg struct {
+	err error
+}
+
+func (d *Dashboard) startYouTubeDownload() tea.Cmd {
+	idx := d.table.Cursor()
+	if idx < 0 || idx >= len(d.states) {
+		return nil
+	}
+
+	// Extract height from the item's Thumbnail field (which stores itag as string).
+	// We parse the quality label from the title.
+	height := d.parseHeightFromTitle(d.states[idx].item.Title)
+	d.ytDownloading = true
+
+	// Mark all as pending except the selected one.
+	for i := range d.states {
+		if i == idx {
+			d.states[i].status = model.StatusDownloading
+			d.states[i].started = time.Now()
+		} else {
+			d.states[i].status = model.StatusCancelled
+		}
+	}
+	d.refreshRows()
+
+	return func() tea.Msg {
+		err := d.ytDownloader.DownloadVideoWithQuality(d.ytVideoID, d.dest, height)
+		return youtubeDoneMsg{err: err}
+	}
+}
+
+func (d *Dashboard) parseHeightFromTitle(title string) int {
+	// Title format: "Video Title [1080p] (video-only (will mux audio))"
+	idx := strings.Index(title, "[")
+	if idx < 0 {
+		return 0
+	}
+	end := strings.Index(title[idx:], "p]")
+	if end < 0 {
+		return 0
+	}
+	heightStr := title[idx+1 : idx+end]
+	var h int
+	fmt.Sscanf(heightStr, "%d", &h)
+	return h
+}
+
 func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -197,6 +262,9 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return d, nil
 		case "enter":
+			if d.ytDownloader != nil && !d.ytDownloading {
+				return d, d.startYouTubeDownload()
+			}
 			return d, d.startSelectedDownloads()
 		}
 
@@ -210,6 +278,27 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case downloadDoneMsg:
 		d.applyDone(msg)
+		d.refreshRows()
+		return d, nil
+
+	case youtubeDoneMsg:
+		d.ytDownloading = false
+		if msg.err != nil {
+			for i := range d.states {
+				if d.states[i].status == model.StatusDownloading {
+					d.states[i].status = model.StatusFailed
+				}
+			}
+			d.status = fmt.Sprintf("  ✗ failed: %v", msg.err)
+		} else {
+			for i := range d.states {
+				if d.states[i].status == model.StatusDownloading {
+					d.states[i].status = model.StatusCompleted
+					d.states[i].bytes = d.states[i].total
+				}
+			}
+			d.status = "  ✓ download complete"
+		}
 		d.refreshRows()
 		return d, nil
 	}
@@ -343,9 +432,20 @@ func (d *Dashboard) View() string {
 			),
 		)
 
-	footer := d.theme.Footer.Render(
-		"  ↑/↓ navigate  •  q quit  ",
-	)
+	var footer string
+	if d.ytDownloader != nil && !d.ytDownloading {
+		footer = d.theme.Footer.Render(
+			"  ↑/↓ select quality  •  enter download  •  q quit  ",
+		)
+	} else if d.ytDownloading {
+		footer = d.theme.Footer.Render(
+			"  downloading...  •  q quit  ",
+		)
+	} else {
+		footer = d.theme.Footer.Render(
+			"  ↑/↓ navigate  •  q quit  ",
+		)
+	}
 
 	sections := []string{
 		header,

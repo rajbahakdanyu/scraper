@@ -7,7 +7,9 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	ytdl "github.com/kkdai/youtube/v2"
@@ -34,8 +36,9 @@ func (s *Scraper) Name() string {
 	return "youtube"
 }
 
-// Parse extracts video metadata and stream formats. The first MediaItem
-// contains the best-quality combined video+audio stream URL.
+// Parse extracts video metadata and returns one MediaItem per available
+// quality level (deduplicated by resolution). Each item's Title is labeled
+// with the quality (e.g. "Video Title [1080p]").
 func (s *Scraper) Parse(rawURL string) ([]model.MediaItem, error) {
 	videoID := s.extractVideoID(rawURL)
 	if videoID == "" {
@@ -47,73 +50,143 @@ func (s *Scraper) Parse(rawURL string) ([]model.MediaItem, error) {
 		return nil, fmt.Errorf("youtube: failed to fetch video info: %w", err)
 	}
 
-	formats := video.Formats.WithAudioChannels()
-	if len(formats) == 0 {
-		return nil, fmt.Errorf("youtube: no downloadable stream formats found for %s", videoID)
-	}
-
-	best := pickBestFormat(formats)
-	url, err := s.video.GetStreamURL(video, &best)
-	if err != nil {
-		return nil, fmt.Errorf("youtube: failed to get stream URL: %w", err)
-	}
-
 	title := video.Title
 	if title == "" {
 		title = videoID
 	}
-	ext := "mp4"
-	if best.MimeType != "" && strings.Contains(best.MimeType, "webm") {
-		ext = "webm"
+
+	// Group formats by resolution, pick best codec per resolution.
+	byHeight := map[int]ytdl.Format{}
+	for _, f := range video.Formats {
+		if f.Height == 0 {
+			continue
+		}
+		existing, ok := byHeight[f.Height]
+		if !ok || f.Bitrate > existing.Bitrate {
+			byHeight[f.Height] = f
+		}
 	}
 
-	return []model.MediaItem{
-		{
-			URL:      url,
-			Title:    title + "." + ext,
-			Size:     best.ContentLength,
-			MimeType: best.MimeType,
-			Type:     model.MediaTypeVideo,
-		},
-	}, nil
+	// Sort resolutions descending.
+	heights := make([]int, 0, len(byHeight))
+	for h := range byHeight {
+		heights = append(heights, h)
+	}
+	sort.Sort(sort.Reverse(sort.IntSlice(heights)))
+
+	if len(heights) == 0 {
+		return nil, fmt.Errorf("youtube: no video formats found for %s", videoID)
+	}
+
+	var items []model.MediaItem
+	for _, h := range heights {
+		f := byHeight[h]
+		streamURL, err := s.video.GetStreamURL(video, &f)
+		if err != nil {
+			continue
+		}
+		ext := "mp4"
+		if strings.Contains(f.MimeType, "webm") {
+			ext = "webm"
+		}
+		_ = ext
+		label := f.QualityLabel
+		if label == "" {
+			label = fmt.Sprintf("%dp", h)
+		}
+
+		note := "video-only (will mux audio)"
+		if f.AudioChannels > 0 {
+			note = "video+audio"
+		}
+
+		items = append(items, model.MediaItem{
+			URL:       streamURL,
+			Title:     fmt.Sprintf("%s [%s] (%s)", title, label, note),
+			Size:      f.ContentLength,
+			MimeType:  f.MimeType,
+			Type:      model.MediaTypeVideo,
+			Thumbnail: fmt.Sprintf("%d", f.ItagNo),
+		})
+	}
+
+	return items, nil
 }
 
-// DownloadVideo downloads a YouTube video directly using the kkdai/youtube
-// library, which handles YouTube's signature deciphering internally. This
-// is used as an alternative to the generic HTTP downloader for YouTube
-// URLs that require signed stream access.
+// DownloadVideo downloads a YouTube video at the given quality. For muxed
+// formats (itag 18, 360p), it downloads directly. For video-only formats,
+// it downloads video + audio separately and muxes with ffmpeg.
 func (s *Scraper) DownloadVideo(videoID, dest string) error {
+	return s.DownloadVideoWithQuality(videoID, dest, 0)
+}
+
+// DownloadVideoWithQuality downloads a YouTube video at a specific height.
+// If height is 0, picks the best available.
+func (s *Scraper) DownloadVideoWithQuality(videoID, dest string, height int) error {
 	video, err := s.video.GetVideoContext(context.Background(), videoID)
 	if err != nil {
 		return fmt.Errorf("youtube: failed to fetch video info: %w", err)
 	}
 
-	formats := video.Formats.WithAudioChannels()
-	if len(formats) == 0 {
-		return fmt.Errorf("youtube: no downloadable formats")
-	}
-
-	best := pickBestFormat(formats)
-
 	title := video.Title
 	if title == "" {
 		title = videoID
 	}
-	ext := "mp4"
-	if best.MimeType != "" && strings.Contains(best.MimeType, "webm") {
-		ext = "webm"
+
+	// Pick video format for the requested quality.
+	var videoFormat *ytdl.Format
+	for i := range video.Formats {
+		f := &video.Formats[i]
+		if f.Height == 0 {
+			continue
+		}
+		if height > 0 && f.Height != height {
+			continue
+		}
+		if videoFormat == nil || f.Height > videoFormat.Height ||
+			(f.Height == videoFormat.Height && f.Bitrate > videoFormat.Bitrate) {
+			videoFormat = f
+		}
+	}
+	if videoFormat == nil {
+		return fmt.Errorf("youtube: no video format at %dp", height)
 	}
 
-	filename := sanitizeFilename(title + "." + ext)
-	path := filepath.Join(dest, filename)
+	// If muxed (has audio), download directly.
+	if videoFormat.AudioChannels > 0 {
+		return s.downloadStreamDirect(video, videoFormat, title, dest)
+	}
 
-	resp, size, err := s.video.GetStream(video, &best)
+	// Pick best audio format.
+	var audioFormat *ytdl.Format
+	for i := range video.Formats {
+		f := &video.Formats[i]
+		if f.AudioChannels == 0 {
+			continue
+		}
+		if audioFormat == nil || f.Bitrate > audioFormat.Bitrate {
+			audioFormat = f
+		}
+	}
+	if audioFormat == nil {
+		return s.downloadStreamDirect(video, videoFormat, title, dest)
+	}
+
+	return s.downloadAndMux(video, videoFormat, audioFormat, title, dest)
+}
+
+func (s *Scraper) downloadStreamDirect(video *ytdl.Video, format *ytdl.Format, title, dest string) error {
+	ext := "mp4"
+	if strings.Contains(format.MimeType, "webm") {
+		ext = "webm"
+	}
+	path := filepath.Join(dest, sanitizeFilename(title)+"."+ext)
+
+	stream, _, err := s.video.GetStream(video, format)
 	if err != nil {
 		return fmt.Errorf("youtube: failed to open stream: %w", err)
 	}
-	defer resp.Close()
-
-	_ = size
+	defer stream.Close()
 
 	out, err := os.Create(path)
 	if err != nil {
@@ -121,7 +194,76 @@ func (s *Scraper) DownloadVideo(videoID, dest string) error {
 	}
 	defer out.Close()
 
-	_, err = io.Copy(out, resp)
+	_, err = io.Copy(out, stream)
+	return err
+}
+
+func (s *Scraper) downloadAndMux(video *ytdl.Video, videoFmt, audioFmt *ytdl.Format, title, dest string) error {
+	videoExt := "mp4"
+	if strings.Contains(videoFmt.MimeType, "webm") {
+		videoExt = "webm"
+	}
+	audioExt := "m4a"
+	if strings.Contains(audioFmt.MimeType, "webm") {
+		audioExt = "webm"
+	}
+
+	tmpDir, err := os.MkdirTemp("", "scraper-yt-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmpDir)
+
+	videoPath := filepath.Join(tmpDir, "video."+videoExt)
+	audioPath := filepath.Join(tmpDir, "audio."+audioExt)
+	outputPath := filepath.Join(dest, sanitizeFilename(title)+".mp4")
+
+	// Download video stream.
+	fmt.Printf("  Downloading video stream (%dp)...\n", videoFmt.Height)
+	if err := s.downloadStreamToFile(video, videoFmt, videoPath); err != nil {
+		return fmt.Errorf("youtube: failed to download video: %w", err)
+	}
+
+	// Download audio stream.
+	fmt.Printf("  Downloading audio stream...\n")
+	if err := s.downloadStreamToFile(video, audioFmt, audioPath); err != nil {
+		return fmt.Errorf("youtube: failed to download audio: %w", err)
+	}
+
+	// Mux with ffmpeg.
+	fmt.Printf("  Muxing video+audio with ffmpeg...\n")
+	cmd := exec.Command("ffmpeg", "-y",
+		"-i", videoPath,
+		"-i", audioPath,
+		"-c:v", "copy",
+		"-c:a", "aac",
+		"-movflags", "+faststart",
+		outputPath,
+	)
+	cmd.Stderr = nil
+	cmd.Stdout = nil
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("youtube: ffmpeg mux failed: %w", err)
+	}
+
+	fmt.Printf("  Saved: %s\n", outputPath)
+	return nil
+}
+
+func (s *Scraper) downloadStreamToFile(video *ytdl.Video, format *ytdl.Format, path string) error {
+	stream, _, err := s.video.GetStream(video, format)
+	if err != nil {
+		return err
+	}
+	defer stream.Close()
+
+	out, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, stream)
 	return err
 }
 
@@ -155,36 +297,4 @@ func sanitizeFilename(s string) string {
 		}
 	}
 	return string(clean)
-}
-
-// pickBestFormat selects the highest-quality combined (muxed video+audio)
-// format by resolution, then bitrate. If no combined formats exist, falls
-// back to the highest-resolution video-only format.
-func pickBestFormat(formats ytdl.FormatList) ytdl.Format {
-	combined := formats.Select(func(f ytdl.Format) bool {
-		return f.Height > 0 && f.AudioChannels > 0
-	})
-	if len(combined) > 0 {
-		best := combined[0]
-		for _, f := range combined[1:] {
-			if f.Height > best.Height || (f.Height == best.Height && f.Bitrate > best.Bitrate) {
-				best = f
-			}
-		}
-		return best
-	}
-
-	videoOnly := formats.Select(func(f ytdl.Format) bool {
-		return f.Height > 0
-	})
-	if len(videoOnly) == 0 {
-		return formats[0]
-	}
-	best := videoOnly[0]
-	for _, f := range videoOnly[1:] {
-		if f.Height > best.Height || (f.Height == best.Height && f.Bitrate > best.Bitrate) {
-			best = f
-		}
-	}
-	return best
 }

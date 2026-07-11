@@ -84,7 +84,8 @@ func resolveURL(args []string, urlFlag, siteName string) (string, error) {
 }
 
 // runWithScraper is the shared entry point for all site subcommands.
-// It parses the URL and launches the TUI with auto-downloading.
+// It parses the URL and launches the TUI. For YouTube, the TUI shows a
+// quality selector; for other sites, downloads auto-start.
 func runWithScraper(scraper model.Scraper, targetURL string, siteName string, opts globalOptions) error {
 	cfg := loadGlobalConfig(opts)
 
@@ -104,6 +105,21 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 		cfg.UserAgent,
 	)
 	d := dashboard.New(items, dl, cfg.OutputDir, siteName)
+
+	// YouTube: show quality selector, let user pick one, then download
+	// via DownloadVideoWithQuality (handles video+audio muxing).
+	if siteName == "youtube" {
+		type ytDownloader interface {
+			DownloadVideoWithQuality(videoID, dest string, height int) error
+		}
+		if yd, ok := scraper.(ytDownloader); ok {
+			videoID := ""
+			if yt, ok2 := scraper.(interface{ ExtractVideoID(string) string }); ok2 {
+				videoID = yt.ExtractVideoID(targetURL)
+			}
+			d.SetYouTubeDownloader(yd, videoID)
+		}
+	}
 
 	p := tea.NewProgram(d, tea.WithAltScreen())
 	_, err = p.Run()
