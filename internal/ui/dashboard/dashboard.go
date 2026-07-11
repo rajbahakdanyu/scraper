@@ -262,7 +262,10 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return d, nil
 		case "enter":
-			if d.ytDownloader != nil && !d.ytDownloading {
+			if d.ytDownloader != nil {
+				if d.ytDownloading {
+					return d, nil
+				}
 				return d, d.startYouTubeDownload()
 			}
 			return d, d.startSelectedDownloads()
