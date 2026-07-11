@@ -32,7 +32,7 @@ func newTUICmd(opts globalOptions) *cobra.Command {
 			registry := scraperRegistry()
 			scraper, ok := registry[site]
 			if !ok {
-				return fmt.Errorf("unknown site %q (available: youtube, gofile, cyberdrop, bunker)", site)
+				return fmt.Errorf("unknown site %q (available: youtube, cyberdrop, bunker, goonbox)", site)
 			}
 
 			return runWithScraper(scraper, targetURL, site, opts)

@@ -15,11 +15,16 @@ const apiBase = "https://api.cyberdrop.cr/api"
 type Scraper struct {
 	client    *http.Client
 	userAgent string
+	baseURL   string
 }
 
 // NewCyberDropScraper creates a new CyberDrop scraper using the default HTTP client.
 func NewCyberDropScraper() *Scraper {
-	return &Scraper{client: &http.Client{}, userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
+	return &Scraper{
+		client:    &http.Client{},
+		userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+		baseURL:   apiBase,
+	}
 }
 
 // NewCyberDropScraperWithConfig creates a scraper with a custom user agent.
@@ -27,7 +32,7 @@ func NewCyberDropScraperWithConfig(userAgent string) *Scraper {
 	if userAgent == "" {
 		userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 	}
-	return &Scraper{client: &http.Client{}, userAgent: userAgent}
+	return &Scraper{client: &http.Client{}, userAgent: userAgent, baseURL: apiBase}
 }
 
 func (s *Scraper) Name() string {
@@ -51,7 +56,7 @@ func (s *Scraper) Parse(url string) ([]model.MediaItem, error) {
 
 // parseFile fetches a single file's metadata and resolves the download URL.
 func (s *Scraper) parseFile(slug string) ([]model.MediaItem, error) {
-	infoURL := fmt.Sprintf("%s/file/info/%s", apiBase, slug)
+	infoURL := fmt.Sprintf("%s/file/info/%s", s.baseURL, slug)
 
 	infoReq, _ := http.NewRequest("GET", infoURL, nil)
 	infoReq.Header.Set("User-Agent", s.userAgent)
@@ -121,7 +126,7 @@ func (s *Scraper) parseFile(slug string) ([]model.MediaItem, error) {
 
 // parseAlbum fetches all files in an album.
 func (s *Scraper) parseAlbum(slug string) ([]model.MediaItem, error) {
-	albumURL := fmt.Sprintf("%s/album/%s", apiBase, slug)
+	albumURL := fmt.Sprintf("%s/album/%s", s.baseURL, slug)
 
 	req, _ := http.NewRequest("GET", albumURL, nil)
 	req.Header.Set("User-Agent", s.userAgent)
@@ -176,15 +181,17 @@ func (s *Scraper) parseAlbum(slug string) ([]model.MediaItem, error) {
 	return items, nil
 }
 
-// extractSlug gets the file or album slug from the URL.
+// extractSlug gets the file or album slug from the URL, ignoring any query
+// string (e.g. a tracking parameter like "?ref=x" must not end up as part
+// of the slug).
 func extractSlug(url string) string {
+	if idx := strings.IndexByte(url, '?'); idx >= 0 {
+		url = url[:idx]
+	}
+	url = strings.TrimRight(url, "/")
 	parts := strings.Split(url, "/")
-	if len(parts) < 2 {
+	if len(parts) == 0 {
 		return ""
 	}
-	last := parts[len(parts)-1]
-	if last != "" {
-		return last
-	}
-	return parts[len(parts)-2]
+	return parts[len(parts)-1]
 }

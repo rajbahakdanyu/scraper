@@ -806,8 +806,12 @@ func miniBar(st itemState) string {
 }
 
 func truncate(s string, max int) string {
-	if len(s) <= max {
+	// Slice by rune, not by byte: a byte-index slice can split a multi-byte
+	// UTF-8 rune in half (scraped titles are frequently non-ASCII), which
+	// produces a garbled/invalid string.
+	r := []rune(s)
+	if len(r) <= max {
 		return s
 	}
-	return s[:max-1] + "…"
+	return string(r[:max-1]) + "…"
 }

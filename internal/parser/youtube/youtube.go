@@ -339,6 +339,10 @@ func (s *Scraper) extractVideoID(rawURL string) string {
 	return ""
 }
 
+// sanitizeFilename removes characters that are invalid in filenames. It also
+// rejects "." and ".." (once slashes are stripped, these are the only
+// remaining path segments that could otherwise let a crafted video title
+// make the joined download path escape the destination directory).
 func sanitizeFilename(s string) string {
 	clean := make([]rune, 0, len(s))
 	for _, r := range s {
@@ -346,5 +350,9 @@ func sanitizeFilename(s string) string {
 			clean = append(clean, r)
 		}
 	}
-	return string(clean)
+	result := string(clean)
+	if result == "" || result == "." || result == ".." {
+		return ""
+	}
+	return result
 }

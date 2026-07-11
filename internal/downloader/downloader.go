@@ -2,6 +2,7 @@
 package downloader
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,7 +29,7 @@ type Downloader struct {
 	concurrency int
 	userAgent   string
 	progress    chan model.ProgressEvent
-	cancelMap   map[string]chan struct{}
+	cancelMap   map[string]context.CancelFunc
 	mu          sync.Mutex
 	sem         chan struct{}
 }
@@ -45,7 +46,7 @@ func NewDownloader(concurrency int) *Downloader {
 		concurrency: concurrency,
 		userAgent:   "Scraper/1.0",
 		progress:    make(chan model.ProgressEvent, progressBufSize),
-		cancelMap:   make(map[string]chan struct{}),
+		cancelMap:   make(map[string]context.CancelFunc),
 		sem:         make(chan struct{}, concurrency),
 	}
 }
@@ -68,7 +69,7 @@ func NewDownloaderWithConfig(concurrency int, timeout time.Duration, userAgent s
 		concurrency: concurrency,
 		userAgent:   userAgent,
 		progress:    make(chan model.ProgressEvent, progressBufSize),
-		cancelMap:   make(map[string]chan struct{}),
+		cancelMap:   make(map[string]context.CancelFunc),
 		sem:         make(chan struct{}, concurrency),
 	}
 }
@@ -80,15 +81,16 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 	d.sem <- struct{}{}
 	defer func() { <-d.sem }()
 
-	cancel := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
 	d.mu.Lock()
 	d.cancelMap[item.URL] = cancel
+	d.mu.Unlock()
 	defer func() {
 		d.mu.Lock()
 		delete(d.cancelMap, item.URL)
 		d.mu.Unlock()
+		cancel()
 	}()
-	d.mu.Unlock()
 
 	filename := sanitizeFilename(item.Title)
 	if filename == "" {
@@ -110,14 +112,14 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
 			select {
-			case <-cancel:
+			case <-ctx.Done():
 				d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled})
 				return fmt.Errorf("download cancelled: %s", item.URL)
 			case <-time.After(retryBaseDelay << attempt):
 			}
 		}
 
-		err := d.downloadOnce(item, tempPath, cancel)
+		err := d.downloadOnce(ctx, item, tempPath)
 		if err == nil {
 			if err := os.Rename(tempPath, finalPath); err != nil {
 				os.Remove(tempPath)
@@ -131,16 +133,28 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 			return nil
 		}
 		lastErr = err
+		if ctx.Err() != nil {
+			// Cancelled mid-attempt: stop retrying instead of sleeping
+			// through further backoff delays.
+			break
+		}
 	}
 
 	os.Remove(tempPath)
+	if ctx.Err() != nil {
+		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled})
+		return fmt.Errorf("download cancelled: %s", item.URL)
+	}
 	d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed})
 	return fmt.Errorf("download failed after %d attempts: %w", maxRetries, lastErr)
 }
 
-// downloadOnce performs a single download attempt to tempPath.
-func (d *Downloader) downloadOnce(item model.MediaItem, tempPath string, cancel <-chan struct{}) error {
-	req, err := http.NewRequest("GET", item.URL, nil)
+// downloadOnce performs a single download attempt to tempPath. The request
+// and the response body read are both bound to ctx, so cancelling ctx
+// aborts an in-flight attempt immediately instead of waiting for it to
+// finish.
+func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, tempPath string) error {
+	req, err := http.NewRequestWithContext(ctx, "GET", item.URL, nil)
 	if err != nil {
 		return err
 	}
@@ -186,12 +200,7 @@ func (d *Downloader) downloadOnce(item model.MediaItem, tempPath string, cancel 
 		return err
 	}
 
-	select {
-	case <-cancel:
-		return fmt.Errorf("cancelled")
-	default:
-		return nil
-	}
+	return nil
 }
 
 // progressReader wraps an io.Reader and calls onProgress after each Read
@@ -211,12 +220,15 @@ func (pr *progressReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// Cancel cancels an active download for the given item.
+// Cancel cancels an active download for the given item. This cancels the
+// download's request context, which aborts an in-flight HTTP request and
+// interrupts an in-progress body read right away rather than waiting for
+// the current attempt to finish.
 func (d *Downloader) Cancel(item model.MediaItem) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if ch, ok := d.cancelMap[item.URL]; ok {
-		close(ch)
+	if cancel, ok := d.cancelMap[item.URL]; ok {
+		cancel()
 		delete(d.cancelMap, item.URL)
 	}
 }
@@ -236,7 +248,11 @@ func (d *Downloader) sendProgress(evt model.ProgressEvent) {
 	}
 }
 
-// sanitizeFilename removes characters that are invalid in filenames.
+// sanitizeFilename removes characters that are invalid in filenames. It also
+// rejects "." and ".." (once slashes are stripped, these are the only
+// remaining path segments that could otherwise let a crafted item title
+// (e.g. a scraped title of "..") make the joined download path escape the
+// destination directory).
 func sanitizeFilename(s string) string {
 	clean := make([]rune, 0, len(s))
 	for _, r := range s {
@@ -244,10 +260,11 @@ func sanitizeFilename(s string) string {
 			clean = append(clean, r)
 		}
 	}
-	if len(clean) == 0 {
+	result := string(clean)
+	if result == "" || result == "." || result == ".." {
 		return ""
 	}
-	return string(clean)
+	return result
 }
 
 // extFromURL extracts the file extension from a URL's path component.

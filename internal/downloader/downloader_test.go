@@ -101,9 +101,24 @@ func TestCancel(t *testing.T) {
 		dl.Cancel(item)
 	}()
 
+	start := time.Now()
 	err := dl.Download(item, t.TempDir())
+	elapsed := time.Since(start)
+	t.Logf("Download() returned after %v", elapsed)
+
 	if err == nil {
 		t.Fatal("expected error for cancelled download")
+	}
+	// The handler sleeps for 2s before responding. If Cancel only marked
+	// the download as cancelled without aborting the in-flight request
+	// (the request's context), Download would still block for the full
+	// 2s. A real abort should return well before that. (Note: the test's
+	// own reported duration below still includes ~2s because the deferred
+	// ts.Close() blocks until the server's handler goroutine finishes
+	// sleeping — that's httptest.Server's documented behavior, not
+	// Download() itself; hence asserting on our own elapsed measurement.)
+	if elapsed >= 1500*time.Millisecond {
+		t.Errorf("expected cancel to abort the in-flight request quickly, took %v", elapsed)
 	}
 }
 

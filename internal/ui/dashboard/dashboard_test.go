@@ -5,6 +5,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -233,5 +234,35 @@ func TestBatchProgressUpdatesRows(t *testing.T) {
 	}
 	if d.states[0].status != model.StatusDownloading {
 		t.Errorf("expected status downloading, got %v", d.states[0].status)
+	}
+}
+
+func TestTruncate(t *testing.T) {
+	tests := []struct {
+		name string
+		s    string
+		max  int
+		want string
+	}{
+		{"short string unchanged", "abc", 10, "abc"},
+		{"exact length unchanged", "abcde", 5, "abcde"},
+		{"ascii truncation", "abcdefghij", 5, "abcd…"},
+		// Multi-byte runes near the cutoff must not be split, which a
+		// byte-index slice (s[:max-1]) would do and produce a garbled or
+		// invalid UTF-8 string.
+		{"multi-byte runes truncated safely", "日本語のタイトルです", 5, "日本語の…"},
+		{"emoji truncated safely", "🎬🎬🎬🎬🎬🎬🎬", 3, "🎬🎬…"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := truncate(tt.s, tt.max)
+			if got != tt.want {
+				t.Errorf("truncate(%q, %d) = %q, want %q", tt.s, tt.max, got, tt.want)
+			}
+			if !utf8.ValidString(got) {
+				t.Errorf("truncate(%q, %d) produced invalid UTF-8: %q", tt.s, tt.max, got)
+			}
+		})
 	}
 }

@@ -15,12 +15,14 @@ const apiBase = "https://goonbox.cr/api"
 type Scraper struct {
 	client    *http.Client
 	userAgent string
+	baseURL   string
 }
 
 func NewGoonBoxScraper() *Scraper {
 	return &Scraper{
 		client:    &http.Client{},
 		userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+		baseURL:   apiBase,
 	}
 }
 
@@ -28,7 +30,7 @@ func NewGoonBoxScraperWithConfig(userAgent string) *Scraper {
 	if userAgent == "" {
 		userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 	}
-	return &Scraper{client: &http.Client{}, userAgent: userAgent}
+	return &Scraper{client: &http.Client{}, userAgent: userAgent, baseURL: apiBase}
 }
 
 func (s *Scraper) Name() string {
@@ -45,7 +47,7 @@ func (s *Scraper) Parse(albumURL string) ([]model.MediaItem, error) {
 	page := 1
 
 	for {
-		url := fmt.Sprintf("%s/albums/%s?page=%d", apiBase, albumID, page)
+		url := fmt.Sprintf("%s/albums/%s?page=%d", s.baseURL, albumID, page)
 		req, _ := http.NewRequest("GET", url, nil)
 		req.Header.Set("User-Agent", s.userAgent)
 
@@ -112,6 +114,9 @@ func (s *Scraper) Parse(albumURL string) ([]model.MediaItem, error) {
 }
 
 func extractAlbumID(rawURL string) string {
+	if idx := strings.IndexByte(rawURL, '?'); idx >= 0 {
+		rawURL = rawURL[:idx]
+	}
 	parts := strings.Split(strings.TrimRight(rawURL, "/"), "/")
 	for i, p := range parts {
 		if p == "a" && i+1 < len(parts) {
