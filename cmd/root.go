@@ -2,6 +2,9 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
@@ -82,6 +85,24 @@ func resolveURL(args []string, urlFlag, siteName string) (string, error) {
 	return targetURL, nil
 }
 
+// extractSlug gets the last path segment from a URL, used for naming
+// album subfolders.
+func extractSlug(rawURL string) string {
+	// Remove query string
+	if idx := strings.Index(rawURL, "?"); idx >= 0 {
+		rawURL = rawURL[:idx]
+	}
+	parts := strings.Split(strings.TrimRight(rawURL, "/"), "/")
+	if len(parts) == 0 {
+		return ""
+	}
+	last := parts[len(parts)-1]
+	if last == "" {
+		return ""
+	}
+	return last
+}
+
 // runWithScraper launches the TUI immediately. The scraper runs in the
 // background; the TUI shows a loading spinner until results arrive.
 func runWithScraper(scraper model.Scraper, targetURL string, siteName string, opts globalOptions) error {
@@ -95,7 +116,16 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 
 	// The scraper function runs in a background goroutine.
 	scraperFn := func() ([]model.MediaItem, error) {
-		return scraper.Parse(targetURL)
+		items, err := scraper.Parse(targetURL)
+		if err == nil && len(items) > 1 {
+			// Album: create a subfolder from the URL slug
+			slug := extractSlug(targetURL)
+			if slug != "" {
+				cfg.OutputDir = filepath.Join(cfg.OutputDir, slug)
+				os.MkdirAll(cfg.OutputDir, 0755)
+			}
+		}
+		return items, err
 	}
 
 	d := dashboard.New(scraperFn, dl, cfg.OutputDir, siteName)
