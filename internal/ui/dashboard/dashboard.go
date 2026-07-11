@@ -3,6 +3,8 @@ package dashboard
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -74,6 +76,7 @@ type Dashboard struct {
 	ytStarted    time.Time
 	ytFailed     bool
 	sendFunc     func(tea.Msg)
+	albumSlug    string
 }
 
 // Futuristic logo — clean, minimal
@@ -130,6 +133,11 @@ func (d *Dashboard) SetYouTubeDownloader(yd YouTubeDownloader, videoID string) {
 
 func (d *Dashboard) SetSendFunc(send func(tea.Msg)) {
 	d.sendFunc = send
+}
+
+// SetAlbumSlug stores the URL slug for creating album subfolders.
+func (d *Dashboard) SetAlbumSlug(slug string) {
+	d.albumSlug = slug
 }
 
 func (d *Dashboard) Init() tea.Cmd {
@@ -289,6 +297,12 @@ func (d *Dashboard) handleScrapeResult(msg scrapeResultMsg) (tea.Model, tea.Cmd)
 	d.states = make([]itemState, len(msg.items))
 	for i, it := range msg.items {
 		d.states[i] = itemState{item: it, status: model.StatusPending, total: it.Size}
+	}
+
+	// Album (multiple files): create a subfolder from the URL slug
+	if len(msg.items) > 1 && d.albumSlug != "" {
+		d.dest = filepath.Join(d.dest, d.albumSlug)
+		os.MkdirAll(d.dest, 0755)
 	}
 
 	h := len(msg.items)

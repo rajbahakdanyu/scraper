@@ -2,8 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -116,19 +114,13 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 
 	// The scraper function runs in a background goroutine.
 	scraperFn := func() ([]model.MediaItem, error) {
-		items, err := scraper.Parse(targetURL)
-		if err == nil && len(items) > 1 {
-			// Album: create a subfolder from the URL slug
-			slug := extractSlug(targetURL)
-			if slug != "" {
-				cfg.OutputDir = filepath.Join(cfg.OutputDir, slug)
-				os.MkdirAll(cfg.OutputDir, 0755)
-			}
-		}
-		return items, err
+		return scraper.Parse(targetURL)
 	}
 
 	d := dashboard.New(scraperFn, dl, cfg.OutputDir, siteName)
+
+	// Pass the URL slug so the dashboard can create a subfolder for albums
+	d.SetAlbumSlug(extractSlug(targetURL))
 
 	p := tea.NewProgram(d, tea.WithAltScreen())
 	d.SetSendFunc(func(msg tea.Msg) { p.Send(msg) })
