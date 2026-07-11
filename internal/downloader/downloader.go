@@ -158,12 +158,26 @@ func (d *Downloader) downloadOnce(item model.MediaItem, tempPath string, cancel 
 		return fmt.Errorf("HTTP %d for %s", resp.StatusCode, item.URL)
 	}
 
+	total := resp.ContentLength
+
 	out, err := os.Create(tempPath)
 	if err != nil {
 		return err
 	}
 
-	_, err = io.Copy(out, resp.Body)
+	pr := &progressReader{
+		reader: resp.Body,
+		onProgress: func(bytes int64) {
+			d.sendProgress(model.ProgressEvent{
+				Item:   item,
+				Bytes:  bytes,
+				Total:  total,
+				Status: model.StatusDownloading,
+			})
+		},
+	}
+
+	_, err = io.Copy(out, pr)
 	out.Close()
 	if err != nil {
 		return err
@@ -175,6 +189,23 @@ func (d *Downloader) downloadOnce(item model.MediaItem, tempPath string, cancel 
 	default:
 		return nil
 	}
+}
+
+// progressReader wraps an io.Reader and calls onProgress after each Read
+// with the cumulative number of bytes read.
+type progressReader struct {
+	reader     io.Reader
+	read       int64
+	onProgress func(bytes int64)
+}
+
+func (pr *progressReader) Read(p []byte) (int, error) {
+	n, err := pr.reader.Read(p)
+	if n > 0 {
+		pr.read += int64(n)
+		pr.onProgress(pr.read)
+	}
+	return n, err
 }
 
 // Cancel cancels an active download for the given item.

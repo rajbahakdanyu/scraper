@@ -222,14 +222,17 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (d *Dashboard) applyProgress(evt model.ProgressEvent) {
 	for i := range d.states {
 		if d.states[i].item.URL == evt.Item.URL {
+			if d.states[i].started.IsZero() {
+				d.states[i].started = time.Now()
+			}
+			elapsed := time.Since(d.states[i].started).Seconds()
 			d.states[i].status = evt.Status
 			d.states[i].bytes = evt.Bytes
 			if evt.Total > 0 {
 				d.states[i].total = evt.Total
 			}
-			d.states[i].speed = evt.Speed
-			if d.states[i].started.IsZero() {
-				d.states[i].started = time.Now()
+			if elapsed > 0 && evt.Bytes > 0 {
+				d.states[i].speed = float64(evt.Bytes) / elapsed
 			}
 			return
 		}
@@ -396,12 +399,20 @@ func (d *Dashboard) renderStats() string {
 		)
 	}
 
-	statsLine1 := fmt.Sprintf("%s %s  %s  %s  %s  %s  %s",
+	var totalSpeed float64
+	for _, st := range d.states {
+		if st.status == model.StatusDownloading {
+			totalSpeed += st.speed
+		}
+	}
+
+	statsLine1 := fmt.Sprintf("%s %s  %s  %s  %s  %s  %s  %s",
 		spin,
 		stat("Pending", fmt.Sprintf("%d/%d", pending, total)),
 		stat("Active", fmt.Sprintf("%d", downloading)),
 		stat("Done", fmt.Sprintf("%d", completed)),
 		stat("Failed", fmt.Sprintf("%d", failed)),
+		stat("Speed", fmt.Sprintf("%s/s", humanizeBytes(int64(totalSpeed)))),
 		stat("Size", fmt.Sprintf("%s / %s", humanizeBytes(downloadedBytes), humanizeBytes(totalBytes))),
 		stat("ETA", d.eta()),
 	)
@@ -478,19 +489,19 @@ func mediaTypeIcon(t model.MediaType) string {
 
 func progressBar(st itemState) string {
 	if st.status == model.StatusPending {
-		return dotedBar(0)
+		return "░░░░░░░░░░   0%"
+	}
+	if st.status == model.StatusCompleted {
+		return "██████████ 100%"
 	}
 	if st.total <= 0 {
-		if st.status == model.StatusCompleted {
-			return "████████ done"
-		}
-		return "▒▒▒▒▒▒▒▒ ?"
+		return "▒▒▒▒▒▒▒▒▒▒  ??%"
 	}
 	pct := float64(st.bytes) / float64(st.total)
 	if pct > 1 {
 		pct = 1
 	}
-	return dotedBar(pct)
+	return fmt.Sprintf("%s %3d%%", dotedBar(pct), int(pct*100))
 }
 
 const barWidth = 10
