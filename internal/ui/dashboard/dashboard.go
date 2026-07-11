@@ -92,11 +92,24 @@ const banner = `
 
 // New creates a Dashboard for the given items.
 func New(items []model.MediaItem, dl Downloader, dest string, site string) *Dashboard {
-	columns := []table.Column{
-		{Title: "  ", Width: 3},
-		{Title: "Quality", Width: 12},
-		{Title: "Size", Width: 10},
-		{Title: "Note", Width: 28},
+	isYouTube := site == "youtube"
+
+	var columns []table.Column
+	if isYouTube {
+		columns = []table.Column{
+			{Title: "  ", Width: 3},
+			{Title: "Quality", Width: 12},
+			{Title: "Size", Width: 10},
+			{Title: "Note", Width: 28},
+		}
+	} else {
+		columns = []table.Column{
+			{Title: "  ", Width: 3},
+			{Title: "Filename", Width: 40},
+			{Title: "Type", Width: 8},
+			{Title: "Status", Width: 14},
+			{Title: "Progress", Width: 14},
+		}
 	}
 
 	states := make([]itemState, len(items))
@@ -121,8 +134,6 @@ func New(items []model.MediaItem, dl Downloader, dest string, site string) *Dash
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
-
-	isYouTube := site == "youtube"
 
 	d := &Dashboard{
 		table:      t,
@@ -413,12 +424,17 @@ func (d *Dashboard) refreshRows() {
 			mark = "✗"
 		}
 
-		quality, note := d.splitQualityNote(st.item.Title)
-		rows[i] = table.Row{
-			mark,
-			quality,
-			humanizeBytes(st.total),
-			note,
+		if d.site == "youtube" {
+			quality, note := d.splitQualityNote(st.item.Title)
+			rows[i] = table.Row{mark, quality, humanizeBytes(st.total), note}
+		} else {
+			rows[i] = table.Row{
+				mark,
+				truncate(st.item.Title, 38),
+				mediaTypeIcon(st.item.Type),
+				statusLabel(st.status),
+				batchProgressBar(st),
+			}
 		}
 	}
 	d.table.SetRows(rows)
@@ -613,16 +629,29 @@ func (d *Dashboard) renderStats() string {
 
 func (d *Dashboard) overallPercent() float64 {
 	var total, done int64
+	var itemsWithSize, completedItems, totalItems int
 	for _, st := range d.states {
+		totalItems++
 		if st.total > 0 {
 			total += st.total
 			done += st.bytes
+			itemsWithSize++
+		}
+		if st.status == model.StatusCompleted {
+			completedItems++
 		}
 	}
-	if total == 0 {
+
+	// If we have size info, use byte-based progress
+	if total > 0 {
+		return float64(done) / float64(total)
+	}
+
+	// No size info — use item-count-based progress
+	if totalItems == 0 {
 		return 0
 	}
-	return float64(done) / float64(total)
+	return float64(completedItems) / float64(totalItems)
 }
 
 func (d *Dashboard) eta() string {
@@ -699,4 +728,67 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dm%ds", int(d.Minutes()), int(d.Seconds())%60)
 	}
 	return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
+}
+
+func statusLabel(s model.DownloadStatus) string {
+	switch s {
+	case model.StatusPending:
+		return "○ pending"
+	case model.StatusDownloading:
+		return "◐ downloading"
+	case model.StatusCompleted:
+		return "✓ done"
+	case model.StatusFailed:
+		return "✗ failed"
+	case model.StatusCancelled:
+		return "⊘ cancelled"
+	default:
+		return "? unknown"
+	}
+}
+
+func mediaTypeIcon(t model.MediaType) string {
+	switch t {
+	case model.MediaTypeVideo:
+		return "🎬"
+	case model.MediaTypeImage:
+		return "🖼"
+	default:
+		return "📁"
+	}
+}
+
+func batchProgressBar(st itemState) string {
+	if st.status == model.StatusCompleted {
+		return "██████████ 100%"
+	}
+	if st.status == model.StatusPending {
+		return "░░░░░░░░░░   0%"
+	}
+	if st.status == model.StatusFailed {
+		return "✗ failed"
+	}
+	if st.total <= 0 {
+		return "▒▒▒▒▒▒▒▒▒▒ ???"
+	}
+	pct := float64(st.bytes) / float64(st.total)
+	if pct > 1 {
+		pct = 1
+	}
+	return fmt.Sprintf("%s %3d%%", barString(pct, 10), int(pct*100))
+}
+
+func barString(pct float64, width int) string {
+	filled := int(pct * float64(width))
+	if filled > width {
+		filled = width
+	}
+	return strings.Repeat("█", filled) + strings.Repeat("░", width-filled)
+}
+
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max-1] + "…"
 }
