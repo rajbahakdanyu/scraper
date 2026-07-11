@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"sync"
 
 	"github.com/PuerkitoBio/goquery"
 
@@ -71,20 +72,37 @@ func (s *Scraper) Parse(albumURL string) ([]model.MediaItem, error) {
 		return nil, fmt.Errorf("bunker: no file links found on album page")
 	}
 
-	var items []model.MediaItem
-	for _, fileURL := range fileLinks {
-		item, err := s.parseFilePage(fileURL)
-		if err != nil {
-			continue
+	// Fetch file pages concurrently for speed.
+	items := make([]model.MediaItem, len(fileLinks))
+	errs := make([]error, len(fileLinks))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 10) // max 10 concurrent requests
+
+	for i, fileURL := range fileLinks {
+		wg.Add(1)
+		go func(idx int, u string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			item, err := s.parseFilePage(u)
+			items[idx] = item
+			errs[idx] = err
+		}(i, fileURL)
+	}
+	wg.Wait()
+
+	var result []model.MediaItem
+	for i := range items {
+		if errs[i] == nil {
+			result = append(result, items[i])
 		}
-		items = append(items, item)
 	}
 
-	if len(items) == 0 {
+	if len(result) == 0 {
 		return nil, fmt.Errorf("bunker: could not extract any download URLs")
 	}
 
-	return items, nil
+	return result, nil
 }
 
 // parseFilePage visits a /f/<id> page to get the dl.bunkr.cr download link,
