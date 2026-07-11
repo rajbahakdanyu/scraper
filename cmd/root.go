@@ -83,34 +83,28 @@ func resolveURL(args []string, urlFlag, siteName string) (string, error) {
 	return targetURL, nil
 }
 
-// runWithScraper is the shared entry point for all site subcommands.
-// It parses the URL and launches the TUI. For YouTube, the TUI shows a
-// quality selector; for other sites, downloads auto-start.
+// runWithScraper launches the TUI immediately. The scraper runs in the
+// background; the TUI shows a loading spinner until results arrive.
 func runWithScraper(scraper model.Scraper, targetURL string, siteName string, opts globalOptions) error {
 	cfg := loadGlobalConfig(opts)
-
-	items, err := scraper.Parse(targetURL)
-	if err != nil && len(items) == 0 {
-		return fmt.Errorf("%s: %w", scraper.Name(), err)
-	}
-
-	if len(items) == 0 {
-		fmt.Println("No media items found.")
-		return nil
-	}
 
 	dl := downloader.NewDownloaderWithConfig(
 		cfg.ConcurrentDownloads,
 		cfg.Timeout,
 		cfg.UserAgent,
 	)
-	d := dashboard.New(items, dl, cfg.OutputDir, siteName)
+
+	// The scraper function runs in a background goroutine.
+	scraperFn := func() ([]model.MediaItem, error) {
+		return scraper.Parse(targetURL)
+	}
+
+	d := dashboard.New(scraperFn, dl, cfg.OutputDir, siteName)
 
 	p := tea.NewProgram(d, tea.WithAltScreen())
 	d.SetSendFunc(func(msg tea.Msg) { p.Send(msg) })
 
-	// YouTube: show quality selector, let user pick one, then download
-	// via DownloadVideoWithQuality (handles video+audio muxing).
+	// YouTube: wire up the quality-select downloader.
 	if siteName == "youtube" {
 		type ytDownloader interface {
 			DownloadVideoWithQuality(videoID, dest string, height int) error
@@ -124,6 +118,6 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 		}
 	}
 
-	_, err = p.Run()
+	_, err := p.Run()
 	return err
 }

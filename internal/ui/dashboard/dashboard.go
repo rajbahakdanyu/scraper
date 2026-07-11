@@ -32,7 +32,8 @@ type YouTubeDownloader interface {
 type phase int
 
 const (
-	phaseSelect   phase = iota // quality / item selection
+	phaseLoading  phase = iota // fetching media items
+	phaseSelect                // quality / item selection
 	phaseDownload              // downloading with progress
 	phaseDone                  // finished
 )
@@ -71,6 +72,11 @@ type Dashboard struct {
 	site     string
 	phase    phase
 
+	// Loading phase
+	scraperFn  func() ([]model.MediaItem, error)
+	scrapeURL  string
+	loadingErr string
+
 	// YouTube-specific
 	ytDownloader YouTubeDownloader
 	ytVideoID    string
@@ -90,8 +96,9 @@ const banner = `
 |_|  \___/|_|_\\___|  / \___|___|___/
                   |__/`
 
-// New creates a Dashboard for the given items.
-func New(items []model.MediaItem, dl Downloader, dest string, site string) *Dashboard {
+// New creates a Dashboard. The scraperFn is called in the background to
+// fetch media items; the TUI shows a loading spinner until results arrive.
+func New(scraperFn func() ([]model.MediaItem, error), dl Downloader, dest string, site string) *Dashboard {
 	isYouTube := site == "youtube"
 
 	var columns []table.Column
@@ -112,18 +119,7 @@ func New(items []model.MediaItem, dl Downloader, dest string, site string) *Dash
 		}
 	}
 
-	states := make([]itemState, len(items))
-	for i, it := range items {
-		states[i] = itemState{item: it, status: model.StatusPending, total: it.Size}
-	}
-
-	height := len(items)
-	if height > 15 {
-		height = 15
-	}
-	if height < 4 {
-		height = 4
-	}
+	height := 4
 
 	t := table.New(
 		table.WithColumns(columns),
@@ -140,16 +136,12 @@ func New(items []model.MediaItem, dl Downloader, dest string, site string) *Dash
 		progress:   progress.New(progress.WithDefaultGradient()),
 		spinner:    sp,
 		theme:      styles.DefaultTheme(),
-		states:     states,
 		downloader: dl,
 		dest:       dest,
 		site:       site,
-		phase:      phaseSelect,
+		phase:      phaseLoading,
+		scraperFn:  scraperFn,
 	}
-	if !isYouTube {
-		d.phase = phaseDownload
-	}
-	d.refreshRows()
 	return d
 }
 
@@ -164,17 +156,69 @@ func (d *Dashboard) SetSendFunc(send func(tea.Msg)) {
 	d.sendFunc = send
 }
 
-// Init starts the spinner and, for non-YouTube sites, auto-downloads.
+// Init starts the spinner and kicks off the background scrape.
 func (d *Dashboard) Init() tea.Cmd {
-	cmds := []tea.Cmd{
+	return tea.Batch(
 		tea.EnterAltScreen,
 		d.spinner.Tick,
+		d.startScrape(),
+	)
+}
+
+// handleScrapeResult processes the background scrape result, populates the
+// table, and transitions to the appropriate phase.
+func (d *Dashboard) handleScrapeResult(msg scrapeResultMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil && len(msg.items) == 0 {
+		d.loadingErr = msg.err.Error()
+		d.phase = phaseDone
+		return d, nil
 	}
-	if d.downloader != nil && d.phase == phaseDownload {
+
+	if len(msg.items) == 0 {
+		d.loadingErr = "no media items found"
+		d.phase = phaseDone
+		return d, nil
+	}
+
+	// Populate states
+	d.states = make([]itemState, len(msg.items))
+	for i, it := range msg.items {
+		d.states[i] = itemState{item: it, status: model.StatusPending, total: it.Size}
+	}
+
+	height := len(msg.items)
+	if height > 15 {
+		height = 15
+	}
+	if height < 4 {
+		height = 4
+	}
+	d.table.SetHeight(height)
+
+	isYouTube := d.site == "youtube"
+	if isYouTube {
+		d.phase = phaseSelect
+	} else {
+		d.phase = phaseDownload
+	}
+	d.refreshRows()
+
+	// Auto-start downloads for non-YouTube
+	var cmds []tea.Cmd
+	if !isYouTube && d.downloader != nil {
 		cmds = append(cmds, listenForProgress(d.downloader.Progress()))
 		cmds = append(cmds, d.startAllDownloads())
 	}
-	return tea.Batch(cmds...)
+	return d, tea.Batch(cmds...)
+}
+
+// startScrape runs the scraper in a background goroutine and sends the
+// results back as a scrapeResultMsg.
+func (d *Dashboard) startScrape() tea.Cmd {
+	return func() tea.Msg {
+		items, err := d.scraperFn()
+		return scrapeResultMsg{items: items, err: err}
+	}
 }
 
 type progressMsg model.ProgressEvent
@@ -189,6 +233,12 @@ type youtubeDoneMsg struct {
 }
 
 type tickMsg time.Time
+
+// scrapeResultMsg carries the result of the background scrape operation.
+type scrapeResultMsg struct {
+	items []model.MediaItem
+	err   error
+}
 
 func listenForProgress(ch <-chan model.ProgressEvent) tea.Cmd {
 	return func() tea.Msg {
@@ -232,6 +282,9 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return d, tea.Tick(time.Second, func(t time.Time) tea.Msg {
 			return tickMsg(t)
 		})
+
+	case scrapeResultMsg:
+		return d.handleScrapeResult(msg)
 
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -460,9 +513,6 @@ func (d *Dashboard) View() string {
 	if d.quitting {
 		return ""
 	}
-	if !d.ready {
-		return d.spinner.View() + "  Loading..."
-	}
 
 	bannerStyled := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("213")).
@@ -474,10 +524,36 @@ func (d *Dashboard) View() string {
 
 	header := lipgloss.JoinVertical(lipgloss.Left, bannerStyled, siteLabel)
 
+	if d.phase == phaseLoading {
+		return d.viewLoading(header)
+	}
+
+	if d.phase == phaseDone && d.loadingErr != "" && len(d.states) == 0 {
+		return lipgloss.JoinVertical(lipgloss.Left,
+			header, "",
+			d.theme.Error.Render("  ✗ "+d.loadingErr), "",
+			d.theme.Footer.Render("  q quit  "),
+		)
+	}
+
 	if d.ytDownloader != nil {
 		return d.viewYouTube(header)
 	}
 	return d.viewBatch(header)
+}
+
+func (d *Dashboard) viewLoading(header string) string {
+	msg := d.spinner.View() + "  Fetching media items..."
+	return lipgloss.JoinVertical(lipgloss.Left,
+		header, "",
+		lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("99")).
+			Padding(1, 2).
+			Render(msg),
+		"",
+		d.theme.Footer.Render("  q quit  "),
+	)
 }
 
 // viewYouTube renders the two-phase YouTube flow.
