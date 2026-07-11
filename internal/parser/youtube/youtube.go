@@ -17,13 +17,13 @@ import (
 )
 
 // ProgressFunc is called with cumulative bytes downloaded.
-type ProgressFunc func(bytes int64, total int64)
+type ProgressFunc = func(bytes int64, total int64)
 
 type Scraper struct {
 	client   *http.Client
 	video    *ytdl.Client
 	baseURL  string
-	progress ProgressFunc
+	progress func(int64, int64)
 }
 
 // NewYouTubeScraper creates a YouTube scraper using the kkdai/youtube library
@@ -37,7 +37,7 @@ func NewYouTubeScraper() *Scraper {
 }
 
 // SetProgressFunc sets a callback for download progress reporting.
-func (s *Scraper) SetProgressFunc(fn ProgressFunc) {
+func (s *Scraper) SetProgressFunc(fn func(int64, int64)) {
 	s.progress = fn
 }
 
