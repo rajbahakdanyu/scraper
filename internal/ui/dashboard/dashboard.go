@@ -254,9 +254,6 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			d.applyProgress(evt)
 			d.refreshRows()
-			if d.downloader != nil {
-				return d, listenForProgress(d.downloader.Progress())
-			}
 		}
 		return d, nil
 
@@ -323,10 +320,26 @@ func (d *Dashboard) handleScrapeResult(msg scrapeResultMsg) (tea.Model, tea.Cmd)
 
 	var cmds []tea.Cmd
 	if d.site != "youtube" && d.downloader != nil {
-		cmds = append(cmds, listenForProgress(d.downloader.Progress()))
+		// Start a background goroutine that continuously drains the progress
+		// channel and sends each event to the tea program. This avoids
+		// the re-arm pattern that starves downloadDoneMsg processing.
+		go d.drainProgress()
 		cmds = append(cmds, d.startAllDownloads())
 	}
 	return d, tea.Batch(cmds...)
+}
+
+// drainProgress reads from the downloader's progress channel in a loop
+// and sends each event to the tea program via sendFunc. This runs for
+// the lifetime of the dashboard and doesn't block the event loop.
+func (d *Dashboard) drainProgress() {
+	if d.downloader == nil || d.sendFunc == nil {
+		return
+	}
+	ch := d.downloader.Progress()
+	for evt := range ch {
+		d.sendFunc(progressMsg(evt))
+	}
 }
 
 // --- YouTube ---
