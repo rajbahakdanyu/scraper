@@ -133,7 +133,8 @@ func (d *Dashboard) SetSendFunc(send func(tea.Msg)) {
 }
 
 func (d *Dashboard) Init() tea.Cmd {
-	return tea.Batch(tea.EnterAltScreen, d.spinner.Tick, d.startScrape())
+	return tea.Batch(tea.EnterAltScreen, d.spinner.Tick, d.startScrape(),
+		tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg { return tickMsg(t) }))
 }
 
 // --- Messages ---
@@ -196,7 +197,17 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return d, cmd
 
 	case tickMsg:
-		return d, tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
+		// Recalculate speed from elapsed time on each tick
+		for i := range d.states {
+			if d.states[i].status == model.StatusDownloading && !d.states[i].started.IsZero() {
+				elapsed := time.Since(d.states[i].started).Seconds()
+				if elapsed > 0 && d.states[i].bytes > 0 {
+					d.states[i].speed = float64(d.states[i].bytes) / elapsed
+				}
+			}
+		}
+		d.refreshRows()
+		return d, tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg { return tickMsg(t) })
 
 	case scrapeResultMsg:
 		return d.handleScrapeResult(msg)
@@ -587,6 +598,9 @@ func (d *Dashboard) renderStats() string {
 		case model.StatusFailed:
 			failed++
 		}
+		// For completed items with unknown size, keep their final bytes value.
+		// For downloading items, use their current bytes.
+		// For pending items, bytes is 0.
 		downloadedBytes += st.bytes
 		if st.total > 0 {
 			totalBytes += st.total
@@ -604,11 +618,12 @@ func (d *Dashboard) renderStats() string {
 		d.theme.Dim.Render("failed ") + d.theme.Error.Render(fmt.Sprintf("%d", failed)),
 	}
 
+	// Size: always show cumulative downloaded bytes.
+	// If total is known, show "downloaded / total".
+	// If not, show "downloaded" (monotonically increasing).
 	sizeStr := humanizeBytes(downloadedBytes)
 	if itemsWithKnownSize > 0 && totalBytes > 0 {
 		sizeStr = fmt.Sprintf("%s / %s", humanizeBytes(downloadedBytes), humanizeBytes(totalBytes))
-	} else if downloadedBytes > 0 {
-		sizeStr = humanizeBytes(downloadedBytes) + " downloaded"
 	}
 	parts = append(parts,
 		d.theme.Dim.Render("speed ")+d.theme.Cyan.Render(fmt.Sprintf("%s/s", humanizeBytes(int64(totalSpeed)))),
@@ -664,17 +679,8 @@ func (d *Dashboard) overallPercent() float64 {
 		return (knownPct*float64(itemsWithKnownSize) + unknownPct*float64(unknownItems)) / float64(totalItems)
 	}
 
-	// No size info — count completed items, but also give partial credit
-	// for items currently downloading based on their byte progress
-	var partialCredit float64
-	for _, st := range d.states {
-		if st.status == model.StatusCompleted {
-			partialCredit += 1.0
-		} else if st.status == model.StatusDownloading && st.total > 0 {
-			partialCredit += float64(st.bytes) / float64(st.total)
-		}
-	}
-	return partialCredit / float64(totalItems)
+	// No size info — pure item-count progress (completed / total)
+	return float64(completedItems) / float64(totalItems)
 }
 
 func (d *Dashboard) eta() string {

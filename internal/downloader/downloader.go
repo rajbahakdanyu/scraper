@@ -18,7 +18,7 @@ import (
 const (
 	maxRetries      = 3
 	retryBaseDelay  = 500 * time.Millisecond
-	progressBufSize = 1024
+	progressBufSize = 4096
 )
 
 // Downloader manages concurrent media downloads with progress tracking,
@@ -226,13 +226,13 @@ func (d *Downloader) Progress() <-chan model.ProgressEvent {
 	return d.progress
 }
 
-// sendProgress sends an event. It blocks briefly if the buffer is full
-// to avoid dropping progress updates, but has a short timeout to prevent
-// deadlocks if the consumer stops reading.
+// sendProgress sends an event. Uses a large buffer (4096) so events
+// are rarely dropped. If the buffer is full the event is dropped to
+// prevent stalling the download goroutine.
 func (d *Downloader) sendProgress(evt model.ProgressEvent) {
 	select {
 	case d.progress <- evt:
-	case <-time.After(100 * time.Millisecond):
+	default:
 	}
 }
 
