@@ -9,22 +9,35 @@ import (
 	"github.com/user/scraper/internal/model"
 )
 
-func TestParseBunkerURL(t *testing.T) {
-	html := `<html><body>
-		<a class="link" href="https://cdn.example.com/image1.png">image1.png</a>
-		<a class="link" href="https://cdn.example.com/video1.mkv">video1.mkv</a>
-		<a class="link" href="">ignored</a>
+func TestParseBunkerAlbum(t *testing.T) {
+	// Mock the file page
+	fileHTML := `<html><head><title>Jamie Lo (39).mp4 | Bunkr</title></head><body>
+		<a href="https://dl.bunkr.cr/file/61567794">Download</a>
 	</body></html>`
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux := http.NewServeMux()
+
+	// Album page
+	albumHTML := `<html><body>
+		<a href="/f/LJiSwHaGgRq2i" aria-label="download" target="_blank"></a>
+		<a href="/f/tQqpEH85Y8tjT" aria-label="download" target="_blank"></a>
+	</body></html>`
+
+	mux.HandleFunc("/a/test123", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(html))
-	}))
+		w.Write([]byte(albumHTML))
+	})
+	mux.HandleFunc("/f/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(fileHTML))
+	})
+
+	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
 	scraper := NewBunkerScraper()
-	items, err := scraper.Parse(ts.URL + "/a/abc123")
+	scraper.baseURL = ts.URL
+	items, err := scraper.Parse(ts.URL + "/a/test123")
 	if err != nil {
 		t.Fatalf("Parse failed: %v", err)
 	}
@@ -33,22 +46,28 @@ func TestParseBunkerURL(t *testing.T) {
 		t.Fatalf("expected 2 items, got %d", len(items))
 	}
 
-	if items[0].Title != "image1.png" || items[0].Type != model.MediaTypeImage {
-		t.Errorf("unexpected first item: %+v", items[0])
+	if items[0].Title != "Jamie Lo (39).mp4" {
+		t.Errorf("expected title 'Jamie Lo (39).mp4', got %s", items[0].Title)
 	}
-	if items[1].Title != "video1.mkv" || items[1].Type != model.MediaTypeVideo {
-		t.Errorf("unexpected second item: %+v", items[1])
+	if items[0].URL != "https://dl.bunkr.cr/file/61567794" {
+		t.Errorf("expected dl.bunkr.cr URL, got %s", items[0].URL)
+	}
+	if items[0].Type != model.MediaTypeVideo {
+		t.Errorf("expected video type, got %s", items[0].Type)
 	}
 }
 
-func TestParseBunkerURLErrorStatus(t *testing.T) {
+func TestParseBunkerAlbumNoLinks(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(`<html><body>no files here</body></html>`))
 	}))
 	defer ts.Close()
 
 	scraper := NewBunkerScraper()
-	if _, err := scraper.Parse(ts.URL); err == nil {
-		t.Error("expected error for non-200 response")
+	scraper.baseURL = ts.URL
+	_, err := scraper.Parse(ts.URL + "/a/test")
+	if err == nil {
+		t.Error("expected error for album with no file links")
 	}
 }
