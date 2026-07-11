@@ -98,8 +98,11 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 	if filename == "" {
 		filename = "download"
 	}
-	if ext := extFromURL(item.URL); ext != "" {
-		filename += ext
+	// Only append extension from URL if the title doesn't already have one
+	if path.Ext(filename) == "" {
+		if ext := extFromURL(item.URL); ext != "" {
+			filename += ext
+		}
 	}
 	finalPath := filepath.Join(dest, filename)
 	tempPath := finalPath + ".part"
