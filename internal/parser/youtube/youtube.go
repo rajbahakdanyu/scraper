@@ -234,7 +234,7 @@ func (s *Scraper) downloadAndMux(video *ytdl.Video, videoFmt, audioFmt *ytdl.For
 
 	videoPath := filepath.Join(tmpDir, "video."+videoExt)
 	audioPath := filepath.Join(tmpDir, "audio."+audioExt)
-	outputPath := filepath.Join(dest, sanitizeFilename(title)+".mp4")
+	outputPath := safeOutputPath(dest, title)
 
 	videoSize := videoFmt.ContentLength
 	audioSize := audioFmt.ContentLength
@@ -364,4 +364,16 @@ func sanitizeFilename(s string) string {
 		return ""
 	}
 	return result
+}
+
+// safeOutputPath joins dest and the sanitized title into an absolute .mp4
+// path. Making it absolute ensures that even if dest is relative (e.g. ".")
+// and the sanitized title happens to start with "-", ffmpeg's argument
+// parser can never misread the muxed output path as a flag.
+func safeOutputPath(dest, title string) string {
+	p := filepath.Join(dest, sanitizeFilename(title)+".mp4")
+	if abs, err := filepath.Abs(p); err == nil {
+		return abs
+	}
+	return p
 }
