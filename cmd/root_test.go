@@ -39,10 +39,18 @@ func TestDetectSite(t *testing.T) {
 		{"https://www.youtube.com/watch?v=abc", "youtube"},
 		{"https://youtu.be/abc", "youtube"},
 		{"https://cyberdrop.cr/a/abc", "cyberdrop"},
+		{"https://cyberdrop.me/a/abc", "cyberdrop"},
+		{"https://cyberdrop.to/a/abc", "cyberdrop"},
 		{"https://bunkr.cr/a/abc", "bunker"},
+		{"https://bunkr.su/a/abc", "bunker"},
+		{"https://bunkrr.su/a/abc", "bunker"},
+		{"https://bunkr.la/a/abc", "bunker"},
+		{"https://bunkr.ph/a/abc", "bunker"},
 		{"https://goonbox.cr/a/abc", "goonbox"},
+		{"https://goonbox.to/a/abc", "goonbox"},
 		{"https://filester.sh/f/abc", "filester"},
 		{"https://filester.me/d/abc", "filester"},
+		{"https://filester.sh:8443/f/abc", "filester"},
 	}
 
 	for _, tt := range tests {
@@ -53,6 +61,23 @@ func TestDetectSite(t *testing.T) {
 		}
 		if got != tt.want {
 			t.Errorf("detectSite(%s) = %s, want %s", tt.url, got, tt.want)
+		}
+	}
+}
+
+func TestDetectSiteRejectsLookalikeDomains(t *testing.T) {
+	// These contain a known site's name as a substring but aren't actually
+	// that site, so they must not match (a plain strings.Contains check
+	// on the host would incorrectly match these).
+	lookalikes := []string{
+		"https://notcyberdrop.example.com/a/abc",
+		"https://cyberdrop.example.com/a/abc",
+		"https://evil-bunkr.com/a/abc",
+		"https://filester.sh.evil.com/f/abc",
+	}
+	for _, u := range lookalikes {
+		if got, err := detectSite(u); err == nil {
+			t.Errorf("detectSite(%s) = %s, want an error for a lookalike domain", u, got)
 		}
 	}
 }

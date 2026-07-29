@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"strings"
@@ -136,31 +137,45 @@ func extractSlug(rawURL string) string {
 	return last
 }
 
-// detectSite guesses which scraper handles rawURL from its host, so users
-// can run `scraper <url>` without picking a subcommand first. Best-effort:
-// sites may have several historical/mirror domains, matched by substring
-// rather than an exhaustive list.
+// siteDomains maps each supported scraper to the known domains it operates
+// under. Cyberlocker-style sites (Bunkr, CyberDrop, GoonBox) rotate through
+// many mirror domains over time, usually in response to takedowns, so this
+// list is necessarily incomplete — add new mirrors here as they show up.
+var siteDomains = map[string][]string{
+	"youtube": {"youtube.com", "youtu.be"},
+	"cyberdrop": {
+		"cyberdrop.cr", "cyberdrop.me", "cyberdrop.to", "cyberdrop.cc",
+	},
+	"bunker": {
+		"bunkr.cr", "bunkr.su", "bunkrr.su", "bunkr.si", "bunkr.la",
+		"bunkr.is", "bunkr.to", "bunkr.ru", "bunkr.black", "bunkr.red",
+		"bunkr.ph", "bunkr.site", "bunkr.fi",
+	},
+	"goonbox":  {"goonbox.cr", "goonbox.to"},
+	"filester": {"filester.sh", "filester.me"},
+}
+
+// detectSite guesses which scraper module handles rawURL based on its host,
+// matching against siteDomains rather than a plain substring so a lookalike
+// host (e.g. "notcyberdrop.example.com") can't be mistaken for the real site.
 func detectSite(rawURL string) (string, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil || u.Host == "" {
 		return "", fmt.Errorf("could not parse %q as a URL", rawURL)
 	}
 	host := strings.ToLower(u.Host)
-
-	switch {
-	case strings.Contains(host, "youtube.com"), strings.Contains(host, "youtu.be"):
-		return "youtube", nil
-	case strings.Contains(host, "cyberdrop."):
-		return "cyberdrop", nil
-	case strings.Contains(host, "bunkr."):
-		return "bunker", nil
-	case strings.Contains(host, "goonbox."):
-		return "goonbox", nil
-	case strings.Contains(host, "filester."):
-		return "filester", nil
-	default:
-		return "", fmt.Errorf("could not auto-detect a site for %q (available: youtube, cyberdrop, bunker, goonbox, filester)", rawURL)
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
 	}
+
+	for site, domains := range siteDomains {
+		for _, domain := range domains {
+			if host == domain || strings.HasSuffix(host, "."+domain) {
+				return site, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("could not auto-detect a site for %q (available: youtube, cyberdrop, bunker, goonbox, filester)", rawURL)
 }
 
 // runWithScraper launches the TUI immediately. The scraper runs in the
