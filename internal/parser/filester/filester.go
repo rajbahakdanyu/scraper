@@ -110,30 +110,54 @@ type folderEntry struct {
 
 var onclickSlugRe = regexp.MustCompile(`/d/([^'"]+)`)
 
+const (
+	// maxPageRetries is how many times a single folder-listing page is
+	// retried if it comes back empty/unreachable before giving up on it.
+	maxPageRetries = 3
+	// pageRetryDelay is the wait between retries of the same page.
+	pageRetryDelay = 500 * time.Millisecond
+	// pageFetchDelay is a small politeness delay between different pages,
+	// to reduce the odds of a large (dozens-of-pages) album tripping
+	// rate limiting from rapid back-to-back requests in the first place.
+	pageFetchDelay = 150 * time.Millisecond
+)
+
 // parseFolder fetches every page of a folder listing, then resolves each
 // file's real download URL concurrently.
+//
+// A folder-listing request can transiently come back with zero items
+// (rate limiting, a momentary server blip) even though we already know
+// from page 1's "load all pages" total that more pages exist. Treating
+// that as "end of album" used to silently truncate large albums (e.g. an
+// album with 1023 files across 43 pages stopping after ~15 pages the
+// moment one page hiccupped). Once the real page count is known, every
+// page is retried a few times and, failing that, skipped rather than
+// aborting the rest of the scan.
 func (s *Scraper) parseFolder(id string) ([]model.MediaItem, error) {
 	var allEntries []folderEntry
 	total := 1
 
 	for page := 1; page <= total; page++ {
-		doc, err := s.fetchDoc(fmt.Sprintf("%s/f/%s?page=%d", s.baseURL, id, page))
-		if err != nil {
-			return nil, err
+		if page > 1 {
+			time.Sleep(pageFetchDelay)
 		}
+
+		entries, pageTotal, err := s.fetchFolderPage(id, page)
 
 		if page == 1 {
-			if v, ok := doc.Find("#loadAllPagesBtn").Attr("data-total"); ok {
-				if n, err := strconv.Atoi(v); err == nil && n > total {
-					total = n
-				}
+			if err != nil {
+				return nil, err
 			}
+			if pageTotal > total {
+				total = pageTotal
+			}
+		} else if err != nil {
+			// Couldn't recover this specific page even after retries.
+			// We already know the real page count from page 1's total,
+			// so skip it rather than truncating everything after it.
+			continue
 		}
 
-		entries := extractFileItems(doc)
-		if len(entries) == 0 {
-			break
-		}
 		allEntries = append(allEntries, entries...)
 	}
 
@@ -175,6 +199,52 @@ func (s *Scraper) parseFolder(id string) ([]model.MediaItem, error) {
 		return nil, fmt.Errorf("filester: could not resolve any download URLs in folder %s", id)
 	}
 	return result, nil
+}
+
+// fetchFolderPage fetches one page of a folder listing. A genuine fetch
+// error (bad status, network failure) is returned immediately — retrying a
+// permanent error like a 404 would just waste time. But if the page loads
+// fine yet comes back with zero .file-item entries (and it isn't page 1,
+// which can legitimately be an empty folder), that's retried a few times
+// before being treated as a real failure: a large album means dozens of
+// sequential requests, and a single transient hiccup (rate limiting, a
+// momentary blip) shouldn't be mistaken for having reached the end of the
+// album — that's exactly what previously caused large albums to be
+// silently truncated partway through with no error at all.
+func (s *Scraper) fetchFolderPage(id string, page int) (entries []folderEntry, pageTotal int, err error) {
+	pageURL := fmt.Sprintf("%s/f/%s?page=%d", s.baseURL, id, page)
+
+	doc, err := s.fetchDoc(pageURL)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	if page == 1 {
+		if v, ok := doc.Find("#loadAllPagesBtn").Attr("data-total"); ok {
+			if n, aerr := strconv.Atoi(v); aerr == nil {
+				pageTotal = n
+			}
+		}
+	}
+
+	entries = extractFileItems(doc)
+	if len(entries) > 0 || page == 1 {
+		return entries, pageTotal, nil
+	}
+
+	for attempt := 1; attempt < maxPageRetries; attempt++ {
+		time.Sleep(pageRetryDelay)
+
+		doc, ferr := s.fetchDoc(pageURL)
+		if ferr != nil {
+			continue
+		}
+		if entries = extractFileItems(doc); len(entries) > 0 {
+			return entries, pageTotal, nil
+		}
+	}
+
+	return nil, pageTotal, fmt.Errorf("filester: page %d of folder %s returned no items after %d attempts", page, id, maxPageRetries)
 }
 
 // extractFileItems reads the .file-item divs from a rendered folder page,

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/user/scraper/internal/model"
@@ -123,6 +124,94 @@ func TestParseFilesterFolderPagination(t *testing.T) {
 	}
 	if items[0].Title != "p1.jpg" || items[1].Title != "p2.jpg" {
 		t.Errorf("expected p1.jpg then p2.jpg, got %s then %s", items[0].Title, items[1].Title)
+	}
+}
+
+// TestParseFilesterFolderRecoversFromTransientEmptyPage guards against a
+// real bug: a page that transiently comes back with zero items (rate
+// limiting, a momentary blip) used to be treated as "end of the album",
+// silently truncating large albums partway through. The first attempt at
+// page 2 here returns nothing; the retry should recover it.
+func TestParseFilesterFolderRecoversFromTransientEmptyPage(t *testing.T) {
+	var page2Attempts int32
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/f/flaky", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		switch r.URL.Query().Get("page") {
+		case "2":
+			if atomic.AddInt32(&page2Attempts, 1) < 2 {
+				w.Write([]byte(`<html><body></body></html>`)) // transient blip
+				return
+			}
+			w.Write([]byte(`<html><body>
+				<div class="file-item" data-name="p2.jpg" data-size="50" onclick="window.location.href='/d/p2'"></div>
+			</body></html>`))
+		case "3":
+			w.Write([]byte(`<html><body>
+				<div class="file-item" data-name="p3.jpg" data-size="60" onclick="window.location.href='/d/p3'"></div>
+			</body></html>`))
+		default:
+			w.Write([]byte(`<html><body>
+				<button id="loadAllPagesBtn" data-total="3">Load all pages</button>
+				<div class="file-item" data-name="p1.jpg" data-size="40" onclick="window.location.href='/d/p1'"></div>
+			</body></html>`))
+		}
+	})
+	mux.HandleFunc("/v2/api/public/download", downloadTokenHandler("", false))
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	scraper := NewFilesterScraper()
+	scraper.baseURL = ts.URL
+	scraper.cdnURLs = []string{ts.URL}
+
+	items, err := scraper.Parse(ts.URL + "/f/flaky")
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("expected 3 items (page 2 recovers on retry), got %d", len(items))
+	}
+}
+
+// TestParseFilesterFolderSkipsPermanentlyEmptyPage ensures a page that
+// never recovers (even after retries) is skipped rather than aborting the
+// rest of the album — pages after it should still be collected.
+func TestParseFilesterFolderSkipsPermanentlyEmptyPage(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/f/partial", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		switch r.URL.Query().Get("page") {
+		case "2":
+			w.Write([]byte(`<html><body></body></html>`)) // always empty
+		case "3":
+			w.Write([]byte(`<html><body>
+				<div class="file-item" data-name="p3.jpg" data-size="60" onclick="window.location.href='/d/p3'"></div>
+			</body></html>`))
+		default:
+			w.Write([]byte(`<html><body>
+				<button id="loadAllPagesBtn" data-total="3">Load all pages</button>
+				<div class="file-item" data-name="p1.jpg" data-size="40" onclick="window.location.href='/d/p1'"></div>
+			</body></html>`))
+		}
+	})
+	mux.HandleFunc("/v2/api/public/download", downloadTokenHandler("", false))
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	scraper := NewFilesterScraper()
+	scraper.baseURL = ts.URL
+	scraper.cdnURLs = []string{ts.URL}
+
+	items, err := scraper.Parse(ts.URL + "/f/partial")
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items (page 3 still collected despite page 2 permanently failing), got %d", len(items))
 	}
 }
 
