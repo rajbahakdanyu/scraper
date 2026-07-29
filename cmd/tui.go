@@ -8,6 +8,7 @@ import (
 	"github.com/user/scraper/internal/model"
 	"github.com/user/scraper/internal/parser/bunker"
 	"github.com/user/scraper/internal/parser/cyberdrop"
+	"github.com/user/scraper/internal/parser/filester"
 	"github.com/user/scraper/internal/parser/goonbox"
 	"github.com/user/scraper/internal/parser/youtube"
 )
@@ -18,6 +19,7 @@ func scraperRegistry() map[string]model.Scraper {
 		"cyberdrop": cyberdrop.NewCyberDropScraper(),
 		"bunker":    bunker.NewBunkerScraper(),
 		"goonbox":   goonbox.NewGoonBoxScraper(),
+		"filester":  filester.NewFilesterScraper(),
 	}
 }
 
@@ -32,7 +34,7 @@ func newTUICmd(opts globalOptions) *cobra.Command {
 			registry := scraperRegistry()
 			scraper, ok := registry[site]
 			if !ok {
-				return fmt.Errorf("unknown site %q (available: youtube, cyberdrop, bunker, goonbox)", site)
+				return fmt.Errorf("unknown site %q (available: youtube, cyberdrop, bunker, goonbox, filester)", site)
 			}
 
 			return runWithScraper(scraper, targetURL, site, opts)

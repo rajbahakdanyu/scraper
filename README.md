@@ -1,7 +1,7 @@
 # Scraper CLI
 
 A Go-based CLI tool for scraping and downloading media from YouTube,
-CyberDrop, Bunker, and GoonBox — with a futuristic terminal UI that
+CyberDrop, Bunker, GoonBox, and Filester — with a futuristic terminal UI that
 launches instantly and shows live download progress.
 
 ## Requirements
@@ -25,6 +25,8 @@ background with a loading spinner, then transitions to the download view.
 ./scraper cyberdrop https://cyberdrop.cr/f/FILE_ID
 ./scraper bunker https://bunkr.cr/a/ALBUM_ID
 ./scraper goonbox https://goonbox.cr/a/ALBUM_ID
+./scraper filester https://filester.sh/f/FOLDER_ID
+./scraper filester https://filester.sh/d/FILE_SLUG
 ```
 
 ### YouTube
@@ -33,10 +35,10 @@ Shows a quality selector (144p–2160p). Pick a resolution and press Enter
 to download. For resolutions above 360p, video and audio streams are
 downloaded separately and muxed with ffmpeg.
 
-### Albums (Bunker, GoonBox, CyberDrop)
+### Albums (Bunker, GoonBox, CyberDrop, Filester)
 
-All files in an album are auto-downloaded concurrently into a subfolder
-named after the album ID:
+All files in an album/folder are auto-downloaded concurrently into a
+subfolder named after the album ID:
 
 ```
 ./downloads/
@@ -46,8 +48,8 @@ named after the album ID:
     ...
 ```
 
-Single files (e.g. CyberDrop `/f/` links) download directly to the
-output directory.
+Single files (e.g. CyberDrop `/f/` links or Filester `/d/` links) download
+directly to the output directory.
 
 ### Flags
 
@@ -87,6 +89,7 @@ CLI flags override config file values.
 | CyberDrop | `cyberdrop.cr/f/SLUG` or `/a/SLUG` | API-based, signed CDN URLs           |
 | Bunker    | `bunkr.cr/a/ALBUM_ID`              | API + token signing, parallel fetch  |
 | GoonBox   | `goonbox.cr/a/ALBUM_ID`            | JSON API, paginated albums           |
+| Filester  | `filester.sh/f/ID` or `/d/SLUG`    | HTML folder listing + signed download tokens, paginated |
 
 ## Development
 

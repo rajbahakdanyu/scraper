@@ -66,6 +66,7 @@ func NewRootCmd() *cobra.Command {
 		newCyberDropCmd(opts),
 		newBunkerCmd(opts),
 		newGoonBoxCmd(opts),
+		newFilesterCmd(opts),
 		newTUICmd(opts),
 	)
 
