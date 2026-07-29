@@ -113,14 +113,38 @@ var onclickSlugRe = regexp.MustCompile(`/d/([^'"]+)`)
 const (
 	// maxPageRetries is how many times a single folder-listing page is
 	// retried if it comes back empty/unreachable before giving up on it.
-	maxPageRetries = 3
-	// pageRetryDelay is the wait between retries of the same page.
-	pageRetryDelay = 500 * time.Millisecond
+	maxPageRetries = 4
+	// pageRetryBaseDelay is the base exponential-backoff delay between
+	// retries of the same page (doubles each attempt: 1.5s, 3s, 6s).
+	pageRetryBaseDelay = 1500 * time.Millisecond
 	// pageFetchDelay is a small politeness delay between different pages,
 	// to reduce the odds of a large (dozens-of-pages) album tripping
 	// rate limiting from rapid back-to-back requests in the first place.
-	pageFetchDelay = 150 * time.Millisecond
+	pageFetchDelay = 400 * time.Millisecond
+
+	// maxResolveRetries/resolveRetryBaseDelay mirror the page-retry
+	// settings above but for resolveFile's download-token requests.
+	maxResolveRetries     = 4
+	resolveRetryBaseDelay = 1500 * time.Millisecond
+	// resolveConcurrency bounds how many download-token requests run at
+	// once. This used to be 10 with zero retry coverage — a much burstier
+	// request pattern than the (now paced) page-listing phase, and a
+	// prime suspect for additional silent losses on large albums. Lowered
+	// alongside adding retries so the two changes compound instead of
+	// fighting each other.
+	resolveConcurrency = 4
 )
+
+// backoffWithJitter returns an exponentially increasing delay (base *
+// 2^(attempt-1), attempt starting at 1) with up to ~30% random jitter
+// added on top, so many concurrent callers retrying around the same time
+// (e.g. resolveFile's worker pool) don't all land on the exact same
+// instant and re-trigger whatever rate limiting caused the retry.
+func backoffWithJitter(base time.Duration, attempt int) time.Duration {
+	d := base << uint(attempt-1)
+	jitter := time.Duration(rand.Int63n(int64(d)/3 + 1))
+	return d + jitter
+}
 
 // parseFolder fetches every page of a folder listing, then resolves each
 // file's real download URL concurrently.
@@ -170,7 +194,7 @@ func (s *Scraper) parseFolder(id string) ([]model.MediaItem, error) {
 	items := make([]model.MediaItem, len(allEntries))
 	errs := make([]error, len(allEntries))
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, 10)
+	sem := make(chan struct{}, resolveConcurrency)
 
 	for i, e := range allEntries {
 		wg.Add(1)
@@ -233,7 +257,7 @@ func (s *Scraper) fetchFolderPage(id string, page int) (entries []folderEntry, p
 	}
 
 	for attempt := 1; attempt < maxPageRetries; attempt++ {
-		time.Sleep(pageRetryDelay)
+		time.Sleep(backoffWithJitter(pageRetryBaseDelay, attempt))
 
 		doc, ferr := s.fetchDoc(pageURL)
 		if ferr != nil {
@@ -276,7 +300,31 @@ func extractFileItems(doc *goquery.Document) []folderEntry {
 // (POST /v2/api/public/download {"file_slug": slug} ->
 // {file, token, server?, name?}), replicating /js/file_dl.js's
 // generatePublicDownloadToken() + buildMediaUrl(tokenData, true).
+//
+// This runs with resolveConcurrency requests in flight at once across
+// potentially 1000+ files — a much burstier pattern than the paced
+// page-listing phase, and one that was found to hit the same kind of
+// rate limiting with zero retry coverage at all: any single failed
+// token request was silently dropped from the final result with no
+// error surfaced. Retries with backoff+jitter before giving up.
 func (s *Scraper) resolveFile(slug, knownName string) (model.MediaItem, error) {
+	var lastErr error
+	for attempt := 1; attempt <= maxResolveRetries; attempt++ {
+		if attempt > 1 {
+			time.Sleep(backoffWithJitter(resolveRetryBaseDelay, attempt-1))
+		}
+		item, err := s.resolveFileOnce(slug, knownName)
+		if err == nil {
+			return item, nil
+		}
+		lastErr = err
+	}
+	return model.MediaItem{}, lastErr
+}
+
+// resolveFileOnce is a single attempt at the token exchange described on
+// resolveFile.
+func (s *Scraper) resolveFileOnce(slug, knownName string) (model.MediaItem, error) {
 	body, err := json.Marshal(map[string]string{"file_slug": slug})
 	if err != nil {
 		return model.MediaItem{}, err
