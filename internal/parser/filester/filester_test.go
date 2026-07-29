@@ -1,4 +1,3 @@
-// internal/parser/filester/filester_test.go
 package filester
 
 import (

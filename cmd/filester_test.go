@@ -1,4 +1,3 @@
-// cmd/filester_test.go
 package cmd
 
 import "testing"

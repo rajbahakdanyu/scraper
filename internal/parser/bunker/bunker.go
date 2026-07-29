@@ -53,6 +53,12 @@ func (s *Scraper) Name() string {
 // page to get the dl.bunkr.cr link, then uses the bunkr API + signing service
 // to resolve the final signed CDN download URL.
 func (s *Scraper) Parse(albumURL string) ([]model.MediaItem, error) {
+	// Strip query params — ?advanced=1 switches to JS-rendered mode
+	// which doesn't have server-side file links in the HTML.
+	if idx := strings.Index(albumURL, "?"); idx >= 0 {
+		albumURL = albumURL[:idx]
+	}
+
 	doc, err := s.fetchDoc(albumURL)
 	if err != nil {
 		return nil, err
