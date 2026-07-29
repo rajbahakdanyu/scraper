@@ -2,11 +2,14 @@
 package dashboard
 
 import (
+	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/user/scraper/internal/model"
@@ -234,6 +237,56 @@ func TestBatchProgressUpdatesRows(t *testing.T) {
 	}
 	if d.states[0].status != model.StatusDownloading {
 		t.Errorf("expected status downloading, got %v", d.states[0].status)
+	}
+}
+
+func TestSpinnerStopsAfterBatchCompletes(t *testing.T) {
+	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 1)}
+	items := []model.MediaItem{
+		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100},
+	}
+	d := New(instantItems(items), fd, t.TempDir(), "cyberdrop")
+	d.Update(scrapeResultMsg{items: items})
+
+	if !d.spinnerActive() {
+		t.Fatal("expected spinner active while a download is in progress")
+	}
+	if _, cmd := d.Update(spinner.TickMsg{}); cmd == nil {
+		t.Error("expected spinner tick to be re-armed while active")
+	}
+
+	d.applyDone(downloadDoneMsg{url: items[0].URL})
+	if d.spinnerActive() {
+		t.Error("expected spinner inactive once all items are done")
+	}
+	if _, cmd := d.Update(spinner.TickMsg{}); cmd != nil {
+		t.Error("expected spinner tick to stop once all items are done")
+	}
+}
+
+func TestRenderStatsShowsStaticIconWhenDone(t *testing.T) {
+	items := []model.MediaItem{
+		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100},
+	}
+	d := New(instantItems(items), nil, t.TempDir(), "cyberdrop")
+	d.Update(scrapeResultMsg{items: items})
+	d.applyDone(downloadDoneMsg{url: items[0].URL})
+
+	if stats := d.renderStats(); !strings.Contains(stats, "✓") {
+		t.Errorf("expected a static checkmark once all downloads finish, got: %q", stats)
+	}
+}
+
+func TestRenderStatsShowsXWhenFailed(t *testing.T) {
+	items := []model.MediaItem{
+		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100},
+	}
+	d := New(instantItems(items), nil, t.TempDir(), "cyberdrop")
+	d.Update(scrapeResultMsg{items: items})
+	d.applyDone(downloadDoneMsg{url: items[0].URL, err: errors.New("boom")})
+
+	if stats := d.renderStats(); !strings.Contains(stats, "✗") {
+		t.Errorf("expected a static X once a download fails, got: %q", stats)
 	}
 }
 

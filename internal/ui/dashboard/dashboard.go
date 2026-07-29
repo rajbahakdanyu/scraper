@@ -190,6 +190,9 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return d, nil
 
 	case spinner.TickMsg:
+		if !d.spinnerActive() {
+			return d, nil
+		}
 		var cmd tea.Cmd
 		d.spinner, cmd = d.spinner.Update(msg)
 		return d, cmd
@@ -621,8 +624,35 @@ func (d *Dashboard) renderStats() string {
 		parts = append(parts, d.theme.Dim.Render("speed ")+d.theme.Cyan.Render(fmt.Sprintf("%s/s", humanizeBytes(int64(totalSpeed)))))
 	}
 
-	line := d.spinner.View() + " " + d.theme.Dim.Render("done ") + strings.Join(parts, "  ")
+	icon := d.spinner.View()
+	if !d.spinnerActive() {
+		icon = d.theme.Success.Render("✓")
+		if failed > 0 {
+			icon = d.theme.Error.Render("✗")
+		}
+	}
+
+	line := icon + " " + d.theme.Dim.Render("done ") + strings.Join(parts, "  ")
 	return d.theme.StatusBar.Render(line)
+}
+
+// spinnerActive reports whether the spinner should keep ticking: while
+// media is loading, while a YouTube download is running, or while any
+// batch item is still downloading. Once everything's done, ticking stops
+// instead of animating forever.
+func (d *Dashboard) spinnerActive() bool {
+	if d.phase == phaseLoading {
+		return true
+	}
+	if d.ytDownloader != nil {
+		return d.phase == phaseDownload
+	}
+	for _, st := range d.states {
+		if st.status == model.StatusDownloading {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *Dashboard) ytETA() string {
