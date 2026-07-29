@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"os"
@@ -114,7 +115,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 			case <-ctx.Done():
 				d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled})
 				return fmt.Errorf("download cancelled: %s", item.URL)
-			case <-time.After(retryBaseDelay << attempt):
+			case <-time.After(backoffWithJitter(retryBaseDelay, attempt)):
 			}
 		}
 
@@ -286,6 +287,15 @@ type nonRetryableError struct{ err error }
 
 func (e *nonRetryableError) Error() string { return e.err.Error() }
 func (e *nonRetryableError) Unwrap() error { return e.err }
+
+// backoffWithJitter returns an exponentially increasing delay (base *
+// 2^attempt) with up to ~30% random jitter added, so many concurrent
+// downloads retrying around the same time don't all retry at once.
+func backoffWithJitter(base time.Duration, attempt int) time.Duration {
+	d := base << uint(attempt)
+	jitter := time.Duration(rand.Int63n(int64(d)/3 + 1))
+	return d + jitter
+}
 
 // isRetryableStatus reports whether an HTTP status code represents a
 // transient failure worth retrying (5xx, request timeout, rate limiting) as
