@@ -12,6 +12,8 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -62,8 +64,11 @@ func NewDownloaderWithConfig(concurrency int, timeout time.Duration, userAgent s
 }
 
 // Download fetches a single media item and saves it to dest. It uses a
-// temporary file during download and renames on success, so partial files
-// are never left behind. Retries up to maxRetries times on transient errors.
+// temporary ".part" file during download and renames it on success.
+// Retries up to maxRetries times on transient errors; if all retries are
+// exhausted (or the download is cancelled) the .part file is kept rather
+// than deleted, so a later Download call for the same item resumes from
+// where it left off via an HTTP Range request instead of starting over.
 func (d *Downloader) Download(item model.MediaItem, dest string) error {
 	d.sem <- struct{}{}
 	defer func() { <-d.sem }()
@@ -146,11 +151,20 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 		}
 	}
 
-	os.Remove(tempPath)
 	if ctx.Err() != nil {
 		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled})
 		return fmt.Errorf("download cancelled: %s", item.URL)
 	}
+
+	var nre *nonRetryableError
+	if errors.As(lastErr, &nre) {
+		// Will never succeed no matter how many times it's retried, so
+		// there's nothing worth resuming — clean up the partial file.
+		os.Remove(tempPath)
+	}
+	// Otherwise tempPath is left in place: a later Download call for the
+	// same item resumes from it via a Range request instead of
+	// re-downloading everything from scratch.
 	d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed})
 	return fmt.Errorf("download failed after %d attempts: %w", maxRetries, lastErr)
 }
@@ -158,14 +172,25 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 // downloadOnce performs a single download attempt to tempPath. The request
 // and the response body read are both bound to ctx, so cancelling ctx
 // aborts an in-flight attempt immediately instead of waiting for it to
-// finish.
+// finish. If tempPath already has bytes on disk (a previous attempt left
+// them there), it requests the remainder via a Range header and appends;
+// if the server doesn't honor the range (a plain 200 response) it falls
+// back to a full re-download instead of corrupting the file.
 func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, tempPath string) error {
+	var existing int64
+	if info, err := os.Stat(tempPath); err == nil {
+		existing = info.Size()
+	}
+
 	req, err := http.NewRequestWithContext(ctx, "GET", item.URL, nil)
 	if err != nil {
 		return err
 	}
 	if d.userAgent != "" {
 		req.Header.Set("User-Agent", d.userAgent)
+	}
+	if existing > 0 {
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", existing))
 	}
 
 	resp, err := d.client.Do(req)
@@ -174,7 +199,21 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, tem
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	switch resp.StatusCode {
+	case http.StatusOK:
+		// The server ignored our Range request (or we didn't send one).
+		// Bytes already on disk can't be trusted to precede this
+		// full-content response, so start over from scratch.
+		existing = 0
+	case http.StatusPartialContent:
+		// Resuming from existing bytes, as requested.
+	case http.StatusRequestedRangeNotSatisfiable:
+		// Our recorded partial no longer lines up with the remote resource
+		// (e.g. it changed size) — discard it so the next retry attempt
+		// fetches the whole thing fresh.
+		os.Remove(tempPath)
+		return fmt.Errorf("HTTP %d for %s (stale partial download discarded)", resp.StatusCode, item.URL)
+	default:
 		err := fmt.Errorf("HTTP %d for %s", resp.StatusCode, item.URL)
 		if !isRetryableStatus(resp.StatusCode) {
 			return &nonRetryableError{err}
@@ -182,18 +221,28 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, tem
 		return err
 	}
 
-	total := resp.ContentLength
-	if total < 0 {
-		total = 0
+	total := existing + resp.ContentLength
+	if resp.ContentLength < 0 {
+		total = existing
+	}
+	if fromHeader := parseContentRangeTotal(resp.Header.Get("Content-Range")); fromHeader > 0 {
+		total = fromHeader
 	}
 
-	out, err := os.Create(tempPath)
+	flags := os.O_CREATE | os.O_WRONLY
+	if existing > 0 {
+		flags |= os.O_APPEND
+	} else {
+		flags |= os.O_TRUNC
+	}
+	out, err := os.OpenFile(tempPath, flags, 0644)
 	if err != nil {
 		return err
 	}
 
 	pr := &progressReader{
 		reader: resp.Body,
+		base:   existing,
 		onProgress: func(bytes int64) {
 			d.sendProgress(model.ProgressEvent{
 				Item:   item,
@@ -220,6 +269,7 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, tem
 type progressReader struct {
 	reader       io.Reader
 	read         int64
+	base         int64 // bytes already on disk before this read began (resumed downloads)
 	onProgress   func(bytes int64)
 	readDeadline time.Duration
 }
@@ -245,7 +295,7 @@ func (pr *progressReader) Read(p []byte) (int, error) {
 	case r := <-done:
 		if r.n > 0 {
 			pr.read += int64(r.n)
-			pr.onProgress(pr.read)
+			pr.onProgress(pr.base + pr.read)
 		}
 		return r.n, r.err
 	case <-time.After(timeout):
@@ -308,6 +358,21 @@ func isRetryableStatus(code int) bool {
 	default:
 		return code >= 500
 	}
+}
+
+// parseContentRangeTotal extracts the total resource size from a
+// "Content-Range: bytes start-end/total" response header, returning 0 if
+// the header is absent or malformed.
+func parseContentRangeTotal(headerVal string) int64 {
+	idx := strings.LastIndex(headerVal, "/")
+	if idx < 0 || idx == len(headerVal)-1 {
+		return 0
+	}
+	total, err := strconv.ParseInt(headerVal[idx+1:], 10, 64)
+	if err != nil {
+		return 0
+	}
+	return total
 }
 
 // sanitizeFilename removes characters that are invalid in filenames. It also
