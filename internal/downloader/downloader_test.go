@@ -2,6 +2,9 @@
 package downloader
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -319,5 +322,158 @@ func TestDownloadRemovesPartialFileOnNonRetryableFailure(t *testing.T) {
 	tempPath := filepath.Join(dest, "partial_remove.bin.part")
 	if _, statErr := os.Stat(tempPath); !os.IsNotExist(statErr) {
 		t.Error("expected .part file to be removed after a non-retryable (404) failure")
+	}
+}
+
+func TestSetRateLimitThrottlesThroughput(t *testing.T) {
+	payload := bytes.Repeat([]byte("x"), 96*1024) // well over minRateLimitBurst
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(payload)
+	}))
+	defer ts.Close()
+
+	dl := NewDownloaderWithConfig(1, 0, "")
+	dl.SetRateLimit(20 * 1024) // 20KB/s
+	item := model.MediaItem{URL: ts.URL, Title: "throttled.bin"}
+
+	start := time.Now()
+	if err := dl.Download(item, t.TempDir()); err != nil {
+		t.Fatalf("download failed: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed < time.Second {
+		t.Errorf("expected a 20KB/s cap on a 96KB file to take over a second, took %v", elapsed)
+	}
+}
+
+func TestSetRateLimitZeroRemovesCap(t *testing.T) {
+	payload := bytes.Repeat([]byte("x"), 96*1024)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(payload)
+	}))
+	defer ts.Close()
+
+	dl := NewDownloaderWithConfig(1, 0, "")
+	dl.SetRateLimit(20 * 1024)
+	dl.SetRateLimit(0) // remove the cap before downloading
+	item := model.MediaItem{URL: ts.URL, Title: "unthrottled.bin"}
+
+	start := time.Now()
+	if err := dl.Download(item, t.TempDir()); err != nil {
+		t.Fatalf("download failed: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("expected an uncapped download to be fast, took %v", elapsed)
+	}
+}
+
+func TestDownloadWritesChecksumSidecar(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("checksum me"))
+	}))
+	defer ts.Close()
+
+	dl := NewDownloaderWithConfig(1, 0, "")
+	item := model.MediaItem{URL: ts.URL, Title: "sum.bin"}
+	dest := t.TempDir()
+
+	if err := dl.Download(item, dest); err != nil {
+		t.Fatalf("download failed: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dest, "sum.bin.sha256"))
+	if err != nil {
+		t.Fatalf("expected a .sha256 sidecar to be written, got: %v", err)
+	}
+	want := sha256.Sum256([]byte("checksum me"))
+	wantHex := hex.EncodeToString(want[:])
+	if !strings.HasPrefix(string(data), wantHex) {
+		t.Errorf("sidecar content = %q, want it to start with %q", data, wantHex)
+	}
+}
+
+func TestDownloadSkipsChecksumSidecarWhenDisabled(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("no checksum"))
+	}))
+	defer ts.Close()
+
+	dl := NewDownloaderWithConfig(1, 0, "")
+	dl.SetSkipChecksums(true)
+	item := model.MediaItem{URL: ts.URL, Title: "nosum.bin"}
+	dest := t.TempDir()
+
+	if err := dl.Download(item, dest); err != nil {
+		t.Fatalf("download failed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "nosum.bin.sha256")); !os.IsNotExist(err) {
+		t.Error("expected no .sha256 sidecar when checksums are disabled")
+	}
+}
+
+func TestDownloadRedownloadsWhenChecksumMismatches(t *testing.T) {
+	var requests int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requests, 1)
+		w.Write([]byte("correct content"))
+	}))
+	defer ts.Close()
+
+	dl := NewDownloaderWithConfig(1, 0, "")
+	item := model.MediaItem{URL: ts.URL, Title: "verify.bin"}
+	dest := t.TempDir()
+
+	finalPath := filepath.Join(dest, "verify.bin")
+	if err := os.WriteFile(finalPath, []byte("CORRUPTED"), 0644); err != nil {
+		t.Fatalf("failed to seed a corrupted final file: %v", err)
+	}
+	sum := sha256.Sum256([]byte("correct content"))
+	sidecar := filepath.Join(dest, "verify.bin.sha256")
+	if err := os.WriteFile(sidecar, []byte(hex.EncodeToString(sum[:])+"  verify.bin\n"), 0644); err != nil {
+		t.Fatalf("failed to seed a checksum sidecar: %v", err)
+	}
+
+	if err := dl.Download(item, dest); err != nil {
+		t.Fatalf("download failed: %v", err)
+	}
+	if got := atomic.LoadInt32(&requests); got != 1 {
+		t.Errorf("expected the corrupted file to be redownloaded, got %d requests", got)
+	}
+	got, err := os.ReadFile(finalPath)
+	if err != nil {
+		t.Fatalf("failed to read final file: %v", err)
+	}
+	if string(got) != "correct content" {
+		t.Errorf("final content = %q, want %q", got, "correct content")
+	}
+}
+
+func TestDownloadSkipsWhenChecksumMatches(t *testing.T) {
+	var requests int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requests, 1)
+		w.Write([]byte("should not be fetched"))
+	}))
+	defer ts.Close()
+
+	dl := NewDownloaderWithConfig(1, 0, "")
+	item := model.MediaItem{URL: ts.URL, Title: "cached.bin"}
+	dest := t.TempDir()
+
+	finalPath := filepath.Join(dest, "cached.bin")
+	content := []byte("already good")
+	if err := os.WriteFile(finalPath, content, 0644); err != nil {
+		t.Fatalf("failed to seed an existing file: %v", err)
+	}
+	sum := sha256.Sum256(content)
+	sidecar := filepath.Join(dest, "cached.bin.sha256")
+	if err := os.WriteFile(sidecar, []byte(hex.EncodeToString(sum[:])+"  cached.bin\n"), 0644); err != nil {
+		t.Fatalf("failed to seed a checksum sidecar: %v", err)
+	}
+
+	if err := dl.Download(item, dest); err != nil {
+		t.Fatalf("download failed: %v", err)
+	}
+	if got := atomic.LoadInt32(&requests); got != 0 {
+		t.Errorf("expected no request for a file matching its checksum, got %d", got)
 	}
 }

@@ -24,9 +24,11 @@ import (
 // globalOptions holds flags defined on the root command that are inherited
 // by all subcommands via PersistentFlags.
 type globalOptions struct {
-	configPath  string
-	output      string
-	concurrency int
+	configPath    string
+	output        string
+	concurrency   int
+	rateLimit     string
+	skipChecksums bool
 }
 
 // loadGlobalConfig loads the config file and applies CLI flag overrides.
@@ -45,6 +47,12 @@ func loadGlobalConfig(opts globalOptions) *config.Config {
 	}
 	if opts.concurrency > 0 && opts.concurrency != 5 {
 		cfg.ConcurrentDownloads = opts.concurrency
+	}
+	if opts.rateLimit != "" {
+		cfg.RateLimit = opts.rateLimit
+	}
+	if opts.skipChecksums {
+		cfg.SkipChecksums = true
 	}
 
 	return cfg
@@ -83,6 +91,8 @@ func NewRootCmd() *cobra.Command {
 	root.PersistentFlags().StringVar(&opts.configPath, "config", "", "Config file path (default: ~/.scraper.yaml)")
 	root.PersistentFlags().StringVarP(&opts.output, "output", "o", ".", "Output directory")
 	root.PersistentFlags().IntVar(&opts.concurrency, "concurrent", 5, "Maximum concurrent downloads")
+	root.PersistentFlags().StringVar(&opts.rateLimit, "limit-rate", "", "Cap total download speed (e.g. 500K, 2M, 1G; default: unlimited)")
+	root.PersistentFlags().BoolVar(&opts.skipChecksums, "no-checksums", false, "Don't write/verify .sha256 checksum sidecar files")
 
 	root.AddCommand(
 		newYouTubeCmd(opts),
@@ -183,11 +193,18 @@ func detectSite(rawURL string) (string, error) {
 func runWithScraper(scraper model.Scraper, targetURL string, siteName string, opts globalOptions) error {
 	cfg := loadGlobalConfig(opts)
 
+	rateLimitBytesPerSec, err := config.ParseRateLimit(cfg.RateLimit)
+	if err != nil {
+		return err
+	}
+
 	dl := downloader.NewDownloaderWithConfig(
 		cfg.ConcurrentDownloads,
 		cfg.Timeout,
 		cfg.UserAgent,
 	)
+	dl.SetRateLimit(rateLimitBytesPerSec)
+	dl.SetSkipChecksums(cfg.SkipChecksums)
 
 	// The scraper function runs in a background goroutine.
 	scraperFn := func() ([]model.MediaItem, error) {
@@ -216,6 +233,6 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 		}
 	}
 
-	_, err := p.Run()
+	_, err = p.Run()
 	return err
 }

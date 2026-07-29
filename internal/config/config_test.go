@@ -54,4 +54,72 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if cfg.Timeout != 30*time.Second {
 		t.Errorf("expected default 30s timeout, got %v", cfg.Timeout)
 	}
+	if cfg.RateLimit != "" {
+		t.Errorf("expected default rate limit to be unlimited (empty), got %q", cfg.RateLimit)
+	}
+	if cfg.SkipChecksums {
+		t.Error("expected checksums to be enabled by default")
+	}
+}
+
+func TestLoadConfigRateLimitAndChecksums(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, ".scraper.yaml")
+
+	content := `rate_limit: 500K
+skip_checksums: true
+`
+	if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	if cfg.RateLimit != "500K" {
+		t.Errorf("expected rate_limit 500K, got %q", cfg.RateLimit)
+	}
+	if !cfg.SkipChecksums {
+		t.Error("expected skip_checksums to be true")
+	}
+}
+
+func TestParseRateLimit(t *testing.T) {
+	tests := []struct {
+		in      string
+		want    int64
+		wantErr bool
+	}{
+		{"", 0, false},
+		{"0", 0, false},
+		{"1000", 1000, false},
+		{"500K", 500 * 1024, false},
+		{"500k", 500 * 1024, false},
+		{"2M", 2 * 1024 * 1024, false},
+		{"1G", 1024 * 1024 * 1024, false},
+		{"1.5M", int64(1.5 * 1024 * 1024), false},
+		{"  2M  ", 2 * 1024 * 1024, false},
+		{"abc", 0, true},
+		{"-5", 0, true},
+		{"-5M", 0, true},
+	}
+
+	for _, tt := range tests {
+		got, err := ParseRateLimit(tt.in)
+		if tt.wantErr {
+			if err == nil {
+				t.Errorf("ParseRateLimit(%q) expected an error, got %d", tt.in, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("ParseRateLimit(%q) returned unexpected error: %v", tt.in, err)
+			continue
+		}
+		if got != tt.want {
+			t.Errorf("ParseRateLimit(%q) = %d, want %d", tt.in, got, tt.want)
+		}
+	}
 }

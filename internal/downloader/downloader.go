@@ -3,6 +3,8 @@ package downloader
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +19,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/time/rate"
+
 	"github.com/user/scraper/internal/model"
 )
 
@@ -24,19 +28,29 @@ const (
 	maxRetries      = 3
 	retryBaseDelay  = 500 * time.Millisecond
 	progressBufSize = 4096
+	// minRateLimitBurst is the smallest token-bucket burst SetRateLimit will
+	// configure, regardless of how low the requested rate is. It just needs
+	// to comfortably cover a single io.Copy read chunk so WaitN never
+	// rejects a read outright for exceeding the burst size.
+	minRateLimitBurst = 32 * 1024
+	// checksumSuffix names the sidecar file written next to each completed
+	// download, containing its SHA-256 in sha256sum(1)-compatible format.
+	checksumSuffix = ".sha256"
 )
 
 // Downloader manages concurrent media downloads with progress tracking,
 // cancellation, retry, and atomic file writes.
 type Downloader struct {
-	client      *http.Client
-	concurrency int
-	userAgent   string
-	progress    chan model.ProgressEvent
-	cancelMap   map[string]context.CancelFunc
-	mu          sync.Mutex
-	sem         chan struct{}
-	readTimeout time.Duration
+	client        *http.Client
+	concurrency   int
+	userAgent     string
+	progress      chan model.ProgressEvent
+	cancelMap     map[string]context.CancelFunc
+	mu            sync.Mutex
+	sem           chan struct{}
+	readTimeout   time.Duration
+	limiter       *rate.Limiter
+	skipChecksums bool
 }
 
 // NewDownloaderWithConfig creates a Downloader using settings from a config.
@@ -61,6 +75,28 @@ func NewDownloaderWithConfig(concurrency int, timeout time.Duration, userAgent s
 		sem:         make(chan struct{}, concurrency),
 		readTimeout: timeout,
 	}
+}
+
+// SetRateLimit caps the combined download speed across all concurrent
+// downloads to bytesPerSec. A value <= 0 removes any cap (the default).
+// Call this before starting downloads, not concurrently with them.
+func (d *Downloader) SetRateLimit(bytesPerSec int64) {
+	if bytesPerSec <= 0 {
+		d.limiter = nil
+		return
+	}
+	burst := int(bytesPerSec)
+	if burst < minRateLimitBurst {
+		burst = minRateLimitBurst
+	}
+	d.limiter = rate.NewLimiter(rate.Limit(bytesPerSec), burst)
+}
+
+// SetSkipChecksums disables writing and verifying the .sha256 sidecar file
+// that normally accompanies each completed download. Call this before
+// starting downloads, not concurrently with them.
+func (d *Downloader) SetSkipChecksums(skip bool) {
+	d.skipChecksums = skip
 }
 
 // Download fetches a single media item and saves it to dest. It uses a
@@ -97,14 +133,21 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 	finalPath := filepath.Join(dest, filename)
 	tempPath := finalPath + ".part"
 
-	// Skip if file already exists and is non-empty
+	// Skip if the file already exists, is non-empty, and (when a checksum
+	// sidecar is present) still matches it.
 	if info, err := os.Stat(finalPath); err == nil && info.Size() > 0 {
-		d.sendProgress(model.ProgressEvent{
-			Item:     item,
-			Status:   model.StatusCompleted,
-			Filename: finalPath,
-		})
-		return nil
+		if d.skipChecksums || checksumMatches(finalPath) {
+			d.sendProgress(model.ProgressEvent{
+				Item:     item,
+				Status:   model.StatusCompleted,
+				Filename: finalPath,
+			})
+			return nil
+		}
+		// Existing file no longer matches its checksum — treat it as
+		// corrupt and redownload rather than trusting stale bytes.
+		os.Remove(finalPath)
+		os.Remove(checksumSidecarPath(finalPath))
 	}
 
 	d.sendProgress(model.ProgressEvent{
@@ -129,6 +172,12 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 			if err := os.Rename(tempPath, finalPath); err != nil {
 				os.Remove(tempPath)
 				return err
+			}
+			if !d.skipChecksums {
+				// Best-effort: the download itself already succeeded, so a
+				// sidecar write failure (e.g. a momentary disk issue)
+				// shouldn't fail the whole operation.
+				_ = writeChecksumSidecar(finalPath)
 			}
 			d.sendProgress(model.ProgressEvent{
 				Item:     item,
@@ -252,6 +301,8 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, tem
 			})
 		},
 		readDeadline: d.readTimeout,
+		limiter:      d.limiter,
+		ctx:          ctx,
 	}
 
 	_, err = io.Copy(out, pr)
@@ -266,12 +317,15 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, tem
 // progressReader wraps an io.Reader and calls onProgress after each Read
 // with the cumulative number of bytes read. If no data is received within
 // readDeadline, the next Read returns an error (stalled connection detection).
+// If limiter is set, each read blocks until it fits the configured rate.
 type progressReader struct {
 	reader       io.Reader
 	read         int64
 	base         int64 // bytes already on disk before this read began (resumed downloads)
 	onProgress   func(bytes int64)
 	readDeadline time.Duration
+	limiter      *rate.Limiter
+	ctx          context.Context
 }
 
 func (pr *progressReader) Read(p []byte) (int, error) {
@@ -294,6 +348,11 @@ func (pr *progressReader) Read(p []byte) (int, error) {
 	select {
 	case r := <-done:
 		if r.n > 0 {
+			if pr.limiter != nil {
+				if werr := pr.limiter.WaitN(pr.ctx, r.n); werr != nil {
+					return r.n, werr
+				}
+			}
 			pr.read += int64(r.n)
 			pr.onProgress(pr.base + pr.read)
 		}
@@ -373,6 +432,56 @@ func parseContentRangeTotal(headerVal string) int64 {
 		return 0
 	}
 	return total
+}
+
+// checksumSidecarPath returns the path of finalPath's companion checksum file.
+func checksumSidecarPath(finalPath string) string {
+	return finalPath + checksumSuffix
+}
+
+// writeChecksumSidecar computes finalPath's SHA-256 and writes it next to
+// the file in the standard sha256sum(1)-compatible "<hex>  <name>" format.
+func writeChecksumSidecar(finalPath string) error {
+	sum, err := sha256File(finalPath)
+	if err != nil {
+		return err
+	}
+	line := fmt.Sprintf("%s  %s\n", sum, filepath.Base(finalPath))
+	return os.WriteFile(checksumSidecarPath(finalPath), []byte(line), 0644)
+}
+
+// checksumMatches reports whether finalPath's current contents still match
+// its .sha256 sidecar. A missing (or unreadable) sidecar reports true —
+// there's nothing to contradict a file downloaded before checksum support
+// existed, or when checksums were disabled at the time.
+func checksumMatches(finalPath string) bool {
+	data, err := os.ReadFile(checksumSidecarPath(finalPath))
+	if err != nil {
+		return true
+	}
+	fields := strings.Fields(string(data))
+	if len(fields) == 0 {
+		return true
+	}
+	got, err := sha256File(finalPath)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(got, fields[0])
+}
+
+// sha256File returns the lowercase hex-encoded SHA-256 digest of the file at path.
+func sha256File(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // sanitizeFilename removes characters that are invalid in filenames. It also

@@ -70,6 +70,8 @@ directly to the output directory.
 | `-o, --output`   | `.`     | Output directory                             |
 | `--concurrent`   | `5`     | Maximum concurrent downloads                 |
 | `--config`       | (none)  | Config file path (default: `~/.scraper.yaml`)|
+| `--limit-rate`   | (none)  | Cap total download speed (e.g. `500K`, `2M`, `1G`); unlimited by default |
+| `--no-checksums` | `false` | Don't write/verify `.sha256` checksum sidecar files |
 
 ### TUI Keybindings
 
@@ -89,9 +91,19 @@ output_dir: ~/Downloads
 concurrent_downloads: 10
 timeout: 30s
 user_agent: "Scraper/1.0"
+rate_limit: 2M
+skip_checksums: false
 ```
 
 CLI flags override config file values.
+
+Every completed download gets a `<file>.sha256` sidecar (standard
+`sha256sum`-compatible format) next to it, unless `skip_checksums`/
+`--no-checksums` is set. If a file with a matching sidecar is already fully
+downloaded, re-running the same download skips it; if the sidecar no longer
+matches (a corrupted file), it's redownloaded instead of trusted as-is.
+`rate_limit`/`--limit-rate` caps the *combined* speed across all concurrent
+downloads, not each one individually.
 
 ## Supported Sites
 
