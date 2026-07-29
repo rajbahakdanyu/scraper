@@ -16,9 +16,10 @@ import (
 )
 
 type fakeDownloader struct {
-	mu    sync.Mutex
-	ch    chan model.ProgressEvent
-	calls []model.MediaItem
+	mu        sync.Mutex
+	ch        chan model.ProgressEvent
+	calls     []model.MediaItem
+	cancelled []model.MediaItem
 }
 
 func (f *fakeDownloader) Download(item model.MediaItem, dest string) error {
@@ -26,6 +27,12 @@ func (f *fakeDownloader) Download(item model.MediaItem, dest string) error {
 	f.calls = append(f.calls, item)
 	f.mu.Unlock()
 	return nil
+}
+
+func (f *fakeDownloader) Cancel(item model.MediaItem) {
+	f.mu.Lock()
+	f.cancelled = append(f.cancelled, item)
+	f.mu.Unlock()
 }
 
 func (f *fakeDownloader) Progress() <-chan model.ProgressEvent {
@@ -237,6 +244,45 @@ func TestBatchProgressUpdatesRows(t *testing.T) {
 	}
 	if d.states[0].status != model.StatusDownloading {
 		t.Errorf("expected status downloading, got %v", d.states[0].status)
+	}
+}
+
+func TestCancelSelectedItem(t *testing.T) {
+	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 1)}
+	items := []model.MediaItem{
+		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100},
+		{URL: "https://example.com/b.mp4", Title: "b.mp4", Size: 100},
+	}
+	d := New(instantItems(items), fd, t.TempDir(), "cyberdrop")
+	d.Update(scrapeResultMsg{items: items})
+
+	d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
+
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+	if len(fd.cancelled) != 1 {
+		t.Fatalf("expected 1 cancelled item, got %d", len(fd.cancelled))
+	}
+	if fd.cancelled[0].URL != items[0].URL {
+		t.Errorf("expected first item cancelled, got %s", fd.cancelled[0].URL)
+	}
+}
+
+func TestCancelDoesNothingForCompletedItem(t *testing.T) {
+	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 1)}
+	items := []model.MediaItem{
+		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100},
+	}
+	d := New(instantItems(items), fd, t.TempDir(), "cyberdrop")
+	d.Update(scrapeResultMsg{items: items})
+	d.applyDone(downloadDoneMsg{url: items[0].URL})
+
+	d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
+
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+	if len(fd.cancelled) != 0 {
+		t.Errorf("expected no cancel call for a completed item, got %d", len(fd.cancelled))
 	}
 }
 

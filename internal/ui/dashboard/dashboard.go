@@ -20,6 +20,7 @@ import (
 
 type Downloader interface {
 	Download(item model.MediaItem, dest string) error
+	Cancel(item model.MediaItem)
 	Progress() <-chan model.ProgressEvent
 }
 
@@ -224,6 +225,9 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "down", "j":
 			d.table.MoveDown(1)
 			return d, nil
+		case "c":
+			d.cancelSelected()
+			return d, nil
 		case "enter":
 			if d.phase == phaseSelect && d.ytDownloader != nil {
 				return d, d.startYouTubeDownload()
@@ -387,6 +391,22 @@ func (d *Dashboard) extractTitle(title string) string {
 
 // --- Batch ---
 
+// cancelSelected cancels the currently-highlighted item's download, if
+// it's still in progress.
+func (d *Dashboard) cancelSelected() {
+	if d.downloader == nil {
+		return
+	}
+	idx := d.table.Cursor()
+	if idx < 0 || idx >= len(d.states) {
+		return
+	}
+	if d.states[idx].status != model.StatusDownloading {
+		return
+	}
+	d.downloader.Cancel(d.states[idx].item)
+}
+
 func (d *Dashboard) startAllDownloads() tea.Cmd {
 	if d.downloader == nil {
 		return nil
@@ -430,13 +450,18 @@ func (d *Dashboard) applyDone(msg downloadDoneMsg) {
 		if d.states[i].item.URL != msg.url {
 			continue
 		}
-		if msg.err != nil {
-			d.states[i].status = model.StatusFailed
-		} else {
+		switch {
+		case msg.err == nil:
 			d.states[i].status = model.StatusCompleted
 			if d.states[i].total > 0 {
 				d.states[i].bytes = d.states[i].total
 			}
+		case d.states[i].status == model.StatusCancelled:
+			// Already marked cancelled via the progress channel; a
+			// cancelled download also returns an error here, but that's
+			// not a failure worth downgrading the status for.
+		default:
+			d.states[i].status = model.StatusFailed
 		}
 		break
 	}
@@ -455,6 +480,8 @@ func (d *Dashboard) refreshRows() {
 			mark = "✓"
 		case model.StatusFailed:
 			mark = "✗"
+		case model.StatusCancelled:
+			mark = "⊘"
 		case model.StatusPending:
 			mark = "·"
 		}
@@ -585,7 +612,7 @@ func (d *Dashboard) viewYouTubeProgress(header string) string {
 func (d *Dashboard) viewBatch(header string) string {
 	tablePanel := d.theme.PanelSlim.Render(d.table.View())
 	stats := d.renderStats()
-	footer := d.theme.Footer.Render("  q quit")
+	footer := d.theme.Footer.Render("  ↑↓ select  •  c cancel  •  q quit")
 
 	sections := []string{"", header, "", stats, "", tablePanel}
 	if d.status != "" {
@@ -703,6 +730,8 @@ func statusShort(s model.DownloadStatus) string {
 		return "done"
 	case model.StatusFailed:
 		return "failed"
+	case model.StatusCancelled:
+		return "cancelled"
 	default:
 		return "—"
 	}
@@ -717,6 +746,9 @@ func miniBar(st itemState) string {
 	}
 	if st.status == model.StatusFailed {
 		return "✗ failed"
+	}
+	if st.status == model.StatusCancelled {
+		return "⊘ cancelled"
 	}
 	if st.total <= 0 {
 		return "▰▰▱▱▱▱▱▱▱▱ ???"

@@ -77,6 +77,7 @@ directly to the output directory.
 |-----------------|-----------------------------------|
 | `↑/k`, `↓/j`    | Navigate / select quality        |
 | `enter`         | Start download (YouTube)         |
+| `c`             | Cancel the selected item (batch downloads) |
 | `q`, `ctrl+c`   | Quit                              |
 
 ## Configuration
