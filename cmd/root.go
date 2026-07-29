@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 
@@ -53,12 +54,24 @@ func NewRootCmd() *cobra.Command {
 	opts := globalOptions{}
 
 	root := &cobra.Command{
-		Use:   "scraper",
+		Use:   "scraper [url]",
 		Short: "Media scraper CLI tool",
 		Long:  `Download media from various sites with a beautiful terminal UI.`,
 		// Runtime errors (bad URL, network failure, etc.) shouldn't dump the
 		// full usage/help text — just cobra's own clean "Error: ..." line.
 		SilenceUsage: true,
+		Args:         cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return cmd.Help()
+			}
+			targetURL := args[0]
+			site, err := detectSite(targetURL)
+			if err != nil {
+				return err
+			}
+			return runWithScraper(scraperRegistry()[site], targetURL, site, opts)
+		},
 	}
 
 	root.PersistentFlags().StringVar(&opts.configPath, "config", "", "Config file path (default: ~/.scraper.yaml)")
@@ -105,6 +118,33 @@ func extractSlug(rawURL string) string {
 		return ""
 	}
 	return last
+}
+
+// detectSite guesses which scraper handles rawURL from its host, so users
+// can run `scraper <url>` without picking a subcommand first. Best-effort:
+// sites may have several historical/mirror domains, matched by substring
+// rather than an exhaustive list.
+func detectSite(rawURL string) (string, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host == "" {
+		return "", fmt.Errorf("could not parse %q as a URL", rawURL)
+	}
+	host := strings.ToLower(u.Host)
+
+	switch {
+	case strings.Contains(host, "youtube.com"), strings.Contains(host, "youtu.be"):
+		return "youtube", nil
+	case strings.Contains(host, "cyberdrop."):
+		return "cyberdrop", nil
+	case strings.Contains(host, "bunkr."):
+		return "bunker", nil
+	case strings.Contains(host, "goonbox."):
+		return "goonbox", nil
+	case strings.Contains(host, "filester."):
+		return "filester", nil
+	default:
+		return "", fmt.Errorf("could not auto-detect a site for %q (available: youtube, cyberdrop, bunker, goonbox, filester)", rawURL)
+	}
 }
 
 // runWithScraper launches the TUI immediately. The scraper runs in the

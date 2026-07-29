@@ -25,11 +25,20 @@ func scraperRegistry() map[string]model.Scraper {
 
 func newTUICmd(opts globalOptions) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "tui <site> <url>",
-		Short: "Launch the interactive terminal UI for a site",
-		Args:  cobra.ExactArgs(2),
+		Use:   "tui [site] <url>",
+		Short: "Launch the interactive terminal UI (site is auto-detected from the URL if omitted)",
+		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			site, targetURL := args[0], args[1]
+			site, targetURL := "", args[0]
+			if len(args) == 2 {
+				site, targetURL = args[0], args[1]
+			} else {
+				detected, err := detectSite(targetURL)
+				if err != nil {
+					return err
+				}
+				site = detected
+			}
 
 			registry := scraperRegistry()
 			scraper, ok := registry[site]

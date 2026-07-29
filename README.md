@@ -20,6 +20,17 @@ go build -o scraper ./cmd/scraper
 Every command launches the TUI immediately. The scraper runs in the
 background with a loading spinner, then transitions to the download view.
 
+The site can be auto-detected from the URL — just pass a bare URL with no
+subcommand:
+
+```bash
+./scraper https://youtu.be/VIDEO_ID
+./scraper https://filester.sh/f/FOLDER_ID
+```
+
+Or use an explicit subcommand (useful for scripting, or if detection ever
+guesses wrong):
+
 ```bash
 ./scraper youtube https://youtu.be/VIDEO_ID
 ./scraper cyberdrop https://cyberdrop.cr/f/FILE_ID
@@ -28,6 +39,9 @@ background with a loading spinner, then transitions to the download view.
 ./scraper filester https://filester.sh/f/FOLDER_ID
 ./scraper filester https://filester.sh/d/FILE_SLUG
 ```
+
+`scraper tui <url>` (or `scraper tui <site> <url>` to be explicit) works the
+same way.
 
 ### YouTube
 
