@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -44,7 +45,7 @@ func loadGlobalConfig(opts globalOptions) *config.Config {
 
 func Execute() {
 	if err := NewRootCmd().Execute(); err != nil {
-		panic(err)
+		os.Exit(1)
 	}
 }
 
@@ -55,6 +56,9 @@ func NewRootCmd() *cobra.Command {
 		Use:   "scraper",
 		Short: "Media scraper CLI tool",
 		Long:  `Download media from various sites with a beautiful terminal UI.`,
+		// Runtime errors (bad URL, network failure, etc.) shouldn't dump the
+		// full usage/help text — just cobra's own clean "Error: ..." line.
+		SilenceUsage: true,
 	}
 
 	root.PersistentFlags().StringVar(&opts.configPath, "config", "", "Config file path (default: ~/.scraper.yaml)")

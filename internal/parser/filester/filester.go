@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/PuerkitoBio/goquery"
 
@@ -41,7 +42,7 @@ type Scraper struct {
 // NewFilesterScraper creates a new Filester scraper using the default HTTP client.
 func NewFilesterScraper() *Scraper {
 	return &Scraper{
-		client:    &http.Client{},
+		client:    &http.Client{Timeout: 30 * time.Second},
 		userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
 		baseURL:   defaultBaseURL,
 		cdnURLs:   defaultCDNURLs,
@@ -54,7 +55,7 @@ func NewFilesterScraperWithConfig(userAgent string) *Scraper {
 		userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 	}
 	return &Scraper{
-		client:    &http.Client{},
+		client:    &http.Client{Timeout: 30 * time.Second},
 		userAgent: userAgent,
 		baseURL:   defaultBaseURL,
 		cdnURLs:   defaultCDNURLs,

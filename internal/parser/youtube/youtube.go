@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,9 +19,7 @@ import (
 type ProgressFunc = func(bytes int64, total int64)
 
 type Scraper struct {
-	client   *http.Client
 	video    *ytdl.Client
-	baseURL  string
 	progress func(int64, int64)
 }
 
@@ -30,11 +27,23 @@ type Scraper struct {
 // for real stream URL extraction and downloads.
 func NewYouTubeScraper() *Scraper {
 	return &Scraper{
-		client:  &http.Client{},
-		video:   &ytdl.Client{},
-		baseURL: "https://www.youtube.com",
+		video: &ytdl.Client{},
 	}
 }
+
+// Compile-time checks that Scraper satisfies the duck-typed interfaces that
+// cmd/root.go and internal/ui/dashboard rely on via runtime type assertion
+// (rather than a declared Go interface, since cmd depends on model.Scraper
+// generically and only needs these extra YouTube-specific methods for the
+// "youtube" site). If any of these signatures ever drift, the build breaks
+// here instead of the assertions silently failing at runtime.
+var (
+	_ interface {
+		DownloadVideoWithQuality(videoID, dest string, height int) error
+	} = (*Scraper)(nil)
+	_ interface{ ExtractVideoID(string) string }       = (*Scraper)(nil)
+	_ interface{ SetProgressFunc(func(int64, int64)) } = (*Scraper)(nil)
+)
 
 // SetProgressFunc sets a callback for download progress reporting.
 func (s *Scraper) SetProgressFunc(fn func(int64, int64)) {

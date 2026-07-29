@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -33,10 +34,13 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 
+	if cfg.OutputDir == "" {
+		cfg.OutputDir = defaultConfig().OutputDir
+	}
 	if cfg.ConcurrentDownloads == 0 {
 		cfg.ConcurrentDownloads = 5
 	}
-	if cfg.Timeout == 0 {
+	if cfg.Timeout <= 0 {
 		cfg.Timeout = 30 * time.Second
 	}
 
@@ -44,16 +48,29 @@ func Load(path string) (*Config, error) {
 }
 
 func defaultConfig() *Config {
-	home, _ := os.UserHomeDir()
 	return &Config{
-		OutputDir:           home + "/Downloads",
+		OutputDir:           defaultOutputDir(),
 		ConcurrentDownloads: 5,
 		Timeout:             30 * time.Second,
 		UserAgent:           "Scraper/1.0",
 	}
 }
 
+// defaultOutputDir returns "<home>/Downloads", falling back to "." (the
+// current directory) if the home directory can't be determined (e.g. $HOME
+// unset) so callers never end up with a bogus root-relative path.
+func defaultOutputDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "."
+	}
+	return filepath.Join(home, "Downloads")
+}
+
 func getDefaultConfigPath() string {
-	home, _ := os.UserHomeDir()
-	return home + "/.scraper.yaml"
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ".scraper.yaml"
+	}
+	return filepath.Join(home, ".scraper.yaml")
 }

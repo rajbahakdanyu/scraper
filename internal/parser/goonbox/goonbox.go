@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/user/scraper/internal/model"
 )
@@ -20,7 +21,7 @@ type Scraper struct {
 
 func NewGoonBoxScraper() *Scraper {
 	return &Scraper{
-		client:    &http.Client{},
+		client:    &http.Client{Timeout: 30 * time.Second},
 		userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
 		baseURL:   apiBase,
 	}
@@ -30,7 +31,7 @@ func NewGoonBoxScraperWithConfig(userAgent string) *Scraper {
 	if userAgent == "" {
 		userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 	}
-	return &Scraper{client: &http.Client{}, userAgent: userAgent, baseURL: apiBase}
+	return &Scraper{client: &http.Client{Timeout: 30 * time.Second}, userAgent: userAgent, baseURL: apiBase}
 }
 
 func (s *Scraper) Name() string {

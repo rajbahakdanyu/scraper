@@ -3,6 +3,7 @@ package downloader
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -153,6 +154,12 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 			// through further backoff delays.
 			break
 		}
+		var nre *nonRetryableError
+		if errors.As(err, &nre) {
+			// Client errors (404, 403, ...) will never succeed no matter
+			// how many times we retry — stop immediately.
+			break
+		}
 	}
 
 	os.Remove(tempPath)
@@ -184,7 +191,11 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, tem
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("HTTP %d for %s", resp.StatusCode, item.URL)
+		err := fmt.Errorf("HTTP %d for %s", resp.StatusCode, item.URL)
+		if !isRetryableStatus(resp.StatusCode) {
+			return &nonRetryableError{err}
+		}
+		return err
 	}
 
 	total := resp.ContentLength
@@ -283,6 +294,26 @@ func (d *Downloader) sendProgress(evt model.ProgressEvent) {
 	select {
 	case d.progress <- evt:
 	default:
+	}
+}
+
+// nonRetryableError marks an error that will never succeed no matter how
+// many times it's retried (e.g. an HTTP 4xx client error other than 408/429).
+type nonRetryableError struct{ err error }
+
+func (e *nonRetryableError) Error() string { return e.err.Error() }
+func (e *nonRetryableError) Unwrap() error { return e.err }
+
+// isRetryableStatus reports whether an HTTP status code represents a
+// transient failure worth retrying (5xx, request timeout, rate limiting) as
+// opposed to a client error (bad URL, forbidden, not found, ...) that will
+// never succeed no matter how many times it's retried.
+func isRetryableStatus(code int) bool {
+	switch code {
+	case http.StatusRequestTimeout, http.StatusTooManyRequests:
+		return true
+	default:
+		return code >= 500
 	}
 }
 
