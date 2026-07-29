@@ -488,7 +488,7 @@ func (d *Dashboard) refreshRows() {
 
 		if d.site == "youtube" {
 			q, note := d.splitQualityNote(st.item.Title)
-			rows[i] = table.Row{mark, q, humanizeBytes(st.total), note}
+			rows[i] = table.Row{mark, q, HumanizeBytes(st.total), note}
 		} else {
 			rows[i] = table.Row{mark, truncate(st.item.Title, 40), statusShort(st.status), miniBar(st)}
 		}
@@ -595,8 +595,8 @@ func (d *Dashboard) viewYouTubeProgress(header string) string {
 		fmt.Sprintf("  %s %s", statusIcon, d.theme.Accent.Render(statusText)),
 		"",
 		"  "+d.progress.ViewAs(pct),
-		fmt.Sprintf("  %s / %s  ·  %.0f%%", humanizeBytes(d.ytBytes), humanizeBytes(d.ytTotal), pct*100),
-		fmt.Sprintf("  %s/s  ·  ETA %s", humanizeBytes(int64(d.ytSpeed)), d.ytETA()),
+		fmt.Sprintf("  %s / %s  ·  %.0f%%", HumanizeBytes(d.ytBytes), HumanizeBytes(d.ytTotal), pct*100),
+		fmt.Sprintf("  %s/s  ·  ETA %s", HumanizeBytes(int64(d.ytSpeed)), d.ytETA()),
 	)
 
 	footer := d.theme.Footer.Render("  q quit")
@@ -648,7 +648,7 @@ func (d *Dashboard) renderStats() string {
 	}
 
 	if totalSpeed > 0 {
-		parts = append(parts, d.theme.Dim.Render("speed ")+d.theme.Cyan.Render(fmt.Sprintf("%s/s", humanizeBytes(int64(totalSpeed)))))
+		parts = append(parts, d.theme.Dim.Render("speed ")+d.theme.Cyan.Render(fmt.Sprintf("%s/s", HumanizeBytes(int64(totalSpeed)))))
 	}
 
 	icon := d.spinner.View()
@@ -691,7 +691,7 @@ func (d *Dashboard) ytETA() string {
 
 // --- Helpers ---
 
-func humanizeBytes(n int64) string {
+func HumanizeBytes(n int64) string {
 	if n < 0 {
 		return "?"
 	}

@@ -29,6 +29,7 @@ type globalOptions struct {
 	concurrency   int
 	rateLimit     string
 	skipChecksums bool
+	dryRun        bool
 }
 
 // loadGlobalConfig loads the config file and applies CLI flag overrides.
@@ -93,6 +94,7 @@ func NewRootCmd() *cobra.Command {
 	root.PersistentFlags().IntVar(&opts.concurrency, "concurrent", 5, "Maximum concurrent downloads")
 	root.PersistentFlags().StringVar(&opts.rateLimit, "limit-rate", "", "Cap total download speed (e.g. 500K, 2M, 1G; default: unlimited)")
 	root.PersistentFlags().BoolVar(&opts.skipChecksums, "no-checksums", false, "Don't write/verify .sha256 checksum sidecar files")
+	root.PersistentFlags().BoolVarP(&opts.dryRun, "dry-run", "n", false, "List items and total size without downloading anything")
 
 	root.AddCommand(
 		newYouTubeCmd(opts),
@@ -193,6 +195,10 @@ func detectSite(rawURL string) (string, error) {
 func runWithScraper(scraper model.Scraper, targetURL string, siteName string, opts globalOptions) error {
 	cfg := loadGlobalConfig(opts)
 
+	if opts.dryRun {
+		return runDryRun(scraper, targetURL)
+	}
+
 	rateLimitBytesPerSec, err := config.ParseRateLimit(cfg.RateLimit)
 	if err != nil {
 		return err
@@ -235,4 +241,44 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 
 	_, err = p.Run()
 	return err
+}
+
+// runDryRun scrapes targetURL and prints the item count and total size
+// without downloading or writing anything to disk.
+func runDryRun(scraper model.Scraper, targetURL string) error {
+	fmt.Printf("Scraping %s...\n", targetURL)
+
+	items, err := scraper.Parse(targetURL)
+	if err != nil {
+		return err
+	}
+	if len(items) == 0 {
+		fmt.Println("No items found.")
+		return nil
+	}
+
+	var totalSize int64
+	var unknownSize int
+	for _, item := range items {
+		title := item.Title
+		if title == "" {
+			title = item.URL
+		}
+		sizeStr := "unknown size"
+		if item.Size > 0 {
+			totalSize += item.Size
+			sizeStr = dashboard.HumanizeBytes(item.Size)
+		} else {
+			unknownSize++
+		}
+		fmt.Printf("  %-60s %s\n", title, sizeStr)
+	}
+
+	fmt.Println()
+	if unknownSize > 0 {
+		fmt.Printf("%d items, %s total (%d with unknown size)\n", len(items), dashboard.HumanizeBytes(totalSize), unknownSize)
+	} else {
+		fmt.Printf("%d items, %s total\n", len(items), dashboard.HumanizeBytes(totalSize))
+	}
+	return nil
 }

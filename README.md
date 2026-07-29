@@ -17,8 +17,9 @@ go build -o scraper ./cmd/scraper
 
 ## Usage
 
-Every command launches the TUI immediately. The scraper runs in the
-background with a loading spinner, then transitions to the download view.
+Every command launches the TUI immediately (unless `--dry-run` is set —
+see below). The scraper runs in the background with a loading spinner,
+then transitions to the download view.
 
 The site can be auto-detected from the URL — just pass a bare URL with no
 subcommand:
@@ -38,6 +39,13 @@ guesses wrong):
 ./scraper goonbox https://goonbox.cr/a/ALBUM_ID
 ./scraper filester https://filester.sh/f/FOLDER_ID
 ./scraper filester https://filester.sh/d/FILE_SLUG
+```
+
+Preview what would be downloaded — item count and total size — without
+downloading anything or launching the TUI:
+
+```bash
+./scraper --dry-run https://filester.sh/f/FOLDER_ID
 ```
 
 ### YouTube
@@ -72,6 +80,7 @@ directly to the output directory.
 | `--config`       | (none)  | Config file path (default: `~/.scraper.yaml`)|
 | `--limit-rate`   | (none)  | Cap total download speed (e.g. `500K`, `2M`, `1G`); unlimited by default |
 | `--no-checksums` | `false` | Don't write/verify `.sha256` checksum sidecar files |
+| `-n, --dry-run`  | `false` | List item count/total size without downloading anything |
 
 ### TUI Keybindings
 

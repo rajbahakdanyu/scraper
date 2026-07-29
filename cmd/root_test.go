@@ -1,6 +1,43 @@
 package cmd
 
-import "testing"
+import (
+	"bytes"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/user/scraper/internal/model"
+)
+
+// fakeDryRunScraper is a minimal model.Scraper for exercising runDryRun
+// without any network access.
+type fakeDryRunScraper struct {
+	items []model.MediaItem
+	err   error
+}
+
+func (f *fakeDryRunScraper) Name() string { return "fake" }
+
+func (f *fakeDryRunScraper) Parse(url string) ([]model.MediaItem, error) {
+	return f.items, f.err
+}
+
+// captureStdout redirects os.Stdout for the duration of f and returns
+// everything written to it.
+func captureStdout(f func()) string {
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	f()
+	w.Close()
+	os.Stdout = old
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	return buf.String()
+}
 
 func TestNewRootCmdRegistersSubcommands(t *testing.T) {
 	root := NewRootCmd()
@@ -27,6 +64,15 @@ func TestNewRootCmdRegistersSubcommands(t *testing.T) {
 	}
 	if root.PersistentFlags().Lookup("concurrent") == nil {
 		t.Error("expected --concurrent persistent flag")
+	}
+	if root.PersistentFlags().Lookup("limit-rate") == nil {
+		t.Error("expected --limit-rate persistent flag")
+	}
+	if root.PersistentFlags().Lookup("no-checksums") == nil {
+		t.Error("expected --no-checksums persistent flag")
+	}
+	if root.PersistentFlags().Lookup("dry-run") == nil {
+		t.Error("expected --dry-run persistent flag")
 	}
 }
 
@@ -111,5 +157,77 @@ func TestScraperRegistry(t *testing.T) {
 		if _, ok := reg[name]; !ok {
 			t.Errorf("expected registry to contain %q", name)
 		}
+	}
+}
+
+func TestRunDryRunPropagatesParseError(t *testing.T) {
+	wantErr := fmt.Errorf("boom")
+	scraper := &fakeDryRunScraper{err: wantErr}
+
+	var err error
+	captureStdout(func() {
+		err = runDryRun(scraper, "https://example.com/a")
+	})
+	if err != wantErr {
+		t.Errorf("expected the scraper's Parse error to propagate, got: %v", err)
+	}
+}
+
+func TestRunDryRunNoItems(t *testing.T) {
+	scraper := &fakeDryRunScraper{items: nil}
+
+	var err error
+	out := captureStdout(func() {
+		err = runDryRun(scraper, "https://example.com/a")
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if !strings.Contains(out, "No items found") {
+		t.Errorf("expected output to mention no items found, got: %q", out)
+	}
+}
+
+func TestRunDryRunSummarizesItems(t *testing.T) {
+	scraper := &fakeDryRunScraper{items: []model.MediaItem{
+		{Title: "one.mp4", Size: 1024 * 1024},
+		{Title: "two.jpg", Size: 2 * 1024 * 1024},
+	}}
+
+	var err error
+	out := captureStdout(func() {
+		err = runDryRun(scraper, "https://example.com/a")
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	for _, want := range []string{"one.mp4", "two.jpg", "2 items", "3.0M total"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected output to contain %q, got: %q", want, out)
+		}
+	}
+	if strings.Contains(out, "unknown size") {
+		t.Errorf("expected no unknown-size items, got: %q", out)
+	}
+}
+
+func TestRunDryRunReportsUnknownSizes(t *testing.T) {
+	scraper := &fakeDryRunScraper{items: []model.MediaItem{
+		{Title: "known.mp4", Size: 1024 * 1024},
+		{Title: "unknown.mp4", Size: 0},
+	}}
+
+	var err error
+	out := captureStdout(func() {
+		err = runDryRun(scraper, "https://example.com/a")
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if !strings.Contains(out, "unknown size") {
+		t.Errorf("expected the zero-size item to be reported as unknown size, got: %q", out)
+	}
+	if !strings.Contains(out, "1 with unknown size") {
+		t.Errorf("expected the summary to count 1 unknown-size item, got: %q", out)
 	}
 }
