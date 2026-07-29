@@ -12,6 +12,11 @@ import (
 	"github.com/user/scraper/internal/config"
 	"github.com/user/scraper/internal/downloader"
 	"github.com/user/scraper/internal/model"
+	"github.com/user/scraper/internal/parser/bunker"
+	"github.com/user/scraper/internal/parser/cyberdrop"
+	"github.com/user/scraper/internal/parser/filester"
+	"github.com/user/scraper/internal/parser/goonbox"
+	"github.com/user/scraper/internal/parser/youtube"
 	"github.com/user/scraper/internal/ui/dashboard"
 )
 
@@ -84,10 +89,21 @@ func NewRootCmd() *cobra.Command {
 		newBunkerCmd(opts),
 		newGoonBoxCmd(opts),
 		newFilesterCmd(opts),
-		newTUICmd(opts),
 	)
 
 	return root
+}
+
+// scraperRegistry maps a site name to its scraper, used by detectSite's
+// auto-detect path.
+func scraperRegistry() map[string]model.Scraper {
+	return map[string]model.Scraper{
+		"youtube":   youtube.NewYouTubeScraper(),
+		"cyberdrop": cyberdrop.NewCyberDropScraper(),
+		"bunker":    bunker.NewBunkerScraper(),
+		"goonbox":   goonbox.NewGoonBoxScraper(),
+		"filester":  filester.NewFilesterScraper(),
+	}
 }
 
 // resolveURL extracts the target URL from positional args or the --url flag.

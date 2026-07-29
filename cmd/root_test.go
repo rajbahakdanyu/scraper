@@ -5,7 +5,7 @@ import "testing"
 func TestNewRootCmdRegistersSubcommands(t *testing.T) {
 	root := NewRootCmd()
 
-	want := []string{"youtube", "cyberdrop", "bunker", "goonbox", "filester", "tui"}
+	want := []string{"youtube", "cyberdrop", "bunker", "goonbox", "filester"}
 	for _, name := range want {
 		found := false
 		for _, c := range root.Commands() {
@@ -77,5 +77,14 @@ func TestRootCmdAutoDetectsUnknownDomain(t *testing.T) {
 	root := NewRootCmd()
 	if err := root.RunE(root, []string{"https://example.com/whatever"}); err == nil {
 		t.Error("expected error for an unrecognized domain")
+	}
+}
+
+func TestScraperRegistry(t *testing.T) {
+	reg := scraperRegistry()
+	for _, name := range []string{"youtube", "cyberdrop", "bunker", "goonbox", "filester"} {
+		if _, ok := reg[name]; !ok {
+			t.Errorf("expected registry to contain %q", name)
+		}
 	}
 }

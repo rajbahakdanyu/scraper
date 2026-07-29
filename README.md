@@ -40,9 +40,6 @@ guesses wrong):
 ./scraper filester https://filester.sh/d/FILE_SLUG
 ```
 
-`scraper tui <url>` (or `scraper tui <site> <url>` to be explicit) works the
-same way.
-
 ### YouTube
 
 Shows a quality selector (144p–2160p). Pick a resolution and press Enter
