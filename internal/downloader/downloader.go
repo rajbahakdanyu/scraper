@@ -36,23 +36,6 @@ type Downloader struct {
 	readTimeout time.Duration
 }
 
-// NewDownloader creates a Downloader with the given concurrency limit.
-func NewDownloader(concurrency int) *Downloader {
-	if concurrency < 1 {
-		concurrency = 1
-	}
-	return &Downloader{
-		client: &http.Client{
-			Timeout: 30 * time.Second,
-		},
-		concurrency: concurrency,
-		userAgent:   "Scraper/1.0",
-		progress:    make(chan model.ProgressEvent, progressBufSize),
-		cancelMap:   make(map[string]context.CancelFunc),
-		sem:         make(chan struct{}, concurrency),
-	}
-}
-
 // NewDownloaderWithConfig creates a Downloader using settings from a config.
 func NewDownloaderWithConfig(concurrency int, timeout time.Duration, userAgent string) *Downloader {
 	if concurrency < 1 {

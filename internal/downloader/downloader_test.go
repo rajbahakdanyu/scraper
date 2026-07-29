@@ -22,7 +22,7 @@ func TestDownload(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	dl := NewDownloader(5)
+	dl := NewDownloaderWithConfig(5, 0, "")
 	item := model.MediaItem{URL: ts.URL, Title: "test_video"}
 
 	dest := t.TempDir()
@@ -60,7 +60,7 @@ func TestDownloadRetry(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	dl := NewDownloader(1)
+	dl := NewDownloaderWithConfig(1, 0, "")
 	item := model.MediaItem{URL: ts.URL, Title: "retry_test"}
 
 	err := dl.Download(item, t.TempDir())
@@ -78,7 +78,7 @@ func TestDownloadAllFail(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	dl := NewDownloader(1)
+	dl := NewDownloaderWithConfig(1, 0, "")
 	item := model.MediaItem{URL: ts.URL, Title: "fail_test"}
 
 	err := dl.Download(item, t.TempDir())
@@ -93,7 +93,7 @@ func TestCancel(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	dl := NewDownloader(1)
+	dl := NewDownloaderWithConfig(1, 0, "")
 	item := model.MediaItem{URL: ts.URL, Title: "cancel_test"}
 
 	go func() {
@@ -133,7 +133,7 @@ func TestNewDownloaderWithConfig(t *testing.T) {
 }
 
 func TestNewRequestError(t *testing.T) {
-	dl := NewDownloader(1)
+	dl := NewDownloaderWithConfig(1, 0, "")
 	item := model.MediaItem{URL: "://bad-url", Title: "bad"}
 
 	err := dl.Download(item, t.TempDir())

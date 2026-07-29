@@ -49,19 +49,6 @@ func NewFilesterScraper() *Scraper {
 	}
 }
 
-// NewFilesterScraperWithConfig creates a scraper with a custom user agent.
-func NewFilesterScraperWithConfig(userAgent string) *Scraper {
-	if userAgent == "" {
-		userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
-	}
-	return &Scraper{
-		client:    &http.Client{Timeout: 30 * time.Second},
-		userAgent: userAgent,
-		baseURL:   defaultBaseURL,
-		cdnURLs:   defaultCDNURLs,
-	}
-}
-
 func (s *Scraper) Name() string {
 	return "filester"
 }

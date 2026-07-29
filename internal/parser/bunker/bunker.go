@@ -33,19 +33,6 @@ func NewBunkerScraper() *Scraper {
 	}
 }
 
-// NewBunkerScraperWithConfig creates a scraper with a custom user agent.
-func NewBunkerScraperWithConfig(userAgent string) *Scraper {
-	if userAgent == "" {
-		userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
-	}
-	return &Scraper{
-		client:    &http.Client{Timeout: 30 * time.Second},
-		userAgent: userAgent,
-		baseURL:   "https://bunkr.cr",
-		signURL:   "https://glb-apisign.cdn.cr/sign",
-	}
-}
-
 func (s *Scraper) Name() string {
 	return "bunker"
 }
