@@ -42,7 +42,10 @@ func (s *Scraper) Parse(albumURL string) ([]model.MediaItem, error) {
 
 	for {
 		url := fmt.Sprintf("%s/albums/%s?page=%d", s.baseURL, albumID, page)
-		req, _ := http.NewRequest("GET", url, nil)
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("goonbox: build album request: %w", err)
+		}
 		req.Header.Set("User-Agent", s.userAgent)
 
 		resp, err := s.client.Do(req)

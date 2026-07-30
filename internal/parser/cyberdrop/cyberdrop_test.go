@@ -73,6 +73,21 @@ func TestParseFileNotFound(t *testing.T) {
 	}
 }
 
+func TestParseFileRejectsMalformedAuthURL(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"name": "file.mp4", "auth_url": "://bad-auth-url",
+		})
+	}))
+	defer ts.Close()
+
+	scraper := NewCyberDropScraper()
+	scraper.baseURL = ts.URL
+	if _, err := scraper.Parse(ts.URL + "/f/bad-auth"); err == nil {
+		t.Fatal("expected malformed auth_url error")
+	}
+}
+
 // TestParseAlbum exercises Parse() -> parseAlbum() -> parseFile() (once per
 // album entry) end to end against an httptest server.
 func TestParseAlbum(t *testing.T) {

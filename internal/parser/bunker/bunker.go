@@ -206,7 +206,10 @@ func (s *Scraper) getSignedMediaURL(dlURL *url.URL, fileID, originalName string)
 	}
 
 	// Step 2: Sign the URL
-	signReq, _ := http.NewRequest("GET", s.signURL+"?path="+url.QueryEscape(parsedURL.Path), nil)
+	signReq, err := http.NewRequest("GET", s.signURL+"?path="+url.QueryEscape(parsedURL.Path), nil)
+	if err != nil {
+		return "", fmt.Errorf("bunker: build signing request: %w", err)
+	}
 	signReq.Header.Set("User-Agent", s.userAgent)
 
 	signResp, err := s.client.Do(signReq)

@@ -75,6 +75,15 @@ func TestParseGoonBoxAlbumNotFound(t *testing.T) {
 	}
 }
 
+func TestParseGoonBoxRejectsMalformedRequestURL(t *testing.T) {
+	scraper := NewGoonBoxScraper()
+	scraper.baseURL = "://bad-base-url"
+
+	if _, err := scraper.Parse("https://goonbox.cr/a/testid"); err == nil {
+		t.Fatal("expected malformed request URL error")
+	}
+}
+
 // TestParseGoonBoxAlbumPagination exercises the page-follow loop in Parse(),
 // which previously had no test coverage at all.
 func TestParseGoonBoxAlbumPagination(t *testing.T) {

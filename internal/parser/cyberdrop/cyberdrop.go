@@ -51,7 +51,10 @@ func (s *Scraper) Parse(url string) ([]model.MediaItem, error) {
 func (s *Scraper) parseFile(slug string) ([]model.MediaItem, error) {
 	infoURL := fmt.Sprintf("%s/file/info/%s", s.baseURL, slug)
 
-	infoReq, _ := http.NewRequest("GET", infoURL, nil)
+	infoReq, err := http.NewRequest("GET", infoURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("cyberdrop: build file-info request: %w", err)
+	}
 	infoReq.Header.Set("User-Agent", s.userAgent)
 
 	infoResp, err := s.client.Do(infoReq)
@@ -79,7 +82,10 @@ func (s *Scraper) parseFile(slug string) ([]model.MediaItem, error) {
 	}
 
 	// Fetch the signed download URL
-	authReq, _ := http.NewRequest("GET", info.AuthURL, nil)
+	authReq, err := http.NewRequest("GET", info.AuthURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("cyberdrop: invalid auth_url for %s: %w", slug, err)
+	}
 	authReq.Header.Set("User-Agent", s.userAgent)
 
 	authResp, err := s.client.Do(authReq)
@@ -121,7 +127,10 @@ func (s *Scraper) parseFile(slug string) ([]model.MediaItem, error) {
 func (s *Scraper) parseAlbum(slug string) ([]model.MediaItem, error) {
 	albumURL := fmt.Sprintf("%s/album/%s", s.baseURL, slug)
 
-	req, _ := http.NewRequest("GET", albumURL, nil)
+	req, err := http.NewRequest("GET", albumURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("cyberdrop: build album request: %w", err)
+	}
 	req.Header.Set("User-Agent", s.userAgent)
 
 	resp, err := s.client.Do(req)
