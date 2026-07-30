@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -117,6 +118,42 @@ func TestExplicitSubcommandReadsInheritedOptions(t *testing.T) {
 	if opts.configPath != "/tmp/custom.yaml" || opts.output != "." || opts.concurrency != 5 ||
 		opts.rateLimit != "2M" || !opts.skipChecksums || !opts.dryRun {
 		t.Fatalf("explicit subcommand saw stale options: %+v", opts)
+	}
+}
+
+func TestLoadGlobalConfigHonorsExplicitDefaultValues(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	content := "output_dir: /from-config\nconcurrent_downloads: 9\nrate_limit: 1M\nskip_checksums: true\n"
+	if err := os.WriteFile(configPath, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := loadGlobalConfig(globalOptions{
+		configPath:       configPath,
+		output:           ".",
+		outputSet:        true,
+		concurrency:      5,
+		concurrencySet:   true,
+		rateLimit:        "",
+		rateLimitSet:     true,
+		skipChecksums:    false,
+		skipChecksumsSet: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.OutputDir != "." || cfg.ConcurrentDownloads != 5 || cfg.RateLimit != "" || cfg.SkipChecksums {
+		t.Fatalf("explicit defaults did not override config: %+v", cfg)
+	}
+}
+
+func TestLoadGlobalConfigReturnsMalformedYAMLError(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "bad.yaml")
+	if err := os.WriteFile(configPath, []byte("output_dir: [\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadGlobalConfig(globalOptions{configPath: configPath}); err == nil {
+		t.Fatal("expected malformed config error")
 	}
 }
 

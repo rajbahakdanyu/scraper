@@ -123,3 +123,33 @@ func TestParseRateLimit(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadExpandsHomeOutputDirectory(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte("output_dir: ~/Videos\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.OutputDir != filepath.Join(home, "Videos") {
+		t.Fatalf("OutputDir = %q", cfg.OutputDir)
+	}
+}
+
+func TestLoadDefaultsNonpositiveConcurrency(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte("concurrent_downloads: -3\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ConcurrentDownloads != 5 {
+		t.Fatalf("ConcurrentDownloads = %d", cfg.ConcurrentDownloads)
+	}
+}

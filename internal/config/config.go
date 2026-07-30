@@ -47,8 +47,14 @@ func Load(path string) (*Config, error) {
 
 	if cfg.OutputDir == "" {
 		cfg.OutputDir = defaultConfig().OutputDir
+	} else {
+		expanded, err := expandHomePath(cfg.OutputDir)
+		if err != nil {
+			return nil, err
+		}
+		cfg.OutputDir = expanded
 	}
-	if cfg.ConcurrentDownloads == 0 {
+	if cfg.ConcurrentDownloads <= 0 {
 		cfg.ConcurrentDownloads = 5
 	}
 	if cfg.Timeout <= 0 {
@@ -56,6 +62,20 @@ func Load(path string) (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+func expandHomePath(path string) (string, error) {
+	if path != "~" && !strings.HasPrefix(path, "~/") {
+		return path, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "", fmt.Errorf("expand %q: home directory unavailable", path)
+	}
+	if path == "~" {
+		return home, nil
+	}
+	return filepath.Join(home, strings.TrimPrefix(path, "~/")), nil
 }
 
 func defaultConfig() *Config {

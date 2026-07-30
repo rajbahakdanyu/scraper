@@ -24,39 +24,39 @@ import (
 // globalOptions holds flags defined on the root command that are inherited
 // by all subcommands via PersistentFlags.
 type globalOptions struct {
-	configPath    string
-	output        string
-	concurrency   int
-	rateLimit     string
-	skipChecksums bool
-	dryRun        bool
+	configPath       string
+	output           string
+	outputSet        bool
+	concurrency      int
+	concurrencySet   bool
+	rateLimit        string
+	rateLimitSet     bool
+	skipChecksums    bool
+	skipChecksumsSet bool
+	dryRun           bool
 }
 
 // loadGlobalConfig loads the config file and applies CLI flag overrides.
-func loadGlobalConfig(opts globalOptions) *config.Config {
+func loadGlobalConfig(opts globalOptions) (*config.Config, error) {
 	cfg, err := config.Load(opts.configPath)
 	if err != nil {
-		cfg = &config.Config{
-			OutputDir:           ".",
-			ConcurrentDownloads: 5,
-			UserAgent:           "Scraper/1.0",
-		}
+		return nil, fmt.Errorf("load config: %w", err)
 	}
 
-	if opts.output != "" && opts.output != "." {
+	if opts.outputSet {
 		cfg.OutputDir = opts.output
 	}
-	if opts.concurrency > 0 && opts.concurrency != 5 {
+	if opts.concurrencySet {
 		cfg.ConcurrentDownloads = opts.concurrency
 	}
-	if opts.rateLimit != "" {
+	if opts.rateLimitSet {
 		cfg.RateLimit = opts.rateLimit
 	}
-	if opts.skipChecksums {
-		cfg.SkipChecksums = true
+	if opts.skipChecksumsSet {
+		cfg.SkipChecksums = opts.skipChecksums
 	}
 
-	return cfg
+	return cfg, nil
 }
 
 func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
@@ -86,12 +86,16 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 		return globalOptions{}, err
 	}
 	return globalOptions{
-		configPath:    configPath,
-		output:        output,
-		concurrency:   concurrency,
-		rateLimit:     rateLimit,
-		skipChecksums: skipChecksums,
-		dryRun:        dryRun,
+		configPath:       configPath,
+		output:           output,
+		outputSet:        flags.Changed("output"),
+		concurrency:      concurrency,
+		concurrencySet:   flags.Changed("concurrent"),
+		rateLimit:        rateLimit,
+		rateLimitSet:     flags.Changed("limit-rate"),
+		skipChecksums:    skipChecksums,
+		skipChecksumsSet: flags.Changed("no-checksums"),
+		dryRun:           dryRun,
 	}, nil
 }
 
@@ -245,7 +249,10 @@ func detectSite(rawURL string) (string, error) {
 // runWithScraper launches the TUI immediately. The scraper runs in the
 // background; the TUI shows a loading spinner until results arrive.
 func runWithScraper(scraper model.Scraper, targetURL string, siteName string, opts globalOptions) error {
-	cfg := loadGlobalConfig(opts)
+	cfg, err := loadGlobalConfig(opts)
+	if err != nil {
+		return err
+	}
 
 	if opts.dryRun {
 		return runDryRun(scraper, targetURL)
