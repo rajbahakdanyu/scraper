@@ -3,8 +3,6 @@ package downloader
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -35,9 +33,6 @@ const (
 	// to comfortably cover a single io.Copy read chunk so WaitN never
 	// rejects a read outright for exceeding the burst size.
 	minRateLimitBurst = 32 * 1024
-	// checksumSuffix names the sidecar file written next to each completed
-	// download, containing its SHA-256 in sha256sum(1)-compatible format.
-	checksumSuffix = ".sha256"
 )
 
 // Downloader manages concurrent media downloads with progress tracking,
@@ -170,7 +165,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 			})
 			return nil
 		}
-		present, matches, verifyErr := verifyChecksum(finalPath)
+		present, matches, verifyErr := fileutil.VerifyChecksum(finalPath)
 		if verifyErr != nil {
 			d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed})
 			return fmt.Errorf("verify existing checksum for %s: %w", finalPath, verifyErr)
@@ -188,7 +183,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 		if err := os.Remove(finalPath); err != nil {
 			return fmt.Errorf("remove corrupt file %s: %w", finalPath, err)
 		}
-		if err := os.Remove(checksumSidecarPath(finalPath)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := os.Remove(fileutil.ChecksumPath(finalPath)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove stale checksum for %s: %w", finalPath, err)
 		}
 	}
@@ -219,7 +214,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 			}
 			_ = os.Remove(resumePath)
 			if !d.skipChecksums {
-				if err := writeChecksumSidecar(finalPath); err != nil {
+				if err := fileutil.WriteChecksum(finalPath); err != nil {
 					d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed})
 					return fmt.Errorf("write checksum for %s: %w", finalPath, err)
 				}
@@ -568,84 +563,6 @@ func writeResumeMetadata(tempPath string, metadata resumeMetadata) error {
 		return err
 	}
 	return os.WriteFile(resumeMetadataPath(tempPath), data, 0600)
-}
-
-// checksumSidecarPath returns the path of finalPath's companion checksum file.
-func checksumSidecarPath(finalPath string) string {
-	return finalPath + checksumSuffix
-}
-
-// writeChecksumSidecar computes finalPath's SHA-256 and writes it next to
-// the file in the standard sha256sum(1)-compatible "<hex>  <name>" format.
-func writeChecksumSidecar(finalPath string) error {
-	sum, err := sha256File(finalPath)
-	if err != nil {
-		return err
-	}
-	line := fmt.Sprintf("%s  %s\n", sum, filepath.Base(finalPath))
-	sidecarPath := checksumSidecarPath(finalPath)
-	temp, err := os.CreateTemp(filepath.Dir(sidecarPath), ".checksum-*")
-	if err != nil {
-		return err
-	}
-	tempName := temp.Name()
-	defer os.Remove(tempName)
-	if err := temp.Chmod(0644); err != nil {
-		temp.Close()
-		return err
-	}
-	if _, err := temp.WriteString(line); err != nil {
-		temp.Close()
-		return err
-	}
-	if err := temp.Sync(); err != nil {
-		temp.Close()
-		return err
-	}
-	if err := temp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tempName, sidecarPath)
-}
-
-// verifyChecksum reports whether a sidecar exists and matches finalPath.
-// Missing sidecars remain compatible with downloads created before this
-// feature; present but malformed or unreadable sidecars are errors.
-func verifyChecksum(finalPath string) (present, matches bool, err error) {
-	data, err := os.ReadFile(checksumSidecarPath(finalPath))
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return false, false, nil
-		}
-		return true, false, err
-	}
-	fields := strings.Fields(string(data))
-	if len(fields) < 1 {
-		return true, false, fmt.Errorf("empty checksum sidecar")
-	}
-	expected, err := hex.DecodeString(fields[0])
-	if err != nil || len(expected) != sha256.Size {
-		return true, false, fmt.Errorf("invalid SHA-256 digest %q", fields[0])
-	}
-	got, err := sha256File(finalPath)
-	if err != nil {
-		return true, false, err
-	}
-	return true, strings.EqualFold(got, fields[0]), nil
-}
-
-// sha256File returns the lowercase hex-encoded SHA-256 digest of the file at path.
-func sha256File(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // sanitizeFilename removes characters that are invalid in filenames. It also

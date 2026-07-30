@@ -3,6 +3,7 @@ package youtube
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -17,6 +18,7 @@ import (
 	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 	"github.com/rajbahakdanyu/scraper/internal/model"
 	"github.com/rajbahakdanyu/scraper/internal/netutil"
+	"golang.org/x/time/rate"
 )
 
 type Scraper struct {
@@ -27,7 +29,7 @@ type Scraper struct {
 // for real stream URL extraction and downloads.
 func NewYouTubeScraper() *Scraper {
 	return &Scraper{
-		video: &ytdl.Client{HTTPClient: netutil.NewPublicClient(0)},
+		video: &ytdl.Client{HTTPClient: netutil.NewPublicClient(defaultReadTimeout)},
 	}
 }
 
@@ -145,7 +147,7 @@ func selectBestFormats(video *ytdl.Video) (videoFmt, audioFmt *ytdl.Format) {
 // downloadBest resolves videoID's highest-quality formats and downloads
 // (muxing with ffmpeg if needed) the result to dest. onProgress, if
 // non-nil, is called with cumulative bytes read and the combined total.
-func (s *Scraper) downloadBest(ctx context.Context, videoID, dest, owner string, paths *fileutil.PathAllocator, onProgress func(bytes, total int64)) error {
+func (s *Scraper) downloadBest(ctx context.Context, videoID, dest, owner string, paths *fileutil.PathAllocator, limiter *rate.Limiter, skipChecksums bool, onProgress func(bytes, total int64)) error {
 	video, err := s.video.GetVideoContext(ctx, videoID)
 	if err != nil {
 		return fmt.Errorf("youtube: failed to fetch video info: %w", err)
@@ -162,22 +164,37 @@ func (s *Scraper) downloadBest(ctx context.Context, videoID, dest, owner string,
 	}
 
 	if audioFmt == nil {
-		return s.downloadStreamDirect(ctx, video, videoFmt, title, dest, owner, paths, onProgress)
+		return s.downloadStreamDirect(ctx, video, videoFmt, title, dest, owner, paths, limiter, skipChecksums, onProgress)
 	}
-	return s.downloadAndMux(ctx, video, videoFmt, audioFmt, title, dest, owner, paths, onProgress)
+	return s.downloadAndMux(ctx, video, videoFmt, audioFmt, title, dest, owner, paths, limiter, skipChecksums, onProgress)
 }
 
-func (s *Scraper) downloadStreamDirect(ctx context.Context, video *ytdl.Video, format *ytdl.Format, title, dest, owner string, paths *fileutil.PathAllocator, onProgress func(int64, int64)) error {
+func (s *Scraper) downloadStreamDirect(ctx context.Context, video *ytdl.Video, format *ytdl.Format, title, dest, owner string, paths *fileutil.PathAllocator, limiter *rate.Limiter, skipChecksums bool, onProgress func(int64, int64)) error {
 	ext := "mp4"
 	if strings.Contains(format.MimeType, "webm") {
 		ext = "webm"
 	}
-	path := paths.Claim(filepath.Join(dest, sanitizeFilename(title)+"."+ext), owner)
+	finalPath := paths.Claim(filepath.Join(dest, sanitizeFilename(title)+"."+ext), owner)
+	skip, err := prepareOutput(finalPath, skipChecksums)
+	if err != nil {
+		return err
+	}
+	if skip {
+		if onProgress != nil && format.ContentLength > 0 {
+			onProgress(format.ContentLength, format.ContentLength)
+		}
+		return nil
+	}
+	tempPath := finalPath + ".part"
+	defer os.Remove(tempPath)
 
-	return s.downloadStreamToFileProgress(ctx, video, format, path, onProgress)
+	if err := s.downloadStreamToFileProgress(ctx, video, format, tempPath, limiter, onProgress); err != nil {
+		return err
+	}
+	return commitOutput(tempPath, finalPath, skipChecksums)
 }
 
-func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFmt, audioFmt *ytdl.Format, title, dest, owner string, paths *fileutil.PathAllocator, onProgress func(int64, int64)) error {
+func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFmt, audioFmt *ytdl.Format, title, dest, owner string, paths *fileutil.PathAllocator, limiter *rate.Limiter, skipChecksums bool, onProgress func(int64, int64)) error {
 	videoExt := "mp4"
 	if strings.Contains(videoFmt.MimeType, "webm") {
 		videoExt = "webm"
@@ -196,6 +213,16 @@ func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFm
 	videoPath := filepath.Join(tmpDir, "video."+videoExt)
 	audioPath := filepath.Join(tmpDir, "audio."+audioExt)
 	outputPath := paths.Claim(safeOutputPath(dest, title), owner)
+	skip, err := prepareOutput(outputPath, skipChecksums)
+	if err != nil {
+		return err
+	}
+	if skip {
+		return nil
+	}
+	ext := filepath.Ext(outputPath)
+	tempOutputPath := strings.TrimSuffix(outputPath, ext) + ".part" + ext
+	defer os.Remove(tempOutputPath)
 
 	videoSize := videoFmt.ContentLength
 	audioSize := audioFmt.ContentLength
@@ -215,7 +242,7 @@ func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFm
 	}
 
 	// Download video stream.
-	if err := s.downloadStreamToFileProgress(ctx, video, videoFmt, videoPath, func(n, _ int64) {
+	if err := s.downloadStreamToFileProgress(ctx, video, videoFmt, videoPath, limiter, func(n, _ int64) {
 		videoRead = n
 		report()
 	}); err != nil {
@@ -223,7 +250,7 @@ func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFm
 	}
 
 	// Download audio stream.
-	if err := s.downloadStreamToFileProgress(ctx, video, audioFmt, audioPath, func(n, _ int64) {
+	if err := s.downloadStreamToFileProgress(ctx, video, audioFmt, audioPath, limiter, func(n, _ int64) {
 		audioRead = n
 		report()
 	}); err != nil {
@@ -240,12 +267,15 @@ func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFm
 		"-c:v", "copy",
 		"-c:a", "aac",
 		"-movflags", "+faststart",
-		outputPath,
+		tempOutputPath,
 	)
 	cmd.Stderr = nil
 	cmd.Stdout = nil
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("youtube: ffmpeg mux failed: %w", err)
+	}
+	if err := commitOutput(tempOutputPath, outputPath, skipChecksums); err != nil {
+		return err
 	}
 
 	if onProgress != nil {
@@ -254,7 +284,7 @@ func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFm
 	return nil
 }
 
-func (s *Scraper) downloadStreamToFileProgress(ctx context.Context, video *ytdl.Video, format *ytdl.Format, path string, onProgress func(int64, int64)) error {
+func (s *Scraper) downloadStreamToFileProgress(ctx context.Context, video *ytdl.Video, format *ytdl.Format, path string, limiter *rate.Limiter, onProgress func(int64, int64)) error {
 	stream, size, err := s.video.GetStreamContext(ctx, video, format)
 	if err != nil {
 		return err
@@ -265,13 +295,23 @@ func (s *Scraper) downloadStreamToFileProgress(ctx context.Context, video *ytdl.
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	closed := false
+	defer func() {
+		if !closed {
+			_ = out.Close()
+		}
+	}()
 
 	var read int64
 	buf := make([]byte, 32*1024)
 	for {
 		n, readErr := stream.Read(buf)
 		if n > 0 {
+			if limiter != nil {
+				if err := limiter.WaitN(ctx, n); err != nil {
+					return err
+				}
+			}
 			if _, werr := out.Write(buf[:n]); werr != nil {
 				return werr
 			}
@@ -288,6 +328,52 @@ func (s *Scraper) downloadStreamToFileProgress(ctx context.Context, video *ytdl.
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	closed = true
+	return nil
+}
+
+func prepareOutput(path string, skipChecksums bool) (bool, error) {
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if info.Size() == 0 {
+		return false, os.Remove(path)
+	}
+	if skipChecksums {
+		return true, nil
+	}
+	present, matches, err := fileutil.VerifyChecksum(path)
+	if err != nil {
+		return false, err
+	}
+	if !present || matches {
+		return true, nil
+	}
+	if err := os.Remove(path); err != nil {
+		return false, err
+	}
+	if err := os.Remove(fileutil.ChecksumPath(path)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	return false, nil
+}
+
+func commitOutput(tempPath, finalPath string, skipChecksums bool) error {
+	if err := os.Rename(tempPath, finalPath); err != nil {
+		return err
+	}
+	if !skipChecksums {
+		if err := fileutil.WriteChecksum(finalPath); err != nil {
+			return fmt.Errorf("write checksum for %s: %w", finalPath, err)
 		}
 	}
 	return nil
@@ -363,7 +449,20 @@ func safeOutputPath(dest, title string) string {
 
 // --- Downloader ---
 
-const progressBufSize = 4096
+const (
+	progressBufSize     = 4096
+	minRateLimitBurst   = 32 * 1024
+	defaultReadTimeout  = 30 * time.Second
+	defaultYouTubeAgent = "Scraper/1.0"
+)
+
+type DownloaderConfig struct {
+	Concurrency  int
+	Timeout      time.Duration
+	UserAgent    string
+	RateLimit    int64
+	SkipChecksum bool
+}
 
 // Downloader adapts Scraper to the dashboard's Downloader interface (see
 // internal/ui/dashboard), so YouTube videos — whether from a single URL or
@@ -380,14 +479,36 @@ type Downloader struct {
 	cancelled map[string]struct{}
 	sem       chan struct{}
 	paths     *fileutil.PathAllocator
+	limiter   *rate.Limiter
+	skipSum   bool
 }
 
 // NewDownloader creates a Downloader that resolves and downloads videos via
 // scraper, running at most concurrency downloads (and ffmpeg mux processes)
 // at once.
 func NewDownloader(scraper *Scraper, concurrency int) *Downloader {
-	if concurrency < 1 {
-		concurrency = 1
+	return NewDownloaderWithConfig(scraper, DownloaderConfig{Concurrency: concurrency})
+}
+
+func NewDownloaderWithConfig(scraper *Scraper, config DownloaderConfig) *Downloader {
+	if config.Concurrency < 1 {
+		config.Concurrency = 1
+	}
+	if config.Timeout <= 0 {
+		config.Timeout = defaultReadTimeout
+	}
+	if config.UserAgent == "" {
+		config.UserAgent = defaultYouTubeAgent
+	}
+	scraper.video.HTTPClient = netutil.WithUserAgent(netutil.NewPublicStreamingClient(config.Timeout), config.UserAgent)
+
+	var limiter *rate.Limiter
+	if config.RateLimit > 0 {
+		burst := int(config.RateLimit)
+		if burst < minRateLimitBurst {
+			burst = minRateLimitBurst
+		}
+		limiter = rate.NewLimiter(rate.Limit(config.RateLimit), burst)
 	}
 	return &Downloader{
 		scraper:   scraper,
@@ -395,8 +516,10 @@ func NewDownloader(scraper *Scraper, concurrency int) *Downloader {
 		cancelMap: make(map[string]context.CancelFunc),
 		queued:    make(map[string]struct{}),
 		cancelled: make(map[string]struct{}),
-		sem:       make(chan struct{}, concurrency),
+		sem:       make(chan struct{}, config.Concurrency),
 		paths:     fileutil.NewPathAllocator(),
+		limiter:   limiter,
+		skipSum:   config.SkipChecksum,
 	}
 }
 
@@ -452,7 +575,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 		return fmt.Errorf("youtube: could not extract video ID from %s", item.URL)
 	}
 
-	err := d.scraper.downloadBest(ctx, videoID, dest, item.Key(), d.paths, func(bytes, total int64) {
+	err := d.scraper.downloadBest(ctx, videoID, dest, item.Key(), d.paths, d.limiter, d.skipSum, func(bytes, total int64) {
 		d.sendProgress(model.ProgressEvent{Item: item, Bytes: bytes, Total: total, Status: model.StatusDownloading})
 	})
 

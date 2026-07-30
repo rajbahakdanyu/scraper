@@ -129,6 +129,10 @@ matches (a corrupted file), it's redownloaded instead of trusted as-is.
 `rate_limit`/`--limit-rate` caps the *combined* speed across all concurrent
 downloads, not each one individually.
 
+Interrupted direct HTTP downloads retain validated `.part` files and resume
+with Range requests. YouTube streams restart after interruption because the
+YouTube client library does not expose a stable entity validator/range contract.
+
 ## Supported Sites
 
 | Site      | URL format                          | Notes                                |

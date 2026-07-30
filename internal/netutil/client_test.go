@@ -49,3 +49,21 @@ func TestPublicClientBlocksPrivateRedirect(t *testing.T) {
 		t.Fatal("private redirect was not blocked")
 	}
 }
+
+func TestWithUserAgentAddsConfiguredHeader(t *testing.T) {
+	var got string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("User-Agent")
+	}))
+	defer ts.Close()
+
+	client := WithUserAgent(NewPublicClient(time.Second, ts.URL), "Custom/1.0")
+	resp, err := client.Get(ts.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if got != "Custom/1.0" {
+		t.Fatalf("User-Agent = %q", got)
+	}
+}

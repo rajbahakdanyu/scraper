@@ -97,6 +97,29 @@ func NewPublicStreamingClient(responseHeaderTimeout time.Duration, allowedPrivat
 	return newPublicClient(0, responseHeaderTimeout, allowedPrivateURLs...)
 }
 
+func WithUserAgent(client *http.Client, userAgent string) *http.Client {
+	if userAgent == "" {
+		return client
+	}
+	clone := *client
+	clone.Transport = &userAgentTransport{base: client.Transport, userAgent: userAgent}
+	return &clone
+}
+
+type userAgentTransport struct {
+	base      http.RoundTripper
+	userAgent string
+}
+
+func (t *userAgentTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	clone := req.Clone(req.Context())
+	clone.Header = req.Header.Clone()
+	if clone.Header.Get("User-Agent") == "" {
+		clone.Header.Set("User-Agent", t.userAgent)
+	}
+	return t.base.RoundTrip(clone)
+}
+
 func newPublicClient(timeout, responseHeaderTimeout time.Duration, allowedPrivateURLs ...string) *http.Client {
 	policy := NewPolicy(allowedPrivateURLs...)
 	transport := http.DefaultTransport.(*http.Transport).Clone()

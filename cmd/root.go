@@ -250,6 +250,10 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 	if opts.dryRun {
 		return runDryRun(scraper, targetURL)
 	}
+	rateLimitBytesPerSec, err := config.ParseRateLimit(cfg.RateLimit)
+	if err != nil {
+		return err
+	}
 
 	var dl dashboard.Downloader
 	if siteName == "youtube" {
@@ -257,12 +261,14 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 		if !ok {
 			return fmt.Errorf("youtube: unexpected scraper type %T", scraper)
 		}
-		dl = youtube.NewDownloader(ytScraper, cfg.ConcurrentDownloads)
+		dl = youtube.NewDownloaderWithConfig(ytScraper, youtube.DownloaderConfig{
+			Concurrency:  cfg.ConcurrentDownloads,
+			Timeout:      cfg.Timeout,
+			UserAgent:    cfg.UserAgent,
+			RateLimit:    rateLimitBytesPerSec,
+			SkipChecksum: cfg.SkipChecksums,
+		})
 	} else {
-		rateLimitBytesPerSec, err := config.ParseRateLimit(cfg.RateLimit)
-		if err != nil {
-			return err
-		}
 		genericDl := downloader.NewDownloaderWithConfig(
 			cfg.ConcurrentDownloads,
 			cfg.Timeout,
@@ -286,7 +292,7 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 	p := tea.NewProgram(d, tea.WithAltScreen())
 	d.SetSendFunc(func(msg tea.Msg) { p.Send(msg) })
 
-	_, err := p.Run()
+	_, err = p.Run()
 	return err
 }
 

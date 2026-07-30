@@ -2,12 +2,15 @@
 package youtube
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	ytdl "github.com/kkdai/youtube/v2"
 
+	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 	"github.com/rajbahakdanyu/scraper/internal/model"
 )
 
@@ -164,6 +167,38 @@ func TestNewDownloaderEnforcesMinConcurrency(t *testing.T) {
 	d := NewDownloader(NewYouTubeScraper(), 0)
 	if cap(d.sem) != 1 {
 		t.Errorf("expected a concurrency floor of 1, got %d", cap(d.sem))
+	}
+}
+
+func TestNewDownloaderWithConfigAppliesTransferPolicy(t *testing.T) {
+	d := NewDownloaderWithConfig(NewYouTubeScraper(), DownloaderConfig{
+		Concurrency:  3,
+		Timeout:      5 * time.Second,
+		UserAgent:    "Custom/1.0",
+		RateLimit:    1024,
+		SkipChecksum: true,
+	})
+	if cap(d.sem) != 3 || d.limiter == nil || !d.skipSum {
+		t.Fatalf("policy not applied: sem=%d limiter=%v skip=%v", cap(d.sem), d.limiter, d.skipSum)
+	}
+}
+
+func TestCommitOutputIsAtomicAndWritesChecksum(t *testing.T) {
+	dir := t.TempDir()
+	tempPath := filepath.Join(dir, "video.part.mp4")
+	finalPath := filepath.Join(dir, "video.mp4")
+	if err := os.WriteFile(tempPath, []byte("video"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := commitOutput(tempPath, finalPath, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(tempPath); !os.IsNotExist(err) {
+		t.Fatalf("temporary output still exists: %v", err)
+	}
+	present, matches, err := fileutil.VerifyChecksum(finalPath)
+	if err != nil || !present || !matches {
+		t.Fatalf("checksum verification = present %v matches %v err %v", present, matches, err)
 	}
 }
 
