@@ -194,7 +194,7 @@ func TestEstimatedSizeSumsVideoAndAudio(t *testing.T) {
 }
 
 func TestNewDownloaderEnforcesMinConcurrency(t *testing.T) {
-	d := NewDownloader(NewYouTubeScraper(), 0)
+	d := NewDownloaderWithConfig(NewYouTubeScraper(), DownloaderConfig{})
 	if cap(d.sem) != 1 {
 		t.Errorf("expected a concurrency floor of 1, got %d", cap(d.sem))
 	}
@@ -233,7 +233,7 @@ func TestCommitOutputIsAtomicAndWritesChecksum(t *testing.T) {
 }
 
 func TestDownloaderReturnsErrorForUnresolvableURL(t *testing.T) {
-	d := NewDownloader(NewYouTubeScraper(), 1)
+	d := NewDownloaderWithConfig(NewYouTubeScraper(), DownloaderConfig{Concurrency: 1})
 	item := model.MediaItem{URL: "not-a-youtube-url"}
 
 	if err := d.Download(item, t.TempDir()); err == nil {
@@ -242,7 +242,7 @@ func TestDownloaderReturnsErrorForUnresolvableURL(t *testing.T) {
 }
 
 func TestDownloaderCancelIsSafeForUnknownItem(t *testing.T) {
-	d := NewDownloader(NewYouTubeScraper(), 1)
+	d := NewDownloaderWithConfig(NewYouTubeScraper(), DownloaderConfig{Concurrency: 1})
 	// Must not panic even though nothing is downloading for this item.
 	d.Cancel(model.MediaItem{URL: "https://www.youtube.com/watch?v=xyz"})
 }

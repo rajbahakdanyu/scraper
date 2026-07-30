@@ -516,13 +516,6 @@ type Downloader struct {
 	skipSum   bool
 }
 
-// NewDownloader creates a Downloader that resolves and downloads videos via
-// scraper, running at most concurrency downloads (and ffmpeg mux processes)
-// at once.
-func NewDownloader(scraper *Scraper, concurrency int) *Downloader {
-	return NewDownloaderWithConfig(scraper, DownloaderConfig{Concurrency: concurrency})
-}
-
 func NewDownloaderWithConfig(scraper *Scraper, config DownloaderConfig) *Downloader {
 	if config.Concurrency < 1 {
 		config.Concurrency = 1
