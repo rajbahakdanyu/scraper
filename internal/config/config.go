@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -139,5 +140,12 @@ func ParseRateLimit(s string) (int64, error) {
 	if n < 0 {
 		return 0, fmt.Errorf("invalid rate limit %q: must not be negative", s)
 	}
-	return int64(n * mult), nil
+	scaled := n * mult
+	if math.IsNaN(scaled) || math.IsInf(scaled, 0) || scaled > math.MaxInt64 {
+		return 0, fmt.Errorf("invalid rate limit %q: out of range", s)
+	}
+	if scaled > 0 && scaled < 1 {
+		return 0, fmt.Errorf("invalid rate limit %q: must be at least 1 byte/sec", s)
+	}
+	return int64(scaled), nil
 }

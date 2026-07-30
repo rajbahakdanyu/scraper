@@ -535,11 +535,7 @@ func NewDownloaderWithConfig(scraper *Scraper, config DownloaderConfig) *Downloa
 
 	var limiter *rate.Limiter
 	if config.RateLimit > 0 {
-		burst := int(config.RateLimit)
-		if burst < minRateLimitBurst {
-			burst = minRateLimitBurst
-		}
-		limiter = rate.NewLimiter(rate.Limit(config.RateLimit), burst)
+		limiter = rate.NewLimiter(rate.Limit(config.RateLimit), minRateLimitBurst)
 	}
 	return &Downloader{
 		scraper:   scraper,

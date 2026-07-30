@@ -92,11 +92,7 @@ func (d *Downloader) SetRateLimit(bytesPerSec int64) {
 		d.limiter = nil
 		return
 	}
-	burst := int(bytesPerSec)
-	if burst < minRateLimitBurst {
-		burst = minRateLimitBurst
-	}
-	d.limiter = rate.NewLimiter(rate.Limit(bytesPerSec), burst)
+	d.limiter = rate.NewLimiter(rate.Limit(bytesPerSec), minRateLimitBurst)
 }
 
 // SetSkipChecksums disables writing and verifying the .sha256 sidecar file

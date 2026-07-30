@@ -104,6 +104,10 @@ func TestParseRateLimit(t *testing.T) {
 		{"abc", 0, true},
 		{"-5", 0, true},
 		{"-5M", 0, true},
+		{"NaN", 0, true},
+		{"Inf", 0, true},
+		{"1e100G", 0, true},
+		{"0.1", 0, true},
 	}
 
 	for _, tt := range tests {
