@@ -362,9 +362,8 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, tem
 				Status: model.StatusDownloading,
 			})
 		},
-		readDeadline: d.readTimeout,
-		limiter:      d.limiter,
-		ctx:          ctx,
+		limiter: d.limiter,
+		ctx:     ctx,
 	}
 
 	_, copyErr := io.Copy(out, pr)
@@ -388,52 +387,29 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, tem
 	return nil
 }
 
-// progressReader wraps an io.Reader and calls onProgress after each Read
-// with the cumulative number of bytes read. If no data is received within
-// readDeadline, the next Read returns an error (stalled connection detection).
-// If limiter is set, each read blocks until it fits the configured rate.
+// progressReader wraps an io.Reader and calls onProgress after each Read.
+// Network idle deadlines are enforced by netutil's streaming transport.
 type progressReader struct {
-	reader       io.Reader
-	read         int64
-	base         int64 // bytes already on disk before this read began (resumed downloads)
-	onProgress   func(bytes int64)
-	readDeadline time.Duration
-	limiter      *rate.Limiter
-	ctx          context.Context
+	reader     io.Reader
+	read       int64
+	base       int64 // bytes already on disk before this read began (resumed downloads)
+	onProgress func(bytes int64)
+	limiter    *rate.Limiter
+	ctx        context.Context
 }
 
 func (pr *progressReader) Read(p []byte) (int, error) {
-	// Use a goroutine + channel to enforce a per-read deadline
-	type result struct {
-		n   int
-		err error
-	}
-	done := make(chan result, 1)
-	go func() {
-		n, err := pr.reader.Read(p)
-		done <- result{n, err}
-	}()
-
-	timeout := pr.readDeadline
-	if timeout == 0 {
-		timeout = 30 * time.Second
-	}
-
-	select {
-	case r := <-done:
-		if r.n > 0 {
-			if pr.limiter != nil {
-				if werr := pr.limiter.WaitN(pr.ctx, r.n); werr != nil {
-					return r.n, werr
-				}
+	n, err := pr.reader.Read(p)
+	if n > 0 {
+		if pr.limiter != nil {
+			if waitErr := pr.limiter.WaitN(pr.ctx, n); waitErr != nil {
+				return n, waitErr
 			}
-			pr.read += int64(r.n)
-			pr.onProgress(pr.base + pr.read)
 		}
-		return r.n, r.err
-	case <-time.After(timeout):
-		return 0, fmt.Errorf("read timeout: no data for %s", timeout)
+		pr.read += int64(n)
+		pr.onProgress(pr.base + pr.read)
 	}
+	return n, err
 }
 
 // Cancel cancels an active download for the given item. This cancels the

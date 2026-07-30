@@ -1,6 +1,7 @@
 package netutil
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -65,5 +66,31 @@ func TestWithUserAgentAddsConfiguredHeader(t *testing.T) {
 	resp.Body.Close()
 	if got != "Custom/1.0" {
 		t.Fatalf("User-Agent = %q", got)
+	}
+}
+
+func TestStreamingClientTimesOutStalledBodyRead(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		select {
+		case <-r.Context().Done():
+		case <-time.After(time.Second):
+		}
+	}))
+	defer ts.Close()
+
+	client := NewPublicStreamingClient(50*time.Millisecond, ts.URL)
+	resp, err := client.Get(ts.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	start := time.Now()
+	if _, err := io.ReadAll(resp.Body); err == nil {
+		t.Fatal("expected stalled body read to time out")
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("idle timeout took %v", elapsed)
 	}
 }

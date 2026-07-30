@@ -57,14 +57,15 @@ func (p *Policy) validateHost(host string) error {
 	return nil
 }
 
-func (p *Policy) dialContext(dialer *net.Dialer) func(context.Context, string, string) (net.Conn, error) {
+func (p *Policy) dialContext(dialer *net.Dialer, readTimeout time.Duration) func(context.Context, string, string) (net.Conn, error) {
 	return func(ctx context.Context, network, address string) (net.Conn, error) {
 		host, port, err := net.SplitHostPort(address)
 		if err != nil {
 			return nil, err
 		}
 		if _, ok := p.allowedPrivateHosts[strings.ToLower(address)]; ok {
-			return dialer.DialContext(ctx, network, address)
+			conn, err := dialer.DialContext(ctx, network, address)
+			return withReadTimeout(conn, readTimeout), err
 		}
 
 		addresses, err := p.resolver.LookupIPAddr(ctx, host)
@@ -78,7 +79,7 @@ func (p *Policy) dialContext(dialer *net.Dialer) func(context.Context, string, s
 			}
 			conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(address.IP.String(), port))
 			if err == nil {
-				return conn, nil
+				return withReadTimeout(conn, readTimeout), nil
 			}
 			lastErr = err
 		}
@@ -90,11 +91,11 @@ func (p *Policy) dialContext(dialer *net.Dialer) func(context.Context, string, s
 }
 
 func NewPublicClient(timeout time.Duration, allowedPrivateURLs ...string) *http.Client {
-	return newPublicClient(timeout, timeout, allowedPrivateURLs...)
+	return newPublicClient(timeout, timeout, timeout, allowedPrivateURLs...)
 }
 
 func NewPublicStreamingClient(responseHeaderTimeout time.Duration, allowedPrivateURLs ...string) *http.Client {
-	return newPublicClient(0, responseHeaderTimeout, allowedPrivateURLs...)
+	return newPublicClient(0, responseHeaderTimeout, responseHeaderTimeout, allowedPrivateURLs...)
 }
 
 func WithUserAgent(client *http.Client, userAgent string) *http.Client {
@@ -120,12 +121,12 @@ func (t *userAgentTransport) RoundTrip(req *http.Request) (*http.Response, error
 	return t.base.RoundTrip(clone)
 }
 
-func newPublicClient(timeout, responseHeaderTimeout time.Duration, allowedPrivateURLs ...string) *http.Client {
+func newPublicClient(timeout, responseHeaderTimeout, readTimeout time.Duration, allowedPrivateURLs ...string) *http.Client {
 	policy := NewPolicy(allowedPrivateURLs...)
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
 	transport.ResponseHeaderTimeout = responseHeaderTimeout
-	transport.DialContext = policy.dialContext(&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second})
+	transport.DialContext = policy.dialContext(&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}, readTimeout)
 
 	return &http.Client{
 		Transport: transport,
@@ -137,6 +138,27 @@ func newPublicClient(timeout, responseHeaderTimeout time.Duration, allowedPrivat
 			return policy.ValidateURL(req.URL.String())
 		},
 	}
+}
+
+type readTimeoutConn struct {
+	net.Conn
+	timeout time.Duration
+}
+
+func (c *readTimeoutConn) Read(buffer []byte) (int, error) {
+	if c.timeout > 0 {
+		if err := c.SetReadDeadline(time.Now().Add(c.timeout)); err != nil {
+			return 0, err
+		}
+	}
+	return c.Conn.Read(buffer)
+}
+
+func withReadTimeout(conn net.Conn, timeout time.Duration) net.Conn {
+	if conn == nil || timeout <= 0 {
+		return conn
+	}
+	return &readTimeoutConn{Conn: conn, timeout: timeout}
 }
 
 func isPublicIP(ip net.IP) bool {
