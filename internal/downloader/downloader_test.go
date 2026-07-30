@@ -477,3 +477,51 @@ func TestDownloadSkipsWhenChecksumMatches(t *testing.T) {
 		t.Errorf("expected no request for a file matching its checksum, got %d", got)
 	}
 }
+
+func TestConcurrentDownloadsWithSameTitleUseDistinctPaths(t *testing.T) {
+	server := func(content string) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(content))
+		}))
+	}
+	firstServer := server("first")
+	defer firstServer.Close()
+	secondServer := server("second")
+	defer secondServer.Close()
+
+	dl := NewDownloaderWithConfig(2, 0, "")
+	dest := t.TempDir()
+	items := []model.MediaItem{
+		{ID: "first", URL: firstServer.URL, Title: "same.bin"},
+		{ID: "second", URL: secondServer.URL, Title: "same.bin"},
+	}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, len(items))
+	for _, item := range items {
+		wg.Add(1)
+		go func(item model.MediaItem) {
+			defer wg.Done()
+			errs <- dl.Download(item, dest)
+		}(item)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("download failed: %v", err)
+		}
+	}
+
+	contents := make(map[string]bool)
+	for _, name := range []string{"same.bin", "same (2).bin"} {
+		data, err := os.ReadFile(filepath.Join(dest, name))
+		if err != nil {
+			t.Fatalf("expected collision-safe file %q: %v", name, err)
+		}
+		contents[string(data)] = true
+	}
+	if !contents["first"] || !contents["second"] {
+		t.Fatalf("downloads overwrote each other: contents=%v", contents)
+	}
+}

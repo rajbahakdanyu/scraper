@@ -150,7 +150,7 @@ func TestBatchProgressUpdatesRows(t *testing.T) {
 	d.Update(scrapeResultMsg{items: items})
 
 	d.Update(progressMsg(model.ProgressEvent{
-		Item:   items[0],
+		Item:   d.states[0].item,
 		Bytes:  50,
 		Total:  100,
 		Status: model.StatusDownloading,
@@ -192,7 +192,7 @@ func TestCancelDoesNothingForCompletedItem(t *testing.T) {
 	}
 	d := New(instantItems(items), fd, t.TempDir(), "cyberdrop")
 	d.Update(scrapeResultMsg{items: items})
-	d.applyDone(downloadDoneMsg{url: items[0].URL})
+	d.applyDone(downloadDoneMsg{key: d.states[0].item.Key()})
 
 	d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
 
@@ -218,7 +218,7 @@ func TestSpinnerStopsAfterBatchCompletes(t *testing.T) {
 		t.Error("expected spinner tick to be re-armed while active")
 	}
 
-	d.applyDone(downloadDoneMsg{url: items[0].URL})
+	d.applyDone(downloadDoneMsg{key: d.states[0].item.Key()})
 	if d.spinnerActive() {
 		t.Error("expected spinner inactive once all items are done")
 	}
@@ -233,7 +233,7 @@ func TestRenderStatsShowsStaticIconWhenDone(t *testing.T) {
 	}
 	d := New(instantItems(items), nil, t.TempDir(), "cyberdrop")
 	d.Update(scrapeResultMsg{items: items})
-	d.applyDone(downloadDoneMsg{url: items[0].URL})
+	d.applyDone(downloadDoneMsg{key: d.states[0].item.Key()})
 
 	if stats := d.renderStats(); !strings.Contains(stats, "✓") {
 		t.Errorf("expected a static checkmark once all downloads finish, got: %q", stats)
@@ -246,10 +246,38 @@ func TestRenderStatsShowsXWhenFailed(t *testing.T) {
 	}
 	d := New(instantItems(items), nil, t.TempDir(), "cyberdrop")
 	d.Update(scrapeResultMsg{items: items})
-	d.applyDone(downloadDoneMsg{url: items[0].URL, err: errors.New("boom")})
+	d.applyDone(downloadDoneMsg{key: d.states[0].item.Key(), err: errors.New("boom")})
 
 	if stats := d.renderStats(); !strings.Contains(stats, "✗") {
 		t.Errorf("expected a static X once a download fails, got: %q", stats)
+	}
+}
+
+func TestDuplicateURLsUpdateIndependentRows(t *testing.T) {
+	items := []model.MediaItem{
+		{URL: "https://example.com/same", Title: "first.mp4", Size: 100},
+		{URL: "https://example.com/same", Title: "second.mp4", Size: 100},
+	}
+	d := New(instantItems(items), nil, t.TempDir(), "test")
+	d.Update(scrapeResultMsg{items: items})
+
+	if d.states[0].item.Key() == d.states[1].item.Key() {
+		t.Fatal("duplicate URLs received the same per-run identity")
+	}
+
+	d.applyProgress(model.ProgressEvent{
+		Item:   d.states[1].item,
+		Bytes:  50,
+		Total:  100,
+		Status: model.StatusDownloading,
+	})
+	if d.states[0].bytes != 0 || d.states[1].bytes != 50 {
+		t.Fatalf("progress updated wrong rows: first=%d second=%d", d.states[0].bytes, d.states[1].bytes)
+	}
+
+	d.applyDone(downloadDoneMsg{key: d.states[1].item.Key()})
+	if d.states[0].status == model.StatusCompleted || d.states[1].status != model.StatusCompleted {
+		t.Fatalf("completion updated wrong rows: first=%v second=%v", d.states[0].status, d.states[1].status)
 	}
 }
 

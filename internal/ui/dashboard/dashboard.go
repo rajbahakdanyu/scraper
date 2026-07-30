@@ -120,7 +120,7 @@ func (d *Dashboard) Init() tea.Cmd {
 
 type progressMsg model.ProgressEvent
 type downloadDoneMsg struct {
-	url string
+	key string
 	err error
 }
 type tickMsg time.Time
@@ -139,7 +139,7 @@ func (d *Dashboard) startScrape() tea.Cmd {
 func startDownload(dl Downloader, item model.MediaItem, dest string) tea.Cmd {
 	return func() tea.Msg {
 		err := dl.Download(item, dest)
-		return downloadDoneMsg{url: item.URL, err: err}
+		return downloadDoneMsg{key: item.Key(), err: err}
 	}
 }
 
@@ -229,6 +229,9 @@ func (d *Dashboard) handleScrapeResult(msg scrapeResultMsg) (tea.Model, tea.Cmd)
 
 	d.states = make([]itemState, len(msg.items))
 	for i, it := range msg.items {
+		if it.ID == "" {
+			it.ID = fmt.Sprintf("%d:%s", i, it.URL)
+		}
 		d.states[i] = itemState{item: it, status: model.StatusPending, total: it.Size}
 	}
 
@@ -311,7 +314,7 @@ func (d *Dashboard) startAllDownloads() tea.Cmd {
 
 func (d *Dashboard) applyProgress(evt model.ProgressEvent) {
 	for i := range d.states {
-		if d.states[i].item.URL != evt.Item.URL {
+		if d.states[i].item.Key() != evt.Item.Key() {
 			continue
 		}
 		if d.states[i].started.IsZero() {
@@ -332,7 +335,7 @@ func (d *Dashboard) applyProgress(evt model.ProgressEvent) {
 
 func (d *Dashboard) applyDone(msg downloadDoneMsg) {
 	for i := range d.states {
-		if d.states[i].item.URL != msg.url {
+		if d.states[i].item.Key() != msg.key {
 			continue
 		}
 		switch {

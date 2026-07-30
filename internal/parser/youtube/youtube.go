@@ -14,6 +14,7 @@ import (
 	"time"
 
 	ytdl "github.com/kkdai/youtube/v2"
+	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 	"github.com/rajbahakdanyu/scraper/internal/model"
 )
 
@@ -143,7 +144,7 @@ func selectBestFormats(video *ytdl.Video) (videoFmt, audioFmt *ytdl.Format) {
 // downloadBest resolves videoID's highest-quality formats and downloads
 // (muxing with ffmpeg if needed) the result to dest. onProgress, if
 // non-nil, is called with cumulative bytes read and the combined total.
-func (s *Scraper) downloadBest(ctx context.Context, videoID, dest string, onProgress func(bytes, total int64)) error {
+func (s *Scraper) downloadBest(ctx context.Context, videoID, dest, owner string, paths *fileutil.PathAllocator, onProgress func(bytes, total int64)) error {
 	video, err := s.video.GetVideoContext(ctx, videoID)
 	if err != nil {
 		return fmt.Errorf("youtube: failed to fetch video info: %w", err)
@@ -160,22 +161,22 @@ func (s *Scraper) downloadBest(ctx context.Context, videoID, dest string, onProg
 	}
 
 	if audioFmt == nil {
-		return s.downloadStreamDirect(ctx, video, videoFmt, title, dest, onProgress)
+		return s.downloadStreamDirect(ctx, video, videoFmt, title, dest, owner, paths, onProgress)
 	}
-	return s.downloadAndMux(ctx, video, videoFmt, audioFmt, title, dest, onProgress)
+	return s.downloadAndMux(ctx, video, videoFmt, audioFmt, title, dest, owner, paths, onProgress)
 }
 
-func (s *Scraper) downloadStreamDirect(ctx context.Context, video *ytdl.Video, format *ytdl.Format, title, dest string, onProgress func(int64, int64)) error {
+func (s *Scraper) downloadStreamDirect(ctx context.Context, video *ytdl.Video, format *ytdl.Format, title, dest, owner string, paths *fileutil.PathAllocator, onProgress func(int64, int64)) error {
 	ext := "mp4"
 	if strings.Contains(format.MimeType, "webm") {
 		ext = "webm"
 	}
-	path := filepath.Join(dest, sanitizeFilename(title)+"."+ext)
+	path := paths.Claim(filepath.Join(dest, sanitizeFilename(title)+"."+ext), owner)
 
 	return s.downloadStreamToFileProgress(ctx, video, format, path, onProgress)
 }
 
-func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFmt, audioFmt *ytdl.Format, title, dest string, onProgress func(int64, int64)) error {
+func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFmt, audioFmt *ytdl.Format, title, dest, owner string, paths *fileutil.PathAllocator, onProgress func(int64, int64)) error {
 	videoExt := "mp4"
 	if strings.Contains(videoFmt.MimeType, "webm") {
 		videoExt = "webm"
@@ -193,7 +194,7 @@ func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFm
 
 	videoPath := filepath.Join(tmpDir, "video."+videoExt)
 	audioPath := filepath.Join(tmpDir, "audio."+audioExt)
-	outputPath := safeOutputPath(dest, title)
+	outputPath := paths.Claim(safeOutputPath(dest, title), owner)
 
 	videoSize := videoFmt.ContentLength
 	audioSize := audioFmt.ContentLength
@@ -375,6 +376,7 @@ type Downloader struct {
 	mu        sync.Mutex
 	cancelMap map[string]context.CancelFunc
 	sem       chan struct{}
+	paths     *fileutil.PathAllocator
 }
 
 // NewDownloader creates a Downloader that resolves and downloads videos via
@@ -389,6 +391,7 @@ func NewDownloader(scraper *Scraper, concurrency int) *Downloader {
 		progress:  make(chan model.ProgressEvent, progressBufSize),
 		cancelMap: make(map[string]context.CancelFunc),
 		sem:       make(chan struct{}, concurrency),
+		paths:     fileutil.NewPathAllocator(),
 	}
 }
 
@@ -407,11 +410,11 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	d.mu.Lock()
-	d.cancelMap[item.URL] = cancel
+	d.cancelMap[item.Key()] = cancel
 	d.mu.Unlock()
 	defer func() {
 		d.mu.Lock()
-		delete(d.cancelMap, item.URL)
+		delete(d.cancelMap, item.Key())
 		d.mu.Unlock()
 		cancel()
 	}()
@@ -424,7 +427,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 		return fmt.Errorf("youtube: could not extract video ID from %s", item.URL)
 	}
 
-	err := d.scraper.downloadBest(ctx, videoID, dest, func(bytes, total int64) {
+	err := d.scraper.downloadBest(ctx, videoID, dest, item.Key(), d.paths, func(bytes, total int64) {
 		d.sendProgress(model.ProgressEvent{Item: item, Bytes: bytes, Total: total, Status: model.StatusDownloading})
 	})
 
@@ -447,9 +450,9 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 func (d *Downloader) Cancel(item model.MediaItem) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if cancel, ok := d.cancelMap[item.URL]; ok {
+	if cancel, ok := d.cancelMap[item.Key()]; ok {
 		cancel()
-		delete(d.cancelMap, item.URL)
+		delete(d.cancelMap, item.Key())
 	}
 }
 

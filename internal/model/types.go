@@ -26,12 +26,20 @@ const (
 
 // MediaItem represents a single media item to be downloaded
 type MediaItem struct {
+	ID        string    // Per-run identity used to distinguish duplicate URLs
 	URL       string    // URL of the media resource
 	Title     string    // Display title of the media
 	Size      int64     // Size of the media in bytes
 	MimeType  string    // MIME type of the media
 	Type      MediaType // Type of media (video/image/etc.)
 	Thumbnail string    // URL or path to thumbnail preview
+}
+
+func (m MediaItem) Key() string {
+	if m.ID != "" {
+		return m.ID
+	}
+	return m.URL
 }
 
 // Scraper interface defines the contract for site-specific scraping logic

@@ -21,6 +21,7 @@ import (
 
 	"golang.org/x/time/rate"
 
+	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 	"github.com/rajbahakdanyu/scraper/internal/model"
 )
 
@@ -51,6 +52,7 @@ type Downloader struct {
 	readTimeout   time.Duration
 	limiter       *rate.Limiter
 	skipChecksums bool
+	paths         *fileutil.PathAllocator
 }
 
 // NewDownloaderWithConfig creates a Downloader using settings from a config.
@@ -74,6 +76,7 @@ func NewDownloaderWithConfig(concurrency int, timeout time.Duration, userAgent s
 		cancelMap:   make(map[string]context.CancelFunc),
 		sem:         make(chan struct{}, concurrency),
 		readTimeout: timeout,
+		paths:       fileutil.NewPathAllocator(),
 	}
 }
 
@@ -111,11 +114,11 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	d.mu.Lock()
-	d.cancelMap[item.URL] = cancel
+	d.cancelMap[item.Key()] = cancel
 	d.mu.Unlock()
 	defer func() {
 		d.mu.Lock()
-		delete(d.cancelMap, item.URL)
+		delete(d.cancelMap, item.Key())
 		d.mu.Unlock()
 		cancel()
 	}()
@@ -130,7 +133,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 			filename += ext
 		}
 	}
-	finalPath := filepath.Join(dest, filename)
+	finalPath := d.paths.Claim(filepath.Join(dest, filename), item.Key())
 	tempPath := finalPath + ".part"
 
 	// Skip if the file already exists, is non-empty, and (when a checksum
@@ -369,9 +372,9 @@ func (pr *progressReader) Read(p []byte) (int, error) {
 func (d *Downloader) Cancel(item model.MediaItem) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if cancel, ok := d.cancelMap[item.URL]; ok {
+	if cancel, ok := d.cancelMap[item.Key()]; ok {
 		cancel()
-		delete(d.cancelMap, item.URL)
+		delete(d.cancelMap, item.Key())
 	}
 }
 
