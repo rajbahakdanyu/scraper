@@ -6,7 +6,7 @@ import (
 	"github.com/rajbahakdanyu/scraper/internal/parser/goonbox"
 )
 
-func newGoonBoxCmd(opts globalOptions) *cobra.Command {
+func newGoonBoxCmd() *cobra.Command {
 	var urlFlag string
 
 	cmd := &cobra.Command{
@@ -15,6 +15,10 @@ func newGoonBoxCmd(opts globalOptions) *cobra.Command {
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			targetURL, err := resolveURL(args, urlFlag, "GoonBox")
+			if err != nil {
+				return err
+			}
+			opts, err := globalOptionsFromCommand(cmd)
 			if err != nil {
 				return err
 			}

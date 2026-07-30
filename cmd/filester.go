@@ -7,7 +7,7 @@ import (
 	"github.com/rajbahakdanyu/scraper/internal/parser/filester"
 )
 
-func newFilesterCmd(opts globalOptions) *cobra.Command {
+func newFilesterCmd() *cobra.Command {
 	var urlFlag string
 
 	cmd := &cobra.Command{
@@ -16,6 +16,10 @@ func newFilesterCmd(opts globalOptions) *cobra.Command {
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			targetURL, err := resolveURL(args, urlFlag, "Filester")
+			if err != nil {
+				return err
+			}
+			opts, err := globalOptionsFromCommand(cmd)
 			if err != nil {
 				return err
 			}

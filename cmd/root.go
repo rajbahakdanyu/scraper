@@ -59,6 +59,42 @@ func loadGlobalConfig(opts globalOptions) *config.Config {
 	return cfg
 }
 
+func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
+	flags := cmd.Root().PersistentFlags()
+	configPath, err := flags.GetString("config")
+	if err != nil {
+		return globalOptions{}, err
+	}
+	output, err := flags.GetString("output")
+	if err != nil {
+		return globalOptions{}, err
+	}
+	concurrency, err := flags.GetInt("concurrent")
+	if err != nil {
+		return globalOptions{}, err
+	}
+	rateLimit, err := flags.GetString("limit-rate")
+	if err != nil {
+		return globalOptions{}, err
+	}
+	skipChecksums, err := flags.GetBool("no-checksums")
+	if err != nil {
+		return globalOptions{}, err
+	}
+	dryRun, err := flags.GetBool("dry-run")
+	if err != nil {
+		return globalOptions{}, err
+	}
+	return globalOptions{
+		configPath:    configPath,
+		output:        output,
+		concurrency:   concurrency,
+		rateLimit:     rateLimit,
+		skipChecksums: skipChecksums,
+		dryRun:        dryRun,
+	}, nil
+}
+
 func Execute() {
 	if err := NewRootCmd().Execute(); err != nil {
 		os.Exit(1)
@@ -66,8 +102,6 @@ func Execute() {
 }
 
 func NewRootCmd() *cobra.Command {
-	opts := globalOptions{}
-
 	root := &cobra.Command{
 		Use:   "scraper [url]",
 		Short: "Media scraper CLI tool",
@@ -85,23 +119,27 @@ func NewRootCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			opts, err := globalOptionsFromCommand(cmd)
+			if err != nil {
+				return err
+			}
 			return runWithScraper(scraperRegistry()[site], targetURL, site, opts)
 		},
 	}
 
-	root.PersistentFlags().StringVar(&opts.configPath, "config", "", "Config file path (default: ~/.scraper.yaml)")
-	root.PersistentFlags().StringVarP(&opts.output, "output", "o", ".", "Output directory")
-	root.PersistentFlags().IntVar(&opts.concurrency, "concurrent", 5, "Maximum concurrent downloads")
-	root.PersistentFlags().StringVar(&opts.rateLimit, "limit-rate", "", "Cap total download speed (e.g. 500K, 2M, 1G; default: unlimited)")
-	root.PersistentFlags().BoolVar(&opts.skipChecksums, "no-checksums", false, "Don't write/verify .sha256 checksum sidecar files")
-	root.PersistentFlags().BoolVarP(&opts.dryRun, "dry-run", "n", false, "List items and total size without downloading anything")
+	root.PersistentFlags().String("config", "", "Config file path (default: ~/.scraper.yaml)")
+	root.PersistentFlags().StringP("output", "o", ".", "Output directory")
+	root.PersistentFlags().Int("concurrent", 5, "Maximum concurrent downloads")
+	root.PersistentFlags().String("limit-rate", "", "Cap total download speed (e.g. 500K, 2M, 1G; default: unlimited)")
+	root.PersistentFlags().Bool("no-checksums", false, "Don't write/verify .sha256 checksum sidecar files")
+	root.PersistentFlags().BoolP("dry-run", "n", false, "List items and total size without downloading anything")
 
 	root.AddCommand(
-		newYouTubeCmd(opts),
-		newCyberDropCmd(opts),
-		newBunkerCmd(opts),
-		newGoonBoxCmd(opts),
-		newFilesterCmd(opts),
+		newYouTubeCmd(),
+		newCyberDropCmd(),
+		newBunkerCmd(),
+		newGoonBoxCmd(),
+		newFilesterCmd(),
 	)
 
 	return root

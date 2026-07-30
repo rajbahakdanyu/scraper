@@ -3,8 +3,7 @@ package cmd
 import "testing"
 
 func TestNewYouTubeCmd(t *testing.T) {
-	opts := globalOptions{}
-	cmd := newYouTubeCmd(opts)
+	cmd := newYouTubeCmd()
 
 	if cmd.Use != "youtube <url>" {
 		t.Errorf("unexpected Use: %s", cmd.Use)

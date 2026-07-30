@@ -3,8 +3,7 @@ package cmd
 import "testing"
 
 func TestNewFilesterCmd(t *testing.T) {
-	opts := globalOptions{}
-	cmd := newFilesterCmd(opts)
+	cmd := newFilesterCmd()
 
 	if cmd.Use != "filester <url>" {
 		t.Errorf("unexpected Use: %s", cmd.Use)

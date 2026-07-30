@@ -3,8 +3,7 @@ package cmd
 import "testing"
 
 func TestNewCyberDropCmd(t *testing.T) {
-	opts := globalOptions{}
-	cmd := newCyberDropCmd(opts)
+	cmd := newCyberDropCmd()
 
 	if cmd.Use != "cyberdrop <url>" {
 		t.Errorf("unexpected Use: %s", cmd.Use)

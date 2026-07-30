@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/rajbahakdanyu/scraper/internal/model"
 )
 
@@ -73,6 +75,48 @@ func TestNewRootCmdRegistersSubcommands(t *testing.T) {
 	}
 	if root.PersistentFlags().Lookup("dry-run") == nil {
 		t.Error("expected --dry-run persistent flag")
+	}
+}
+
+func TestExplicitSubcommandReadsInheritedOptions(t *testing.T) {
+	root := NewRootCmd()
+	if err := root.PersistentFlags().Set("config", "/tmp/custom.yaml"); err != nil {
+		t.Fatal(err)
+	}
+	if err := root.PersistentFlags().Set("output", "."); err != nil {
+		t.Fatal(err)
+	}
+	if err := root.PersistentFlags().Set("concurrent", "5"); err != nil {
+		t.Fatal(err)
+	}
+	if err := root.PersistentFlags().Set("limit-rate", "2M"); err != nil {
+		t.Fatal(err)
+	}
+	if err := root.PersistentFlags().Set("no-checksums", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := root.PersistentFlags().Set("dry-run", "true"); err != nil {
+		t.Fatal(err)
+	}
+
+	var youtubeCmd *cobra.Command
+	for _, cmd := range root.Commands() {
+		if cmd.Name() == "youtube" {
+			youtubeCmd = cmd
+			break
+		}
+	}
+	if youtubeCmd == nil {
+		t.Fatal("youtube subcommand not found")
+	}
+
+	opts, err := globalOptionsFromCommand(youtubeCmd)
+	if err != nil {
+		t.Fatalf("globalOptionsFromCommand failed: %v", err)
+	}
+	if opts.configPath != "/tmp/custom.yaml" || opts.output != "." || opts.concurrency != 5 ||
+		opts.rateLimit != "2M" || !opts.skipChecksums || !opts.dryRun {
+		t.Fatalf("explicit subcommand saw stale options: %+v", opts)
 	}
 }
 

@@ -3,8 +3,7 @@ package cmd
 import "testing"
 
 func TestNewGoonBoxCmd(t *testing.T) {
-	opts := globalOptions{}
-	cmd := newGoonBoxCmd(opts)
+	cmd := newGoonBoxCmd()
 
 	if cmd.Use != "goonbox <url>" {
 		t.Errorf("unexpected Use: %s", cmd.Use)

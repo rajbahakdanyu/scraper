@@ -3,8 +3,7 @@ package cmd
 import "testing"
 
 func TestNewBunkerCmd(t *testing.T) {
-	opts := globalOptions{}
-	cmd := newBunkerCmd(opts)
+	cmd := newBunkerCmd()
 
 	if cmd.Use != "bunker <url>" {
 		t.Errorf("unexpected Use: %s", cmd.Use)
