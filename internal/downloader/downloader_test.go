@@ -607,6 +607,52 @@ func TestDownloadSkipsWhenChecksumMatches(t *testing.T) {
 	}
 }
 
+func TestDownloadRejectsMalformedChecksumSidecar(t *testing.T) {
+	var requests int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requests, 1)
+		_, _ = w.Write([]byte("new content"))
+	}))
+	defer ts.Close()
+
+	dl := newTestDownloader(1, 0, "")
+	item := model.MediaItem{URL: ts.URL, Title: "malformed.bin"}
+	dest := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dest, "malformed.bin"), []byte("existing"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dest, "malformed.bin.sha256"), []byte("not-a-digest\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := dl.Download(item, dest)
+	if err == nil || !strings.Contains(err.Error(), "invalid SHA-256") {
+		t.Fatalf("expected malformed checksum error, got %v", err)
+	}
+	if requests != 0 {
+		t.Fatalf("malformed checksum unexpectedly triggered %d requests", requests)
+	}
+}
+
+func TestDownloadSurfacesChecksumWriteFailure(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("content"))
+	}))
+	defer ts.Close()
+
+	dl := newTestDownloader(1, 0, "")
+	item := model.MediaItem{URL: ts.URL, Title: "blocked.bin"}
+	dest := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dest, "blocked.bin.sha256"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	err := dl.Download(item, dest)
+	if err == nil || !strings.Contains(err.Error(), "write checksum") {
+		t.Fatalf("expected checksum write error, got %v", err)
+	}
+}
+
 func TestConcurrentDownloadsWithSameTitleUseDistinctPaths(t *testing.T) {
 	server := func(content string) *httptest.Server {
 		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

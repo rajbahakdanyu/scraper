@@ -162,7 +162,20 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 	// Skip if the file already exists, is non-empty, and (when a checksum
 	// sidecar is present) still matches it.
 	if info, err := os.Stat(finalPath); err == nil && info.Size() > 0 {
-		if d.skipChecksums || checksumMatches(finalPath) {
+		if d.skipChecksums {
+			d.sendProgress(model.ProgressEvent{
+				Item:     item,
+				Status:   model.StatusCompleted,
+				Filename: finalPath,
+			})
+			return nil
+		}
+		present, matches, verifyErr := verifyChecksum(finalPath)
+		if verifyErr != nil {
+			d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed})
+			return fmt.Errorf("verify existing checksum for %s: %w", finalPath, verifyErr)
+		}
+		if !present || matches {
 			d.sendProgress(model.ProgressEvent{
 				Item:     item,
 				Status:   model.StatusCompleted,
@@ -172,8 +185,12 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 		}
 		// Existing file no longer matches its checksum — treat it as
 		// corrupt and redownload rather than trusting stale bytes.
-		os.Remove(finalPath)
-		os.Remove(checksumSidecarPath(finalPath))
+		if err := os.Remove(finalPath); err != nil {
+			return fmt.Errorf("remove corrupt file %s: %w", finalPath, err)
+		}
+		if err := os.Remove(checksumSidecarPath(finalPath)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove stale checksum for %s: %w", finalPath, err)
+		}
 	}
 
 	d.sendProgress(model.ProgressEvent{
@@ -202,10 +219,10 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 			}
 			_ = os.Remove(resumePath)
 			if !d.skipChecksums {
-				// Best-effort: the download itself already succeeded, so a
-				// sidecar write failure (e.g. a momentary disk issue)
-				// shouldn't fail the whole operation.
-				_ = writeChecksumSidecar(finalPath)
+				if err := writeChecksumSidecar(finalPath); err != nil {
+					d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed})
+					return fmt.Errorf("write checksum for %s: %w", finalPath, err)
+				}
 			}
 			d.sendProgress(model.ProgressEvent{
 				Item:     item,
@@ -359,10 +376,13 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, tem
 		ctx:          ctx,
 	}
 
-	_, err = io.Copy(out, pr)
-	out.Close()
-	if err != nil {
-		return err
+	_, copyErr := io.Copy(out, pr)
+	closeErr := out.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	if closeErr != nil {
+		return closeErr
 	}
 	if total > 0 {
 		info, statErr := os.Stat(tempPath)
@@ -563,27 +583,55 @@ func writeChecksumSidecar(finalPath string) error {
 		return err
 	}
 	line := fmt.Sprintf("%s  %s\n", sum, filepath.Base(finalPath))
-	return os.WriteFile(checksumSidecarPath(finalPath), []byte(line), 0644)
+	sidecarPath := checksumSidecarPath(finalPath)
+	temp, err := os.CreateTemp(filepath.Dir(sidecarPath), ".checksum-*")
+	if err != nil {
+		return err
+	}
+	tempName := temp.Name()
+	defer os.Remove(tempName)
+	if err := temp.Chmod(0644); err != nil {
+		temp.Close()
+		return err
+	}
+	if _, err := temp.WriteString(line); err != nil {
+		temp.Close()
+		return err
+	}
+	if err := temp.Sync(); err != nil {
+		temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tempName, sidecarPath)
 }
 
-// checksumMatches reports whether finalPath's current contents still match
-// its .sha256 sidecar. A missing (or unreadable) sidecar reports true —
-// there's nothing to contradict a file downloaded before checksum support
-// existed, or when checksums were disabled at the time.
-func checksumMatches(finalPath string) bool {
+// verifyChecksum reports whether a sidecar exists and matches finalPath.
+// Missing sidecars remain compatible with downloads created before this
+// feature; present but malformed or unreadable sidecars are errors.
+func verifyChecksum(finalPath string) (present, matches bool, err error) {
 	data, err := os.ReadFile(checksumSidecarPath(finalPath))
 	if err != nil {
-		return true
+		if errors.Is(err, os.ErrNotExist) {
+			return false, false, nil
+		}
+		return true, false, err
 	}
 	fields := strings.Fields(string(data))
-	if len(fields) == 0 {
-		return true
+	if len(fields) < 1 {
+		return true, false, fmt.Errorf("empty checksum sidecar")
+	}
+	expected, err := hex.DecodeString(fields[0])
+	if err != nil || len(expected) != sha256.Size {
+		return true, false, fmt.Errorf("invalid SHA-256 digest %q", fields[0])
 	}
 	got, err := sha256File(finalPath)
 	if err != nil {
-		return false
+		return true, false, err
 	}
-	return strings.EqualFold(got, fields[0])
+	return true, strings.EqualFold(got, fields[0]), nil
 }
 
 // sha256File returns the lowercase hex-encoded SHA-256 digest of the file at path.
