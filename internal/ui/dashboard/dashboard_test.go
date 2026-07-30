@@ -112,6 +112,30 @@ func TestDashboardShowsPartialScrapeWarningAndContinues(t *testing.T) {
 	}
 }
 
+func TestDashboardRejectsEscapingAlbumSlug(t *testing.T) {
+	items := []model.MediaItem{
+		{URL: "https://example.com/a", Title: "a"},
+		{URL: "https://example.com/b", Title: "b"},
+	}
+	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 1)}
+	d := New(instantItems(items), fd, t.TempDir(), "test")
+	d.SetAlbumSlug("../../escape")
+
+	_, cmd := d.Update(scrapeResultMsg{items: items})
+
+	if cmd != nil {
+		t.Fatal("unsafe album slug started download commands")
+	}
+	if d.phase != phaseDone || !strings.Contains(d.loadingErr, "unsafe path component") {
+		t.Fatalf("unsafe album slug not rejected: phase=%v error=%q", d.phase, d.loadingErr)
+	}
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+	if len(fd.calls) != 0 {
+		t.Fatalf("unsafe album slug started %d downloads", len(fd.calls))
+	}
+}
+
 func TestDashboardQuit(t *testing.T) {
 	d := New(instantItems(nil), nil, t.TempDir(), "test")
 

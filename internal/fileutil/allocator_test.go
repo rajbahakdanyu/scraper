@@ -1,6 +1,9 @@
 package fileutil
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 func TestPathAllocatorAddsSuffixForCollisions(t *testing.T) {
 	allocator := NewPathAllocator()
@@ -22,5 +25,25 @@ func TestPathAllocatorReturnsSamePathToSameOwner(t *testing.T) {
 	second := allocator.Claim("/tmp/video.mp4", "item-1")
 	if second != first {
 		t.Fatalf("same owner received %q then %q", first, second)
+	}
+}
+
+func TestSafeJoinRejectsTraversal(t *testing.T) {
+	for _, component := range []string{"..", "../escape", `..\escape`, "/absolute"} {
+		if _, err := SafeJoin(t.TempDir(), component); err == nil {
+			t.Errorf("SafeJoin accepted %q", component)
+		}
+	}
+}
+
+func TestSafeJoinReturnsContainedAbsolutePath(t *testing.T) {
+	root := t.TempDir()
+	got, err := SafeJoin(root, "album-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(root, "album-123")
+	if got != want {
+		t.Fatalf("SafeJoin = %q, want %q", got, want)
 	}
 }

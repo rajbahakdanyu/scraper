@@ -4,7 +4,6 @@ package dashboard
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -14,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 	"github.com/rajbahakdanyu/scraper/internal/model"
 	"github.com/rajbahakdanyu/scraper/internal/ui/styles"
 )
@@ -240,8 +240,20 @@ func (d *Dashboard) handleScrapeResult(msg scrapeResultMsg) (tea.Model, tea.Cmd)
 
 	// Album (multiple files): create a subfolder from the URL slug
 	if len(msg.items) > 1 && d.albumSlug != "" {
-		d.dest = filepath.Join(d.dest, d.albumSlug)
-		os.MkdirAll(d.dest, 0755)
+		albumDest, err := fileutil.SafeJoin(d.dest, d.albumSlug)
+		if err != nil {
+			d.states = nil
+			d.loadingErr = err.Error()
+			d.phase = phaseDone
+			return d, nil
+		}
+		if err := os.MkdirAll(albumDest, 0755); err != nil {
+			d.states = nil
+			d.loadingErr = fmt.Sprintf("create album directory: %v", err)
+			d.phase = phaseDone
+			return d, nil
+		}
+		d.dest = albumDest
 	}
 
 	h := len(msg.items)

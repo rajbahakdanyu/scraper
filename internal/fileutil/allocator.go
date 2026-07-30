@@ -7,6 +7,30 @@ import (
 	"sync"
 )
 
+func SafeJoin(root, component string) (string, error) {
+	if component == "" || component == "." || component == ".." || filepath.IsAbs(component) ||
+		strings.ContainsAny(component, `/\\`) {
+		return "", fmt.Errorf("unsafe path component %q", component)
+	}
+
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	targetAbs, err := filepath.Abs(filepath.Join(rootAbs, component))
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(rootAbs, targetAbs)
+	if err != nil {
+		return "", err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path %q escapes output directory", component)
+	}
+	return targetAbs, nil
+}
+
 // PathAllocator assigns collision-free paths within one download run.
 type PathAllocator struct {
 	mu      sync.Mutex
