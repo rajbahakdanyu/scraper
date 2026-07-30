@@ -12,9 +12,9 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
 
@@ -41,13 +41,15 @@ jobs:
       - name: Compress binaries
         run: |
           cd dist
-          for f in *; do
+          sha256sum scraper-* > checksums.txt
+          for f in scraper-*; do
             tar -czf "${f}.tar.gz" "$f"
           done
 
       - name: Create release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           generate_release_notes: true
           files: |
             dist/*.tar.gz
+            dist/checksums.txt
