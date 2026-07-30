@@ -18,6 +18,12 @@ import (
 	"github.com/rajbahakdanyu/scraper/internal/model"
 )
 
+func newTestDownloader(concurrency int, timeout time.Duration, userAgent string) *Downloader {
+	dl := NewDownloaderWithConfig(concurrency, timeout, userAgent)
+	dl.client = &http.Client{}
+	return dl
+}
+
 func TestDownload(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", "100")
@@ -26,7 +32,7 @@ func TestDownload(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	dl := NewDownloaderWithConfig(5, 0, "")
+	dl := newTestDownloader(5, 0, "")
 	item := model.MediaItem{URL: ts.URL, Title: "test_video"}
 
 	dest := t.TempDir()
@@ -64,7 +70,7 @@ func TestDownloadRetry(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	dl := NewDownloaderWithConfig(1, 0, "")
+	dl := newTestDownloader(1, 0, "")
 	item := model.MediaItem{URL: ts.URL, Title: "retry_test"}
 
 	err := dl.Download(item, t.TempDir())
@@ -82,7 +88,7 @@ func TestDownloadAllFail(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	dl := NewDownloaderWithConfig(1, 0, "")
+	dl := newTestDownloader(1, 0, "")
 	item := model.MediaItem{URL: ts.URL, Title: "fail_test"}
 
 	err := dl.Download(item, t.TempDir())
@@ -97,7 +103,7 @@ func TestCancel(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	dl := NewDownloaderWithConfig(1, 0, "")
+	dl := newTestDownloader(1, 0, "")
 	item := model.MediaItem{URL: ts.URL, Title: "cancel_test"}
 
 	go func() {
@@ -127,7 +133,7 @@ func TestCancel(t *testing.T) {
 }
 
 func TestNewDownloaderWithConfig(t *testing.T) {
-	dl := NewDownloaderWithConfig(3, 10*time.Second, "CustomAgent/2.0")
+	dl := newTestDownloader(3, 10*time.Second, "CustomAgent/2.0")
 	if dl.userAgent != "CustomAgent/2.0" {
 		t.Errorf("expected CustomAgent/2.0, got %s", dl.userAgent)
 	}
@@ -137,7 +143,7 @@ func TestNewDownloaderWithConfig(t *testing.T) {
 }
 
 func TestNewRequestError(t *testing.T) {
-	dl := NewDownloaderWithConfig(1, 0, "")
+	dl := newTestDownloader(1, 0, "")
 	item := model.MediaItem{URL: "://bad-url", Title: "bad"}
 
 	err := dl.Download(item, t.TempDir())
@@ -167,7 +173,7 @@ func TestDownloadResumesFromPartialFile(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	dl := NewDownloaderWithConfig(1, 0, "")
+	dl := newTestDownloader(1, 0, "")
 	item := model.MediaItem{URL: ts.URL, Title: "resume.bin"}
 	dest := t.TempDir()
 	tempPath := filepath.Join(dest, "resume.bin.part")
@@ -214,7 +220,7 @@ func TestDownloadFallsBackWhenServerIgnoresRange(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	dl := NewDownloaderWithConfig(1, 0, "")
+	dl := newTestDownloader(1, 0, "")
 	item := model.MediaItem{URL: ts.URL, Title: "fallback.bin"}
 	dest := t.TempDir()
 	tempPath := filepath.Join(dest, "fallback.bin.part")
@@ -256,7 +262,7 @@ func TestDownloadRestartsAfter416(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	dl := NewDownloaderWithConfig(1, 0, "")
+	dl := newTestDownloader(1, 0, "")
 	item := model.MediaItem{URL: ts.URL, Title: "restart416.bin"}
 	dest := t.TempDir()
 	tempPath := filepath.Join(dest, "restart416.bin.part")
@@ -299,7 +305,7 @@ func TestDownloadRejectsMismatchedContentRange(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	dl := NewDownloaderWithConfig(1, 0, "")
+	dl := newTestDownloader(1, 0, "")
 	item := model.MediaItem{URL: ts.URL, Title: "mismatch.bin"}
 	dest := t.TempDir()
 	tempPath := filepath.Join(dest, "mismatch.bin.part")
@@ -342,7 +348,7 @@ func TestDownloadKeepsPartialFileAfterExhaustedRetries(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	dl := NewDownloaderWithConfig(1, 0, "")
+	dl := newTestDownloader(1, 0, "")
 	item := model.MediaItem{URL: ts.URL, Title: "partial_keep.bin"}
 	dest := t.TempDir()
 
@@ -374,7 +380,7 @@ func TestDownloadRemovesPartialFileOnNonRetryableFailure(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	dl := NewDownloaderWithConfig(1, 0, "")
+	dl := newTestDownloader(1, 0, "")
 	item := model.MediaItem{URL: ts.URL, Title: "partial_remove.bin"}
 	dest := t.TempDir()
 
@@ -395,7 +401,7 @@ func TestSetRateLimitThrottlesThroughput(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	dl := NewDownloaderWithConfig(1, 0, "")
+	dl := newTestDownloader(1, 0, "")
 	dl.SetRateLimit(20 * 1024) // 20KB/s
 	item := model.MediaItem{URL: ts.URL, Title: "throttled.bin"}
 
@@ -415,7 +421,7 @@ func TestSetRateLimitZeroRemovesCap(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	dl := NewDownloaderWithConfig(1, 0, "")
+	dl := newTestDownloader(1, 0, "")
 	dl.SetRateLimit(20 * 1024)
 	dl.SetRateLimit(0) // remove the cap before downloading
 	item := model.MediaItem{URL: ts.URL, Title: "unthrottled.bin"}
@@ -435,7 +441,7 @@ func TestDownloadWritesChecksumSidecar(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	dl := NewDownloaderWithConfig(1, 0, "")
+	dl := newTestDownloader(1, 0, "")
 	item := model.MediaItem{URL: ts.URL, Title: "sum.bin"}
 	dest := t.TempDir()
 
@@ -460,7 +466,7 @@ func TestDownloadSkipsChecksumSidecarWhenDisabled(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	dl := NewDownloaderWithConfig(1, 0, "")
+	dl := newTestDownloader(1, 0, "")
 	dl.SetSkipChecksums(true)
 	item := model.MediaItem{URL: ts.URL, Title: "nosum.bin"}
 	dest := t.TempDir()
@@ -481,7 +487,7 @@ func TestDownloadRedownloadsWhenChecksumMismatches(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	dl := NewDownloaderWithConfig(1, 0, "")
+	dl := newTestDownloader(1, 0, "")
 	item := model.MediaItem{URL: ts.URL, Title: "verify.bin"}
 	dest := t.TempDir()
 
@@ -518,7 +524,7 @@ func TestDownloadSkipsWhenChecksumMatches(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	dl := NewDownloaderWithConfig(1, 0, "")
+	dl := newTestDownloader(1, 0, "")
 	item := model.MediaItem{URL: ts.URL, Title: "cached.bin"}
 	dest := t.TempDir()
 
@@ -552,7 +558,7 @@ func TestConcurrentDownloadsWithSameTitleUseDistinctPaths(t *testing.T) {
 	secondServer := server("second")
 	defer secondServer.Close()
 
-	dl := NewDownloaderWithConfig(2, 0, "")
+	dl := newTestDownloader(2, 0, "")
 	dest := t.TempDir()
 	items := []model.MediaItem{
 		{ID: "first", URL: firstServer.URL, Title: "same.bin"},

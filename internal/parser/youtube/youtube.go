@@ -16,6 +16,7 @@ import (
 	ytdl "github.com/kkdai/youtube/v2"
 	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 	"github.com/rajbahakdanyu/scraper/internal/model"
+	"github.com/rajbahakdanyu/scraper/internal/netutil"
 )
 
 type Scraper struct {
@@ -26,7 +27,7 @@ type Scraper struct {
 // for real stream URL extraction and downloads.
 func NewYouTubeScraper() *Scraper {
 	return &Scraper{
-		video: &ytdl.Client{},
+		video: &ytdl.Client{HTTPClient: netutil.NewPublicClient(0)},
 	}
 }
 

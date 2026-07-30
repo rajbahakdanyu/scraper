@@ -10,6 +10,12 @@ import (
 	"github.com/rajbahakdanyu/scraper/internal/model"
 )
 
+func newTestGoonBoxScraper() *Scraper {
+	scraper := NewGoonBoxScraper()
+	scraper.client = &http.Client{}
+	return scraper
+}
+
 // TestParseGoonBoxAlbum exercises the real Parse() code path end to end
 // against an httptest server (via the injectable baseURL field), rather
 // than duplicating the HTTP call inline and discarding the result.
@@ -36,7 +42,7 @@ func TestParseGoonBoxAlbum(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	scraper := NewGoonBoxScraper()
+	scraper := newTestGoonBoxScraper()
 	scraper.baseURL = ts.URL
 
 	items, err := scraper.Parse(ts.URL + "/a/testid")
@@ -66,7 +72,7 @@ func TestParseGoonBoxAlbumNotFound(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	scraper := NewGoonBoxScraper()
+	scraper := newTestGoonBoxScraper()
 	scraper.baseURL = ts.URL
 
 	_, err := scraper.Parse(ts.URL + "/a/missing")
@@ -76,11 +82,29 @@ func TestParseGoonBoxAlbumNotFound(t *testing.T) {
 }
 
 func TestParseGoonBoxRejectsMalformedRequestURL(t *testing.T) {
-	scraper := NewGoonBoxScraper()
+	scraper := newTestGoonBoxScraper()
 	scraper.baseURL = "://bad-base-url"
 
 	if _, err := scraper.Parse("https://goonbox.cr/a/testid"); err == nil {
 		t.Fatal("expected malformed request URL error")
+	}
+}
+
+func TestParseGoonBoxRejectsPrivateImageURL(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"images": []map[string]interface{}{{
+				"original_url": "http://127.0.0.1/private.jpg", "original_filename": "private.jpg",
+			}},
+			"pagination": map[string]int{"current_page": 1, "last_page": 1},
+		})
+	}))
+	defer ts.Close()
+
+	scraper := newTestGoonBoxScraper()
+	scraper.baseURL = ts.URL
+	if _, err := scraper.Parse(ts.URL + "/a/private"); err == nil {
+		t.Fatal("expected private image URL to be rejected")
 	}
 }
 
@@ -113,7 +137,7 @@ func TestParseGoonBoxAlbumPagination(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	scraper := NewGoonBoxScraper()
+	scraper := newTestGoonBoxScraper()
 	scraper.baseURL = ts.URL
 
 	items, err := scraper.Parse(ts.URL + "/a/multi")

@@ -23,6 +23,7 @@ import (
 
 	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 	"github.com/rajbahakdanyu/scraper/internal/model"
+	"github.com/rajbahakdanyu/scraper/internal/netutil"
 )
 
 const (
@@ -67,9 +68,7 @@ func NewDownloaderWithConfig(concurrency int, timeout time.Duration, userAgent s
 		userAgent = "Scraper/1.0"
 	}
 	return &Downloader{
-		client: &http.Client{
-			Timeout: 0, // no total timeout — we use per-read deadline instead
-		},
+		client:      netutil.NewPublicClient(0),
 		concurrency: concurrency,
 		userAgent:   userAgent,
 		progress:    make(chan model.ProgressEvent, progressBufSize),

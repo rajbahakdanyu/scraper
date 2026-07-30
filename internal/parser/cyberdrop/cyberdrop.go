@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/rajbahakdanyu/scraper/internal/model"
+	"github.com/rajbahakdanyu/scraper/internal/netutil"
 )
 
 const apiBase = "https://api.cyberdrop.cr/api"
@@ -22,7 +23,7 @@ type Scraper struct {
 // NewCyberDropScraper creates a new CyberDrop scraper using the default HTTP client.
 func NewCyberDropScraper() *Scraper {
 	return &Scraper{
-		client:    &http.Client{Timeout: 30 * time.Second},
+		client:    netutil.NewPublicClient(30 * time.Second),
 		userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
 		baseURL:   apiBase,
 	}
@@ -80,6 +81,9 @@ func (s *Scraper) parseFile(slug string) ([]model.MediaItem, error) {
 	if info.AuthURL == "" {
 		return nil, fmt.Errorf("cyberdrop: no auth_url returned for %s", slug)
 	}
+	if err := netutil.NewPolicy(s.baseURL).ValidateURL(info.AuthURL); err != nil {
+		return nil, fmt.Errorf("cyberdrop: unsafe auth_url for %s: %w", slug, err)
+	}
 
 	// Fetch the signed download URL
 	authReq, err := http.NewRequest("GET", info.AuthURL, nil)
@@ -107,6 +111,9 @@ func (s *Scraper) parseFile(slug string) ([]model.MediaItem, error) {
 
 	if auth.URL == "" {
 		return nil, fmt.Errorf("cyberdrop: empty download URL for %s", slug)
+	}
+	if err := netutil.NewPolicy().ValidateURL(auth.URL); err != nil {
+		return nil, fmt.Errorf("cyberdrop: unsafe download URL for %s: %w", slug, err)
 	}
 
 	title := info.Name

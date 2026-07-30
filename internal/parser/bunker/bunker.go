@@ -14,6 +14,7 @@ import (
 	"github.com/PuerkitoBio/goquery"
 
 	"github.com/rajbahakdanyu/scraper/internal/model"
+	"github.com/rajbahakdanyu/scraper/internal/netutil"
 )
 
 type Scraper struct {
@@ -26,7 +27,7 @@ type Scraper struct {
 // NewBunkerScraper creates a new Bunker scraper using the default HTTP client.
 func NewBunkerScraper() *Scraper {
 	return &Scraper{
-		client:    &http.Client{Timeout: 30 * time.Second},
+		client:    netutil.NewPublicClient(30 * time.Second),
 		userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
 		baseURL:   "https://bunkr.cr",
 		signURL:   "https://glb-apisign.cdn.cr/sign",
@@ -139,9 +140,19 @@ func (s *Scraper) parseFilePage(fileURL string) (model.MediaItem, error) {
 	}
 
 	// Extract the dl.bunkr.cr origin for the API call
-	dlURL, _ := url.Parse(dlLink)
-	if dlURL == nil {
+	dlURL, err := url.Parse(dlLink)
+	if err != nil || dlURL == nil {
 		return model.MediaItem{}, fmt.Errorf("invalid dl.bunkr URL: %s", dlLink)
+	}
+	if !dlURL.IsAbs() {
+		base, parseErr := url.Parse(fileURL)
+		if parseErr != nil {
+			return model.MediaItem{}, parseErr
+		}
+		dlURL = base.ResolveReference(dlURL)
+	}
+	if err := netutil.NewPolicy(s.baseURL).ValidateURL(dlURL.String()); err != nil {
+		return model.MediaItem{}, fmt.Errorf("bunker: unsafe download API URL: %w", err)
 	}
 
 	if title == "" {
@@ -200,9 +211,12 @@ func (s *Scraper) getSignedMediaURL(dlURL *url.URL, fileID, originalName string)
 	}
 
 	rawURL := meta.MediaFiles + meta.Path
-	parsedURL, _ := url.Parse(rawURL)
-	if parsedURL == nil {
-		return rawURL, nil
+	if err := netutil.NewPolicy().ValidateURL(rawURL); err != nil {
+		return "", fmt.Errorf("bunker: unsafe media URL: %w", err)
+	}
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil {
+		return "", err
 	}
 
 	// Step 2: Sign the URL

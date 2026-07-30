@@ -13,6 +13,12 @@ import (
 	"github.com/rajbahakdanyu/scraper/internal/model"
 )
 
+func newTestFilesterScraper() *Scraper {
+	scraper := NewFilesterScraper()
+	scraper.client = &http.Client{}
+	return scraper
+}
+
 // downloadTokenHandler returns a deterministic token payload for whatever
 // file_slug is requested, optionally pointing "server" back at serverURL
 // (mirroring the real /v2/api/public/download response shape).
@@ -58,7 +64,7 @@ func TestParseFilesterFolder(t *testing.T) {
 	ts = httptest.NewServer(mux)
 	defer ts.Close()
 
-	scraper := NewFilesterScraper()
+	scraper := newTestFilesterScraper()
 	scraper.baseURL = ts.URL
 
 	items, err := scraper.Parse(ts.URL + "/f/testid")
@@ -75,7 +81,7 @@ func TestParseFilesterFolder(t *testing.T) {
 	if items[0].Size != 1000 {
 		t.Errorf("expected size 1000, got %d", items[0].Size)
 	}
-	wantURL := fmt.Sprintf("%s/v2/file-slugA?token=tok-slugA&download=true&n=video1.mp4", ts.URL)
+	wantURL := fmt.Sprintf("%s/v2/file-slugA?download=true&n=video1.mp4&token=tok-slugA", ts.URL)
 	if items[0].URL != wantURL {
 		t.Errorf("expected URL %s, got %s", wantURL, items[0].URL)
 	}
@@ -112,7 +118,7 @@ func TestParseFilesterFolderPagination(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	scraper := NewFilesterScraper()
+	scraper := newTestFilesterScraper()
 	scraper.baseURL = ts.URL
 	scraper.cdnURLs = []string{ts.URL}
 
@@ -164,7 +170,7 @@ func TestParseFilesterFolderRecoversFromTransientEmptyPage(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	scraper := NewFilesterScraper()
+	scraper := newTestFilesterScraper()
 	scraper.baseURL = ts.URL
 	scraper.cdnURLs = []string{ts.URL}
 
@@ -203,7 +209,7 @@ func TestParseFilesterFolderSkipsPermanentlyEmptyPage(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	scraper := NewFilesterScraper()
+	scraper := newTestFilesterScraper()
 	scraper.baseURL = ts.URL
 	scraper.cdnURLs = []string{ts.URL}
 
@@ -224,7 +230,7 @@ func TestParseFilesterSingleFile(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	scraper := NewFilesterScraper()
+	scraper := newTestFilesterScraper()
 	scraper.baseURL = ts.URL
 	scraper.cdnURLs = []string{ts.URL}
 
@@ -238,7 +244,7 @@ func TestParseFilesterSingleFile(t *testing.T) {
 	if items[0].Title != "Sw9EGcH-name.bin" {
 		t.Errorf("unexpected title: %s", items[0].Title)
 	}
-	wantURL := fmt.Sprintf("%s/v2/file-Sw9EGcH?token=tok-Sw9EGcH&download=true&n=Sw9EGcH-name.bin", ts.URL)
+	wantURL := fmt.Sprintf("%s/v2/file-Sw9EGcH?download=true&n=Sw9EGcH-name.bin&token=tok-Sw9EGcH", ts.URL)
 	if items[0].URL != wantURL {
 		t.Errorf("expected URL %s, got %s", wantURL, items[0].URL)
 	}
@@ -250,7 +256,7 @@ func TestParseFilesterFolderNotFound(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	scraper := NewFilesterScraper()
+	scraper := newTestFilesterScraper()
 	scraper.baseURL = ts.URL
 
 	if _, err := scraper.Parse(ts.URL + "/f/missing"); err == nil {
@@ -259,7 +265,7 @@ func TestParseFilesterFolderNotFound(t *testing.T) {
 }
 
 func TestParseFilesterUnrecognizedURL(t *testing.T) {
-	scraper := NewFilesterScraper()
+	scraper := newTestFilesterScraper()
 	if _, err := scraper.Parse("https://filester.sh/faq"); err == nil {
 		t.Error("expected error for unrecognized URL format")
 	}

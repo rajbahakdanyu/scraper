@@ -17,6 +17,7 @@ import (
 	"github.com/PuerkitoBio/goquery"
 
 	"github.com/rajbahakdanyu/scraper/internal/model"
+	"github.com/rajbahakdanyu/scraper/internal/netutil"
 )
 
 const defaultBaseURL = "https://filester.sh"
@@ -42,7 +43,7 @@ type Scraper struct {
 // NewFilesterScraper creates a new Filester scraper using the default HTTP client.
 func NewFilesterScraper() *Scraper {
 	return &Scraper{
-		client:    &http.Client{Timeout: 30 * time.Second},
+		client:    netutil.NewPublicClient(30 * time.Second),
 		userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
 		baseURL:   defaultBaseURL,
 		cdnURLs:   defaultCDNURLs,
@@ -358,6 +359,15 @@ func (s *Scraper) resolveFileOnce(slug, knownName string) (model.MediaItem, erro
 		}
 		server = s.cdnURLs[rand.Intn(len(s.cdnURLs))]
 	}
+	allowedURLs := append([]string{s.baseURL}, s.cdnURLs...)
+	if err := netutil.NewPolicy(allowedURLs...).ValidateURL(server); err != nil {
+		return model.MediaItem{}, fmt.Errorf("filester: unsafe CDN server for %s: %w", slug, err)
+	}
+	for _, segment := range strings.Split(tok.File, "/") {
+		if segment == "." || segment == ".." {
+			return model.MediaItem{}, fmt.Errorf("filester: unsafe CDN path for %s", slug)
+		}
+	}
 
 	// Prefer the filename already known from the folder listing (the
 	// authoritative original name shown in the UI) over the token
@@ -371,8 +381,20 @@ func (s *Scraper) resolveFileOnce(slug, knownName string) (model.MediaItem, erro
 		title = slug
 	}
 
-	downloadURL := fmt.Sprintf("%s/v2/%s?token=%s&download=true&n=%s",
-		server, tok.File, url.QueryEscape(tok.Token), url.QueryEscape(title))
+	downloadURL, err := url.JoinPath(server, "v2", tok.File)
+	if err != nil {
+		return model.MediaItem{}, err
+	}
+	parsedDownloadURL, err := url.Parse(downloadURL)
+	if err != nil {
+		return model.MediaItem{}, err
+	}
+	query := parsedDownloadURL.Query()
+	query.Set("token", tok.Token)
+	query.Set("download", "true")
+	query.Set("n", title)
+	parsedDownloadURL.RawQuery = query.Encode()
+	downloadURL = parsedDownloadURL.String()
 
 	return model.MediaItem{
 		URL:      downloadURL,

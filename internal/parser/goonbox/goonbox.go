@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/rajbahakdanyu/scraper/internal/model"
+	"github.com/rajbahakdanyu/scraper/internal/netutil"
 )
 
 const apiBase = "https://goonbox.cr/api"
@@ -21,7 +22,7 @@ type Scraper struct {
 
 func NewGoonBoxScraper() *Scraper {
 	return &Scraper{
-		client:    &http.Client{Timeout: 30 * time.Second},
+		client:    netutil.NewPublicClient(30 * time.Second),
 		userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
 		baseURL:   apiBase,
 	}
@@ -83,6 +84,9 @@ func (s *Scraper) Parse(albumURL string) ([]model.MediaItem, error) {
 		for _, img := range result.Images {
 			if img.OriginalURL == "" {
 				continue
+			}
+			if err := netutil.NewPolicy().ValidateURL(img.OriginalURL); err != nil {
+				return nil, fmt.Errorf("goonbox: unsafe image URL: %w", err)
 			}
 			title := img.OriginalFilename
 			if title == "" {

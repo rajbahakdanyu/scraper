@@ -12,6 +12,12 @@ import (
 	"github.com/rajbahakdanyu/scraper/internal/model"
 )
 
+func newTestBunkerScraper() *Scraper {
+	scraper := NewBunkerScraper()
+	scraper.client = &http.Client{}
+	return scraper
+}
+
 func TestParseBunkerAlbum(t *testing.T) {
 	mux := http.NewServeMux()
 
@@ -51,7 +57,7 @@ func TestParseBunkerAlbum(t *testing.T) {
 		})
 	})
 
-	scraper := NewBunkerScraper()
+	scraper := newTestBunkerScraper()
 	scraper.baseURL = ts.URL
 	scraper.signURL = ts.URL + "/sign"
 	items, err := scraper.Parse(ts.URL + "/a/test123")
@@ -81,7 +87,7 @@ func TestParseBunkerAlbumNoLinks(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	scraper := NewBunkerScraper()
+	scraper := newTestBunkerScraper()
 	scraper.baseURL = ts.URL
 	_, err := scraper.Parse(ts.URL + "/a/test")
 	if err == nil {

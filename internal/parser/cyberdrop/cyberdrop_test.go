@@ -10,6 +10,12 @@ import (
 	"github.com/rajbahakdanyu/scraper/internal/model"
 )
 
+func newTestCyberDropScraper() *Scraper {
+	scraper := NewCyberDropScraper()
+	scraper.client = &http.Client{}
+	return scraper
+}
+
 // TestParseFile exercises the real Parse() -> parseFile() code path end to
 // end against an httptest server (via the injectable baseURL field), rather
 // than duplicating the HTTP calls inline and discarding the result.
@@ -34,7 +40,7 @@ func TestParseFile(t *testing.T) {
 		})
 	})
 
-	scraper := NewCyberDropScraper()
+	scraper := newTestCyberDropScraper()
 	scraper.baseURL = ts.URL
 
 	items, err := scraper.Parse(ts.URL + "/f/T5LPyd5Sa9HkZ")
@@ -64,7 +70,7 @@ func TestParseFileNotFound(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	scraper := NewCyberDropScraper()
+	scraper := newTestCyberDropScraper()
 	scraper.baseURL = ts.URL
 
 	_, err := scraper.Parse(ts.URL + "/f/missing")
@@ -81,10 +87,25 @@ func TestParseFileRejectsMalformedAuthURL(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	scraper := NewCyberDropScraper()
+	scraper := newTestCyberDropScraper()
 	scraper.baseURL = ts.URL
 	if _, err := scraper.Parse(ts.URL + "/f/bad-auth"); err == nil {
 		t.Fatal("expected malformed auth_url error")
+	}
+}
+
+func TestParseFileRejectsPrivateAuthURL(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"name": "file.mp4", "auth_url": "http://169.254.169.254/latest/meta-data/",
+		})
+	}))
+	defer ts.Close()
+
+	scraper := newTestCyberDropScraper()
+	scraper.baseURL = ts.URL
+	if _, err := scraper.Parse(ts.URL + "/f/private-auth"); err == nil {
+		t.Fatal("expected private auth_url to be rejected")
 	}
 }
 
@@ -127,7 +148,7 @@ func TestParseAlbum(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]string{"url": "https://cdn.example.com/two.jpg"})
 	})
 
-	scraper := NewCyberDropScraper()
+	scraper := newTestCyberDropScraper()
 	scraper.baseURL = ts.URL
 
 	items, err := scraper.Parse(ts.URL + "/a/abc123")
