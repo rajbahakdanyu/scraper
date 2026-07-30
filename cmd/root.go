@@ -149,6 +149,20 @@ func extractSlug(rawURL string) string {
 	return last
 }
 
+// albumSlugFor picks the subfolder name for a multi-item download. YouTube
+// playlist URLs don't have a unique path segment (they're all just
+// "/playlist?list=..."), so extractSlug's generic "last path segment"
+// logic would put every playlist in the same "playlist" folder — use the
+// playlist ID instead for those.
+func albumSlugFor(siteName, targetURL string) string {
+	if siteName == "youtube" {
+		if playlistID := youtube.ExtractPlaylistID(targetURL); playlistID != "" {
+			return playlistID
+		}
+	}
+	return extractSlug(targetURL)
+}
+
 // siteDomains maps each supported scraper to the known domains it operates
 // under. Cyberlocker-style sites (Bunkr, CyberDrop, GoonBox) rotate through
 // many mirror domains over time, usually in response to takedowns, so this
@@ -199,18 +213,27 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 		return runDryRun(scraper, targetURL)
 	}
 
-	rateLimitBytesPerSec, err := config.ParseRateLimit(cfg.RateLimit)
-	if err != nil {
-		return err
+	var dl dashboard.Downloader
+	if siteName == "youtube" {
+		ytScraper, ok := scraper.(*youtube.Scraper)
+		if !ok {
+			return fmt.Errorf("youtube: unexpected scraper type %T", scraper)
+		}
+		dl = youtube.NewDownloader(ytScraper, cfg.ConcurrentDownloads)
+	} else {
+		rateLimitBytesPerSec, err := config.ParseRateLimit(cfg.RateLimit)
+		if err != nil {
+			return err
+		}
+		genericDl := downloader.NewDownloaderWithConfig(
+			cfg.ConcurrentDownloads,
+			cfg.Timeout,
+			cfg.UserAgent,
+		)
+		genericDl.SetRateLimit(rateLimitBytesPerSec)
+		genericDl.SetSkipChecksums(cfg.SkipChecksums)
+		dl = genericDl
 	}
-
-	dl := downloader.NewDownloaderWithConfig(
-		cfg.ConcurrentDownloads,
-		cfg.Timeout,
-		cfg.UserAgent,
-	)
-	dl.SetRateLimit(rateLimitBytesPerSec)
-	dl.SetSkipChecksums(cfg.SkipChecksums)
 
 	// The scraper function runs in a background goroutine.
 	scraperFn := func() ([]model.MediaItem, error) {
@@ -219,27 +242,13 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 
 	d := dashboard.New(scraperFn, dl, cfg.OutputDir, siteName)
 
-	// Pass the URL slug so the dashboard can create a subfolder for albums
-	d.SetAlbumSlug(extractSlug(targetURL))
+	// Pass the URL slug so the dashboard can create a subfolder for albums.
+	d.SetAlbumSlug(albumSlugFor(siteName, targetURL))
 
 	p := tea.NewProgram(d, tea.WithAltScreen())
 	d.SetSendFunc(func(msg tea.Msg) { p.Send(msg) })
 
-	// YouTube: wire up the quality-select downloader.
-	if siteName == "youtube" {
-		type ytDownloader interface {
-			DownloadVideoWithQuality(videoID, dest string, height int) error
-		}
-		if yd, ok := scraper.(ytDownloader); ok {
-			videoID := ""
-			if yt, ok2 := scraper.(interface{ ExtractVideoID(string) string }); ok2 {
-				videoID = yt.ExtractVideoID(targetURL)
-			}
-			d.SetYouTubeDownloader(yd, videoID)
-		}
-	}
-
-	_, err = p.Run()
+	_, err := p.Run()
 	return err
 }
 

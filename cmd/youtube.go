@@ -11,7 +11,7 @@ func newYouTubeCmd(opts globalOptions) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "youtube <url>",
-		Short: "Scrape and download a YouTube video",
+		Short: "Scrape and download a YouTube video or playlist",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			targetURL, err := resolveURL(args, urlFlag, "YouTube")
@@ -22,7 +22,7 @@ func newYouTubeCmd(opts globalOptions) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&urlFlag, "url", "u", "", "YouTube URL")
+	cmd.Flags().StringVarP(&urlFlag, "url", "u", "", "YouTube video or playlist URL")
 
 	return cmd
 }

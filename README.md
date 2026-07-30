@@ -7,7 +7,8 @@ launches instantly and shows live download progress.
 ## Requirements
 
 - Go 1.21 or newer
-- `ffmpeg` (for YouTube downloads above 360p — video+audio are muxed automatically)
+- `ffmpeg` (YouTube downloads whose video and audio aren't already combined
+  in one stream are muxed together automatically)
 
 ## Build
 
@@ -40,7 +41,6 @@ guesses wrong):
 ./scraper filester https://filester.sh/f/FOLDER_ID
 ./scraper filester https://filester.sh/d/FILE_SLUG
 ```
-
 Preview what would be downloaded — item count and total size — without
 downloading anything or launching the TUI:
 
@@ -50,9 +50,17 @@ downloading anything or launching the TUI:
 
 ### YouTube
 
-Shows a quality selector (144p–2160p). Pick a resolution and press Enter
-to download. For resolutions above 360p, video and audio streams are
-downloaded separately and muxed with ffmpeg.
+Works on both a single video URL and a playlist URL (anything with a
+`list=` query parameter downloads every video in the playlist):
+
+```bash
+./scraper youtube https://youtu.be/VIDEO_ID
+./scraper youtube "https://www.youtube.com/playlist?list=PLAYLIST_ID"
+```
+
+Always downloads the highest-quality format available. If that format
+doesn't already include audio, the best available audio track is
+downloaded separately and muxed in with ffmpeg.
 
 ### Albums (Bunker, GoonBox, CyberDrop, Filester)
 
@@ -86,9 +94,8 @@ directly to the output directory.
 
 | Key             | Action                           |
 |-----------------|-----------------------------------|
-| `↑/k`, `↓/j`    | Navigate / select quality        |
-| `enter`         | Start download (YouTube)         |
-| `c`             | Cancel the selected item (batch downloads) |
+| `↑/k`, `↓/j`    | Navigate the item list           |
+| `c`             | Cancel the selected item          |
 | `q`, `ctrl+c`   | Quit                              |
 
 ## Configuration
@@ -118,7 +125,7 @@ downloads, not each one individually.
 
 | Site      | URL format                          | Notes                                |
 |-----------|-------------------------------------|--------------------------------------|
-| YouTube   | `youtu.be/ID` or `youtube.com/watch?v=ID` | Quality selector + ffmpeg muxing |
+| YouTube   | `youtu.be/ID`, `youtube.com/watch?v=ID`, or a `playlist?list=ID` URL | Always highest quality, auto-mux |
 | CyberDrop | `cyberdrop.cr/f/SLUG` or `/a/SLUG` | API-based, signed CDN URLs           |
 | Bunker    | `bunkr.cr/a/ALBUM_ID`              | API + token signing, parallel fetch  |
 | GoonBox   | `goonbox.cr/a/ALBUM_ID`            | JSON API, paginated albums           |

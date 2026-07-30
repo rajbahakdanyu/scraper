@@ -231,3 +231,46 @@ func TestRunDryRunReportsUnknownSizes(t *testing.T) {
 		t.Errorf("expected the summary to count 1 unknown-size item, got: %q", out)
 	}
 }
+
+func TestAlbumSlugForYouTubePlaylistUsesPlaylistID(t *testing.T) {
+	tests := []struct {
+		name     string
+		siteName string
+		url      string
+		want     string
+	}{
+		{
+			name:     "youtube playlist uses the playlist ID, not the generic slug",
+			siteName: "youtube",
+			url:      "https://www.youtube.com/playlist?list=PLxyz123",
+			want:     "PLxyz123",
+		},
+		{
+			name:     "youtube video with no playlist falls back to the generic slug",
+			siteName: "youtube",
+			url:      "https://www.youtube.com/watch?v=abc123",
+			want:     "watch",
+		},
+		{
+			name:     "non-youtube sites always use the generic slug",
+			siteName: "cyberdrop",
+			url:      "https://cyberdrop.cr/a/ALBUM123",
+			want:     "ALBUM123",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := albumSlugFor(tt.siteName, tt.url); got != tt.want {
+				t.Errorf("albumSlugFor(%q, %q) = %q, want %q", tt.siteName, tt.url, got, tt.want)
+			}
+		})
+	}
+
+	// The bug this guards against: two different playlists must not
+	// collide into the same subfolder.
+	slugA := albumSlugFor("youtube", "https://www.youtube.com/playlist?list=PLaaa")
+	slugB := albumSlugFor("youtube", "https://www.youtube.com/playlist?list=PLbbb")
+	if slugA == slugB {
+		t.Errorf("expected different playlists to get different slugs, both got %q", slugA)
+	}
+}

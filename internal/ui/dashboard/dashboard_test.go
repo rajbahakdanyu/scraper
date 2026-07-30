@@ -6,7 +6,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -64,19 +63,23 @@ func TestDashboardLoadingThenBatch(t *testing.T) {
 	}
 }
 
-func TestDashboardLoadingThenYouTubeSelect(t *testing.T) {
+func TestDashboardYouTubeUsesBatchFlow(t *testing.T) {
 	items := []model.MediaItem{
-		{URL: "https://example.com/360", Title: "Video [360p] (muxed)", Type: model.MediaTypeVideo},
-		{URL: "https://example.com/1080", Title: "Video [1080p] (video-only)", Type: model.MediaTypeVideo},
+		{URL: "https://www.youtube.com/watch?v=abc", Title: "Video One", Type: model.MediaTypeVideo},
+		{URL: "https://www.youtube.com/watch?v=def", Title: "Video Two", Type: model.MediaTypeVideo},
 	}
-	d := New(instantItems(items), nil, t.TempDir(), "youtube")
+	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 10)}
+	d := New(instantItems(items), fd, t.TempDir(), "youtube")
 	if d.phase != phaseLoading {
 		t.Errorf("expected phaseLoading, got %d", d.phase)
 	}
 
 	d.Update(scrapeResultMsg{items: items})
-	if d.phase != phaseSelect {
-		t.Errorf("expected phaseSelect after scrape result, got %d", d.phase)
+	if d.phase != phaseDownload {
+		t.Errorf("expected phaseDownload after scrape result (same as any other site), got %d", d.phase)
+	}
+	if len(d.states) != 2 {
+		t.Errorf("expected 2 states, got %d", len(d.states))
 	}
 }
 
@@ -136,92 +139,6 @@ func TestBatchAutoDownload(t *testing.T) {
 	defer fd.mu.Unlock()
 	if len(fd.calls) != 2 {
 		t.Fatalf("expected 2 download calls, got %d", len(fd.calls))
-	}
-}
-
-type fakeYTDownloader struct {
-	called bool
-	height int
-}
-
-func (f *fakeYTDownloader) DownloadVideoWithQuality(videoID, dest string, height int) error {
-	f.called = true
-	f.height = height
-	return nil
-}
-
-func TestYouTubeEnterTriggersDownload(t *testing.T) {
-	items := []model.MediaItem{
-		{URL: "https://example.com/360", Title: "Video [360p] (muxed)", Type: model.MediaTypeVideo},
-		{URL: "https://example.com/1080", Title: "Video [1080p] (video-only)", Type: model.MediaTypeVideo},
-	}
-	d := New(instantItems(items), nil, t.TempDir(), "youtube")
-	d.Update(scrapeResultMsg{items: items})
-
-	fyd := &fakeYTDownloader{}
-	d.SetYouTubeDownloader(fyd, "videoid123")
-
-	_, cmd := d.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	if cmd == nil {
-		t.Fatal("expected non-nil command from Enter")
-	}
-
-	msg := cmd()
-	doneMsg, ok := msg.(youtubeDoneMsg)
-	if !ok {
-		t.Fatalf("expected youtubeDoneMsg, got %T", msg)
-	}
-	d.Update(doneMsg)
-
-	if !fyd.called {
-		t.Error("expected DownloadVideoWithQuality to be called")
-	}
-	if fyd.height != 360 {
-		t.Errorf("expected height 360, got %d", fyd.height)
-	}
-	if d.phase != phaseDone {
-		t.Errorf("expected phaseDone, got %d", d.phase)
-	}
-}
-
-func TestYouTubeEnterBlockedDuringDownload(t *testing.T) {
-	items := []model.MediaItem{
-		{URL: "https://example.com/360", Title: "Video [360p] (muxed)", Type: model.MediaTypeVideo},
-	}
-	d := New(instantItems(items), nil, t.TempDir(), "youtube")
-	d.Update(scrapeResultMsg{items: items})
-
-	fyd := &fakeYTDownloader{}
-	d.SetYouTubeDownloader(fyd, "videoid123")
-
-	d.phase = phaseDownload
-	_, cmd := d.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	if cmd != nil {
-		t.Error("expected nil command during download")
-	}
-}
-
-func TestYouTubeProgressUpdates(t *testing.T) {
-	items := []model.MediaItem{
-		{URL: "https://example.com/1080", Title: "Video [1080p] (video-only)", Size: 1000, Type: model.MediaTypeVideo},
-	}
-	d := New(instantItems(items), nil, t.TempDir(), "youtube")
-	d.Update(scrapeResultMsg{items: items})
-	d.SetYouTubeDownloader(&fakeYTDownloader{}, "vid")
-	d.phase = phaseDownload
-	d.ytStarted = time.Now()
-
-	d.Update(progressMsg(model.ProgressEvent{
-		Bytes:  500,
-		Total:  1000,
-		Status: model.StatusDownloading,
-	}))
-
-	if d.ytBytes != 500 {
-		t.Errorf("expected ytBytes 500, got %d", d.ytBytes)
-	}
-	if d.ytTotal != 1000 {
-		t.Errorf("expected ytTotal 1000, got %d", d.ytTotal)
 	}
 }
 

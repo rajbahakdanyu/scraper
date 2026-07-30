@@ -5,22 +5,20 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	ytdl "github.com/kkdai/youtube/v2"
 	"github.com/user/scraper/internal/model"
 )
 
-// ProgressFunc is called with cumulative bytes downloaded.
-type ProgressFunc = func(bytes int64, total int64)
-
 type Scraper struct {
-	video    *ytdl.Client
-	progress func(int64, int64)
+	video *ytdl.Client
 }
 
 // NewYouTubeScraper creates a YouTube scraper using the kkdai/youtube library
@@ -31,33 +29,20 @@ func NewYouTubeScraper() *Scraper {
 	}
 }
 
-// Compile-time checks that Scraper satisfies the duck-typed interfaces that
-// cmd/root.go and internal/ui/dashboard rely on via runtime type assertion
-// (rather than a declared Go interface, since cmd depends on model.Scraper
-// generically and only needs these extra YouTube-specific methods for the
-// "youtube" site). If any of these signatures ever drift, the build breaks
-// here instead of the assertions silently failing at runtime.
-var (
-	_ interface {
-		DownloadVideoWithQuality(videoID, dest string, height int) error
-	} = (*Scraper)(nil)
-	_ interface{ ExtractVideoID(string) string }       = (*Scraper)(nil)
-	_ interface{ SetProgressFunc(func(int64, int64)) } = (*Scraper)(nil)
-)
-
-// SetProgressFunc sets a callback for download progress reporting.
-func (s *Scraper) SetProgressFunc(fn func(int64, int64)) {
-	s.progress = fn
-}
-
 func (s *Scraper) Name() string {
 	return "youtube"
 }
 
-// Parse extracts video metadata and returns one MediaItem per available
-// quality level (deduplicated by resolution). Each item's Title is labeled
-// with the quality (e.g. "Video Title [1080p]").
+// Parse returns one MediaItem per video: a single item for a plain video
+// URL, or one item per video in the playlist if the URL has a "list" query
+// parameter. Quality is resolved lazily at download time (see
+// selectBestFormats), not here, so parsing a large playlist doesn't have
+// to pre-resolve the formats of every video up front.
 func (s *Scraper) Parse(rawURL string) ([]model.MediaItem, error) {
+	if ExtractPlaylistID(rawURL) != "" {
+		return s.parsePlaylist(rawURL)
+	}
+
 	videoID := s.extractVideoID(rawURL)
 	if videoID == "" {
 		return nil, fmt.Errorf("youtube: could not extract video ID from URL")
@@ -73,75 +58,93 @@ func (s *Scraper) Parse(rawURL string) ([]model.MediaItem, error) {
 		title = videoID
 	}
 
-	// Group formats by resolution, pick best codec per resolution.
-	byHeight := map[int]ytdl.Format{}
-	for _, f := range video.Formats {
-		if f.Height == 0 {
+	return []model.MediaItem{{
+		URL:   videoWatchURL(videoID),
+		Title: title,
+		Size:  estimatedSize(video),
+		Type:  model.MediaTypeVideo,
+	}}, nil
+}
+
+// parsePlaylist returns one MediaItem per video in the playlist. Playlist
+// entries only carry ID/title/author metadata (per GetPlaylistContext's own
+// docs), not format info, so each item's Size is left at 0 (unknown) here;
+// it's known once the video is actually resolved at download time.
+func (s *Scraper) parsePlaylist(rawURL string) ([]model.MediaItem, error) {
+	playlist, err := s.video.GetPlaylistContext(context.Background(), rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("youtube: failed to fetch playlist info: %w", err)
+	}
+
+	items := make([]model.MediaItem, 0, len(playlist.Videos))
+	for _, entry := range playlist.Videos {
+		if entry == nil || entry.ID == "" {
 			continue
 		}
-		existing, ok := byHeight[f.Height]
-		if !ok || f.Bitrate > existing.Bitrate {
-			byHeight[f.Height] = f
+		title := entry.Title
+		if title == "" {
+			title = entry.ID
 		}
-	}
-
-	// Sort resolutions descending.
-	heights := make([]int, 0, len(byHeight))
-	for h := range byHeight {
-		heights = append(heights, h)
-	}
-	sort.Sort(sort.Reverse(sort.IntSlice(heights)))
-
-	if len(heights) == 0 {
-		return nil, fmt.Errorf("youtube: no video formats found for %s", videoID)
-	}
-
-	var items []model.MediaItem
-	for _, h := range heights {
-		f := byHeight[h]
-		streamURL, err := s.video.GetStreamURL(video, &f)
-		if err != nil {
-			continue
-		}
-		ext := "mp4"
-		if strings.Contains(f.MimeType, "webm") {
-			ext = "webm"
-		}
-		_ = ext
-		label := f.QualityLabel
-		if label == "" {
-			label = fmt.Sprintf("%dp", h)
-		}
-
-		note := "video-only (will mux audio)"
-		if f.AudioChannels > 0 {
-			note = "video+audio"
-		}
-
 		items = append(items, model.MediaItem{
-			URL:       streamURL,
-			Title:     fmt.Sprintf("%s [%s] (%s)", title, label, note),
-			Size:      f.ContentLength,
-			MimeType:  f.MimeType,
-			Type:      model.MediaTypeVideo,
-			Thumbnail: fmt.Sprintf("%d", f.ItagNo),
+			URL:   videoWatchURL(entry.ID),
+			Title: title,
+			Type:  model.MediaTypeVideo,
 		})
 	}
-
+	if len(items) == 0 {
+		return nil, fmt.Errorf("youtube: no downloadable videos found in playlist")
+	}
 	return items, nil
 }
 
-// DownloadVideo downloads a YouTube video at the given quality. For muxed
-// formats (itag 18, 360p), it downloads directly. For video-only formats,
-// it downloads video + audio separately and muxes with ffmpeg.
-func (s *Scraper) DownloadVideo(videoID, dest string) error {
-	return s.DownloadVideoWithQuality(videoID, dest, 0)
+// estimatedSize sums the content lengths of the formats selectBestFormats
+// would pick, for display before any download starts. 0 if unknown.
+func estimatedSize(video *ytdl.Video) int64 {
+	videoFmt, audioFmt := selectBestFormats(video)
+	var size int64
+	if videoFmt != nil {
+		size += videoFmt.ContentLength
+	}
+	if audioFmt != nil {
+		size += audioFmt.ContentLength
+	}
+	return size
 }
 
-// DownloadVideoWithQuality downloads a YouTube video at a specific height.
-// If height is 0, picks the best available.
-func (s *Scraper) DownloadVideoWithQuality(videoID, dest string, height int) error {
-	video, err := s.video.GetVideoContext(context.Background(), videoID)
+// selectBestFormats picks the highest-resolution video format available
+// (ties broken by bitrate) and, if that format doesn't already include
+// audio, the highest-bitrate audio-only format to mux with it.
+func selectBestFormats(video *ytdl.Video) (videoFmt, audioFmt *ytdl.Format) {
+	for i := range video.Formats {
+		f := &video.Formats[i]
+		if f.Height == 0 {
+			continue
+		}
+		if videoFmt == nil || f.Height > videoFmt.Height ||
+			(f.Height == videoFmt.Height && f.Bitrate > videoFmt.Bitrate) {
+			videoFmt = f
+		}
+	}
+	if videoFmt == nil || videoFmt.AudioChannels > 0 {
+		return videoFmt, nil
+	}
+	for i := range video.Formats {
+		f := &video.Formats[i]
+		if f.AudioChannels == 0 {
+			continue
+		}
+		if audioFmt == nil || f.Bitrate > audioFmt.Bitrate {
+			audioFmt = f
+		}
+	}
+	return videoFmt, audioFmt
+}
+
+// downloadBest resolves videoID's highest-quality formats and downloads
+// (muxing with ffmpeg if needed) the result to dest. onProgress, if
+// non-nil, is called with cumulative bytes read and the combined total.
+func (s *Scraper) downloadBest(ctx context.Context, videoID, dest string, onProgress func(bytes, total int64)) error {
+	video, err := s.video.GetVideoContext(ctx, videoID)
 	if err != nil {
 		return fmt.Errorf("youtube: failed to fetch video info: %w", err)
 	}
@@ -151,72 +154,28 @@ func (s *Scraper) DownloadVideoWithQuality(videoID, dest string, height int) err
 		title = videoID
 	}
 
-	// Pick video format for the requested quality.
-	var videoFormat *ytdl.Format
-	for i := range video.Formats {
-		f := &video.Formats[i]
-		if f.Height == 0 {
-			continue
-		}
-		if height > 0 && f.Height != height {
-			continue
-		}
-		if videoFormat == nil || f.Height > videoFormat.Height ||
-			(f.Height == videoFormat.Height && f.Bitrate > videoFormat.Bitrate) {
-			videoFormat = f
-		}
-	}
-	if videoFormat == nil {
-		return fmt.Errorf("youtube: no video format at %dp", height)
+	videoFmt, audioFmt := selectBestFormats(video)
+	if videoFmt == nil {
+		return fmt.Errorf("youtube: no video formats found for %s", videoID)
 	}
 
-	// If muxed (has audio), download directly.
-	if videoFormat.AudioChannels > 0 {
-		return s.downloadStreamDirect(video, videoFormat, title, dest)
+	if audioFmt == nil {
+		return s.downloadStreamDirect(ctx, video, videoFmt, title, dest, onProgress)
 	}
-
-	// Pick best audio format.
-	var audioFormat *ytdl.Format
-	for i := range video.Formats {
-		f := &video.Formats[i]
-		if f.AudioChannels == 0 {
-			continue
-		}
-		if audioFormat == nil || f.Bitrate > audioFormat.Bitrate {
-			audioFormat = f
-		}
-	}
-	if audioFormat == nil {
-		return s.downloadStreamDirect(video, videoFormat, title, dest)
-	}
-
-	return s.downloadAndMux(video, videoFormat, audioFormat, title, dest)
+	return s.downloadAndMux(ctx, video, videoFmt, audioFmt, title, dest, onProgress)
 }
 
-func (s *Scraper) downloadStreamDirect(video *ytdl.Video, format *ytdl.Format, title, dest string) error {
+func (s *Scraper) downloadStreamDirect(ctx context.Context, video *ytdl.Video, format *ytdl.Format, title, dest string, onProgress func(int64, int64)) error {
 	ext := "mp4"
 	if strings.Contains(format.MimeType, "webm") {
 		ext = "webm"
 	}
 	path := filepath.Join(dest, sanitizeFilename(title)+"."+ext)
 
-	stream, _, err := s.video.GetStream(video, format)
-	if err != nil {
-		return fmt.Errorf("youtube: failed to open stream: %w", err)
-	}
-	defer stream.Close()
-
-	out, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	_, err = io.Copy(out, stream)
-	return err
+	return s.downloadStreamToFileProgress(ctx, video, format, path, onProgress)
 }
 
-func (s *Scraper) downloadAndMux(video *ytdl.Video, videoFmt, audioFmt *ytdl.Format, title, dest string) error {
+func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFmt, audioFmt *ytdl.Format, title, dest string, onProgress func(int64, int64)) error {
 	videoExt := "mp4"
 	if strings.Contains(videoFmt.MimeType, "webm") {
 		videoExt = "webm"
@@ -247,26 +206,33 @@ func (s *Scraper) downloadAndMux(video *ytdl.Video, videoFmt, audioFmt *ytdl.For
 	combinedTotal := videoSize + audioSize
 
 	var videoRead, audioRead int64
+	report := func() {
+		if onProgress != nil {
+			onProgress(videoRead+audioRead, combinedTotal)
+		}
+	}
 
 	// Download video stream.
-	if err := s.downloadStreamToFileProgress(video, videoFmt, videoPath, func(n int64, total int64) {
+	if err := s.downloadStreamToFileProgress(ctx, video, videoFmt, videoPath, func(n, _ int64) {
 		videoRead = n
-		s.reportProgress(videoRead+audioRead, combinedTotal)
+		report()
 	}); err != nil {
 		return fmt.Errorf("youtube: failed to download video: %w", err)
 	}
 
 	// Download audio stream.
-	if err := s.downloadStreamToFileProgress(video, audioFmt, audioPath, func(n int64, total int64) {
+	if err := s.downloadStreamToFileProgress(ctx, video, audioFmt, audioPath, func(n, _ int64) {
 		audioRead = n
-		s.reportProgress(videoRead+audioRead, combinedTotal)
+		report()
 	}); err != nil {
 		return fmt.Errorf("youtube: failed to download audio: %w", err)
 	}
 
 	// Mux with ffmpeg — report as nearly complete while muxing.
-	s.reportProgress(combinedTotal-1, combinedTotal)
-	cmd := exec.Command("ffmpeg", "-y",
+	if onProgress != nil {
+		onProgress(combinedTotal-1, combinedTotal)
+	}
+	cmd := exec.CommandContext(ctx, "ffmpeg", "-y",
 		"-i", videoPath,
 		"-i", audioPath,
 		"-c:v", "copy",
@@ -280,18 +246,14 @@ func (s *Scraper) downloadAndMux(video *ytdl.Video, videoFmt, audioFmt *ytdl.For
 		return fmt.Errorf("youtube: ffmpeg mux failed: %w", err)
 	}
 
-	s.reportProgress(combinedTotal, combinedTotal)
+	if onProgress != nil {
+		onProgress(combinedTotal, combinedTotal)
+	}
 	return nil
 }
 
-func (s *Scraper) reportProgress(bytes, total int64) {
-	if s.progress != nil {
-		s.progress(bytes, total)
-	}
-}
-
-func (s *Scraper) downloadStreamToFileProgress(video *ytdl.Video, format *ytdl.Format, path string, onProgress func(int64, int64)) error {
-	stream, size, err := s.video.GetStream(video, format)
+func (s *Scraper) downloadStreamToFileProgress(ctx context.Context, video *ytdl.Video, format *ytdl.Format, path string, onProgress func(int64, int64)) error {
+	stream, size, err := s.video.GetStreamContext(ctx, video, format)
 	if err != nil {
 		return err
 	}
@@ -322,6 +284,9 @@ func (s *Scraper) downloadStreamToFileProgress(video *ytdl.Video, format *ytdl.F
 		if readErr != nil {
 			return readErr
 		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 	}
 	return nil
 }
@@ -346,6 +311,22 @@ func (s *Scraper) extractVideoID(rawURL string) string {
 		return strings.Split(parts[1], "?")[0]
 	}
 	return ""
+}
+
+// ExtractPlaylistID returns the "list" query parameter from rawURL, or ""
+// if there isn't one (a plain video URL, or an unparseable string).
+func ExtractPlaylistID(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	return u.Query().Get("list")
+}
+
+// videoWatchURL builds a canonical watch URL from a bare video ID, so
+// MediaItem.URL is always something extractVideoID can round-trip.
+func videoWatchURL(videoID string) string {
+	return "https://www.youtube.com/watch?v=" + videoID
 }
 
 // sanitizeFilename removes characters that are invalid in filenames. It also
@@ -376,4 +357,110 @@ func safeOutputPath(dest, title string) string {
 		return abs
 	}
 	return p
+}
+
+// --- Downloader ---
+
+const progressBufSize = 4096
+
+// Downloader adapts Scraper to the dashboard's Downloader interface (see
+// internal/ui/dashboard), so YouTube videos — whether from a single URL or
+// enumerated from a playlist — flow through the same batch download UI as
+// every other site. Each Download call resolves and fetches the
+// highest-quality format available for that item, muxing video+audio with
+// ffmpeg when they aren't already combined in one stream.
+type Downloader struct {
+	scraper   *Scraper
+	progress  chan model.ProgressEvent
+	mu        sync.Mutex
+	cancelMap map[string]context.CancelFunc
+	sem       chan struct{}
+}
+
+// NewDownloader creates a Downloader that resolves and downloads videos via
+// scraper, running at most concurrency downloads (and ffmpeg mux processes)
+// at once.
+func NewDownloader(scraper *Scraper, concurrency int) *Downloader {
+	if concurrency < 1 {
+		concurrency = 1
+	}
+	return &Downloader{
+		scraper:   scraper,
+		progress:  make(chan model.ProgressEvent, progressBufSize),
+		cancelMap: make(map[string]context.CancelFunc),
+		sem:       make(chan struct{}, concurrency),
+	}
+}
+
+// Compile-time check that Downloader satisfies the dashboard's Downloader
+// interface shape (declared inline rather than importing
+// internal/ui/dashboard, which would invert the dependency direction).
+var _ interface {
+	Download(item model.MediaItem, dest string) error
+	Cancel(item model.MediaItem)
+	Progress() <-chan model.ProgressEvent
+} = (*Downloader)(nil)
+
+func (d *Downloader) Download(item model.MediaItem, dest string) error {
+	d.sem <- struct{}{}
+	defer func() { <-d.sem }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	d.mu.Lock()
+	d.cancelMap[item.URL] = cancel
+	d.mu.Unlock()
+	defer func() {
+		d.mu.Lock()
+		delete(d.cancelMap, item.URL)
+		d.mu.Unlock()
+		cancel()
+	}()
+
+	d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusDownloading, Start: time.Now()})
+
+	videoID := d.scraper.ExtractVideoID(item.URL)
+	if videoID == "" {
+		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed})
+		return fmt.Errorf("youtube: could not extract video ID from %s", item.URL)
+	}
+
+	err := d.scraper.downloadBest(ctx, videoID, dest, func(bytes, total int64) {
+		d.sendProgress(model.ProgressEvent{Item: item, Bytes: bytes, Total: total, Status: model.StatusDownloading})
+	})
+
+	switch {
+	case err == nil:
+		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCompleted})
+		return nil
+	case ctx.Err() != nil:
+		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled})
+		return fmt.Errorf("download cancelled: %s", item.URL)
+	default:
+		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed})
+		return err
+	}
+}
+
+// Cancel cancels an active download for the given item, aborting an
+// in-flight stream fetch or ffmpeg mux right away rather than waiting for
+// it to finish.
+func (d *Downloader) Cancel(item model.MediaItem) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if cancel, ok := d.cancelMap[item.URL]; ok {
+		cancel()
+		delete(d.cancelMap, item.URL)
+	}
+}
+
+// Progress returns a read-only channel of download progress events.
+func (d *Downloader) Progress() <-chan model.ProgressEvent {
+	return d.progress
+}
+
+func (d *Downloader) sendProgress(evt model.ProgressEvent) {
+	select {
+	case d.progress <- evt:
+	default:
+	}
 }
