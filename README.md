@@ -8,7 +8,7 @@ launches instantly and shows live download progress.
 
 ## Requirements
 
-- Go 1.21 or newer
+- Go 1.26.5 or newer
 - `ffmpeg` (YouTube downloads whose video and audio aren't already combined
   in one stream are muxed together automatically)
 
