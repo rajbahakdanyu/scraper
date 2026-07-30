@@ -90,9 +90,18 @@ func (p *Policy) dialContext(dialer *net.Dialer) func(context.Context, string, s
 }
 
 func NewPublicClient(timeout time.Duration, allowedPrivateURLs ...string) *http.Client {
+	return newPublicClient(timeout, timeout, allowedPrivateURLs...)
+}
+
+func NewPublicStreamingClient(responseHeaderTimeout time.Duration, allowedPrivateURLs ...string) *http.Client {
+	return newPublicClient(0, responseHeaderTimeout, allowedPrivateURLs...)
+}
+
+func newPublicClient(timeout, responseHeaderTimeout time.Duration, allowedPrivateURLs ...string) *http.Client {
 	policy := NewPolicy(allowedPrivateURLs...)
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
+	transport.ResponseHeaderTimeout = responseHeaderTimeout
 	transport.DialContext = policy.dialContext(&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second})
 
 	return &http.Client{

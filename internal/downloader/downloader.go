@@ -70,7 +70,7 @@ func NewDownloaderWithConfig(concurrency int, timeout time.Duration, userAgent s
 		userAgent = "Scraper/1.0"
 	}
 	return &Downloader{
-		client:      netutil.NewPublicClient(0),
+		client:      netutil.NewPublicStreamingClient(timeout),
 		concurrency: concurrency,
 		userAgent:   userAgent,
 		progress:    make(chan model.ProgressEvent, progressBufSize),

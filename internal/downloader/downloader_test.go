@@ -3,6 +3,7 @@ package downloader
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/rajbahakdanyu/scraper/internal/model"
+	"github.com/rajbahakdanyu/scraper/internal/netutil"
 )
 
 func newTestDownloader(concurrency int, timeout time.Duration, userAgent string) *Downloader {
@@ -189,6 +191,29 @@ func TestCancelQueuedDownload(t *testing.T) {
 	close(releaseFirst)
 	if err := <-firstDone; err != nil {
 		t.Fatalf("first download failed: %v", err)
+	}
+}
+
+func TestDownloadOnceTimesOutWaitingForResponseHeaders(t *testing.T) {
+	started := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-r.Context().Done()
+	}))
+	defer ts.Close()
+
+	dl := NewDownloaderWithConfig(1, 50*time.Millisecond, "")
+	dl.client = netutil.NewPublicStreamingClient(50*time.Millisecond, ts.URL)
+	item := model.MediaItem{URL: ts.URL, Title: "headers.bin"}
+
+	start := time.Now()
+	err := dl.downloadOnce(context.Background(), item, filepath.Join(t.TempDir(), "headers.bin.part"))
+	<-started
+	if err == nil {
+		t.Fatal("expected response-header timeout")
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("response-header timeout took %v", elapsed)
 	}
 }
 
