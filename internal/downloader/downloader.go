@@ -39,7 +39,6 @@ const (
 // cancellation, retry, and atomic file writes.
 type Downloader struct {
 	client        *http.Client
-	concurrency   int
 	userAgent     string
 	progress      chan model.ProgressEvent
 	cancelMap     map[string]context.CancelFunc
@@ -47,7 +46,6 @@ type Downloader struct {
 	cancelled     map[string]struct{}
 	mu            sync.Mutex
 	sem           chan struct{}
-	readTimeout   time.Duration
 	limiter       *rate.Limiter
 	skipChecksums bool
 	paths         *fileutil.PathAllocator
@@ -65,16 +63,14 @@ func NewDownloaderWithConfig(concurrency int, timeout time.Duration, userAgent s
 		userAgent = "Scraper/1.0"
 	}
 	return &Downloader{
-		client:      netutil.NewPublicStreamingClient(timeout),
-		concurrency: concurrency,
-		userAgent:   userAgent,
-		progress:    make(chan model.ProgressEvent, progressBufSize),
-		cancelMap:   make(map[string]context.CancelFunc),
-		queued:      make(map[string]struct{}),
-		cancelled:   make(map[string]struct{}),
-		sem:         make(chan struct{}, concurrency),
-		readTimeout: timeout,
-		paths:       fileutil.NewPathAllocator(),
+		client:    netutil.NewPublicStreamingClient(timeout),
+		userAgent: userAgent,
+		progress:  make(chan model.ProgressEvent, progressBufSize),
+		cancelMap: make(map[string]context.CancelFunc),
+		queued:    make(map[string]struct{}),
+		cancelled: make(map[string]struct{}),
+		sem:       make(chan struct{}, concurrency),
+		paths:     fileutil.NewPathAllocator(),
 	}
 }
 
