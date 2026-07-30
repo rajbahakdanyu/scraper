@@ -6,24 +6,47 @@
 
   "agent": {
     "architect": {
-      "mode": "primary",
+      "mode": "all",
       "model": "opencode/kimi-k3",
-      "description": "High-level system design, architecture planning, and complex bug analysis.",
-      "prompt": "You are a senior principal architect. Focus on high-level system design, edge cases, performance, and code structure."
-    },
-    "claude": {
-      "mode": "primary",
-      "model": "openrouter/~anthropic/claude-sonnet-latest",
-      "description": "Emergency problem solver using Claude Sonnet when open-weight models get stuck."
+      "description": "High-level system design, multi-file architectural planning, edge-case evaluation, and complex bug root-cause analysis.",
+      "system": "You are a principal software architect. Analyze project requirements, evaluate structural edge cases, and output clear implementation blueprints before code is modified."
     },
     "explore": {
       "mode": "subagent",
       "model": "opencode/kimi-k2.7-code",
-      "description": "Fast codebase search, file reading, and running background tests.",
-      "tools": {
-        "edit": false,
-        "write": false
-      }
+      "description": "Fast read-only codebase search, file reading, pattern matching, and running background tests.",
+      "permissions": [
+        { "action": "edit", "resource": "*", "effect": "deny" },
+        { "action": "write", "resource": "*", "effect": "deny" }
+      ]
+    },
+    "reviewer": {
+      "mode": "subagent",
+      "model": "opencode/kimi-k2.7-code",
+      "description": "Reviews uncommitted code changes, verifies security regressions, and checks edge cases without modifying files.",
+      "permissions": [
+        { "action": "edit", "resource": "*", "effect": "deny" },
+        { "action": "write", "resource": "*", "effect": "deny" }
+      ]
+    },
+    "claude": {
+      "mode": "all",
+      "model": "openrouter/~anthropic/claude-sonnet-latest",
+      "description": "Emergency problem solver using Claude Sonnet via OpenRouter when open-weight models hit deadlocks or obscure framework bugs."
+    }
+  },
+
+  "command": {
+    "plan": {
+      "description": "Generate an architectural blueprint before editing files",
+      "agent": "architect",
+      "template": "Create an architectural implementation plan for: $ARGUMENTS.\nInclude impacted files, logic breakdowns, and potential edge cases."
+    },
+    "review": {
+      "description": "Review uncommitted git diffs",
+      "agent": "reviewer",
+      "subtask": true,
+      "template": "Here are the uncommitted changes:\n!`git diff`\n\nReview these diffs for correctness, security vulnerabilities, and missing test coverage."
     }
   }
 }
