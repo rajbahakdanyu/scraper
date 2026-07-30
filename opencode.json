@@ -1,6 +1,10 @@
 {
   "$schema": "https://opencode.ai/config.json",
 
+  "plugin": [
+    "superpowers@git+https://github.com/obra/superpowers.git"
+  ],
+
   "model": "opencode/deepseek-v4-pro",
   "small_model": "opencode/kimi-k2.7-code",
 
@@ -9,7 +13,7 @@
       "mode": "all",
       "model": "opencode/kimi-k3",
       "description": "High-level system design, multi-file architectural planning, edge-case evaluation, and complex bug root-cause analysis.",
-      "system": "You are a principal software architect. Analyze project requirements, evaluate structural edge cases, and output clear implementation blueprints before code is modified."
+      "prompt": "You are a principal software architect. Analyze project requirements, evaluate structural edge cases, and output clear implementation blueprints before code is modified."
     },
     "explore": {
       "mode": "subagent",
