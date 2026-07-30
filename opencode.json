@@ -4,17 +4,12 @@
   "model": "opencode/deepseek-v4-pro",
   "small_model": "opencode/kimi-k2.7-code",
 
-  "fallbacks": [
-    "opencode/deepseek-v4-flash",
-    "openrouter/~google/gemini-flash-latest"
-  ],
-
-  "agents": {
+  "agent": {
     "architect": {
       "mode": "primary",
       "model": "opencode/kimi-k3",
       "description": "High-level system design, architecture planning, and complex bug analysis.",
-      "system": "You are a senior principal architect. Focus on high-level system design, edge cases, performance, and code structure."
+      "prompt": "You are a senior principal architect. Focus on high-level system design, edge cases, performance, and code structure."
     },
     "claude": {
       "mode": "primary",
@@ -25,13 +20,10 @@
       "mode": "subagent",
       "model": "opencode/kimi-k2.7-code",
       "description": "Fast codebase search, file reading, and running background tests.",
-      "permissions": [
-        {
-          "action": "edit",
-          "resource": "*",
-          "effect": "deny"
-        }
-      ]
+      "tools": {
+        "edit": false,
+        "write": false
+      }
     }
   }
 }
