@@ -151,10 +151,12 @@ func (s *Scraper) parseAlbum(slug string) ([]model.MediaItem, error) {
 	}
 
 	var items []model.MediaItem
+	var resolveErrs []error
 	for _, f := range album.Files {
 		// Resolve each file's download URL
 		fileItems, err := s.parseFile(f.Slug)
 		if err != nil {
+			resolveErrs = append(resolveErrs, fmt.Errorf("file %s: %w", f.Slug, err))
 			continue
 		}
 		// Use album metadata for title/size if available
@@ -168,10 +170,10 @@ func (s *Scraper) parseAlbum(slug string) ([]model.MediaItem, error) {
 	}
 
 	if len(items) == 0 {
-		return nil, fmt.Errorf("cyberdrop: could not resolve any files in album %s", slug)
+		return nil, fmt.Errorf("cyberdrop: could not resolve any files in album %s: %w", slug, model.NewPartialError("cyberdrop album", resolveErrs))
 	}
 
-	return items, nil
+	return items, model.NewPartialError("cyberdrop album", resolveErrs)
 }
 
 // extractSlug gets the file or album slug from the URL, ignoring any query

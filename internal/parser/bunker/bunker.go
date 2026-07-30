@@ -93,10 +93,10 @@ func (s *Scraper) Parse(albumURL string) ([]model.MediaItem, error) {
 	}
 
 	if len(result) == 0 {
-		return nil, fmt.Errorf("bunker: could not extract any download URLs")
+		return nil, fmt.Errorf("bunker: could not extract any download URLs: %w", model.NewPartialError("bunker album", errs))
 	}
 
-	return result, nil
+	return result, model.NewPartialError("bunker album", errs)
 }
 
 // parseFilePage visits a /f/<id> page to get the dl.bunkr.cr download link,

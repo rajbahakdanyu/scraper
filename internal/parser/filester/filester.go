@@ -146,6 +146,7 @@ func backoffWithJitter(base time.Duration, attempt int) time.Duration {
 // aborting the rest of the scan.
 func (s *Scraper) parseFolder(id string) ([]model.MediaItem, error) {
 	var allEntries []folderEntry
+	var partialErrs []error
 	total := 1
 
 	for page := 1; page <= total; page++ {
@@ -166,6 +167,7 @@ func (s *Scraper) parseFolder(id string) ([]model.MediaItem, error) {
 			// Couldn't recover this specific page even after retries.
 			// We already know the real page count from page 1's total,
 			// so skip it rather than truncating everything after it.
+			partialErrs = append(partialErrs, fmt.Errorf("page %d: %w", page, err))
 			continue
 		}
 
@@ -204,12 +206,14 @@ func (s *Scraper) parseFolder(id string) ([]model.MediaItem, error) {
 	for i := range items {
 		if errs[i] == nil {
 			result = append(result, items[i])
+		} else {
+			partialErrs = append(partialErrs, fmt.Errorf("file %s: %w", allEntries[i].name, errs[i]))
 		}
 	}
 	if len(result) == 0 {
-		return nil, fmt.Errorf("filester: could not resolve any download URLs in folder %s", id)
+		return nil, fmt.Errorf("filester: could not resolve any download URLs in folder %s: %w", id, model.NewPartialError("filester folder", partialErrs))
 	}
-	return result, nil
+	return result, model.NewPartialError("filester folder", partialErrs)
 }
 
 // fetchFolderPage fetches one page of a folder listing. A genuine fetch

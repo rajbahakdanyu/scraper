@@ -226,6 +226,9 @@ func (d *Dashboard) handleScrapeResult(msg scrapeResultMsg) (tea.Model, tea.Cmd)
 		d.phase = phaseDone
 		return d, nil
 	}
+	if msg.err != nil {
+		d.status = "warning: " + msg.err.Error()
+	}
 
 	d.states = make([]itemState, len(msg.items))
 	for i, it := range msg.items {

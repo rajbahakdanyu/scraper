@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"strings"
 	"time"
 )
@@ -46,6 +47,32 @@ func (m MediaItem) Key() string {
 type Scraper interface {
 	Name() string                          // Returns the logical name of the scraper
 	Parse(url string) ([]MediaItem, error) // Parses the URL and extracts media items
+}
+
+type PartialError struct {
+	Operation string
+	Errors    []error
+}
+
+func NewPartialError(operation string, errs []error) error {
+	filtered := make([]error, 0, len(errs))
+	for _, err := range errs {
+		if err != nil {
+			filtered = append(filtered, err)
+		}
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return &PartialError{Operation: operation, Errors: filtered}
+}
+
+func (e *PartialError) Error() string {
+	return fmt.Sprintf("%s incomplete: %d operation(s) failed; first error: %v", e.Operation, len(e.Errors), e.Errors[0])
+}
+
+func (e *PartialError) Unwrap() []error {
+	return e.Errors
 }
 
 // ProgressEvent carries progress information for tracking downloads

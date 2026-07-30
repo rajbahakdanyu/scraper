@@ -97,6 +97,21 @@ func TestDashboardLoadingError(t *testing.T) {
 	}
 }
 
+func TestDashboardShowsPartialScrapeWarningAndContinues(t *testing.T) {
+	items := []model.MediaItem{{URL: "https://example.com/a", Title: "a"}}
+	d := New(instantItems(items), nil, t.TempDir(), "test")
+	partialErr := model.NewPartialError("test album", []error{errors.New("one item failed")})
+
+	d.Update(scrapeResultMsg{items: items, err: partialErr})
+
+	if d.phase != phaseDownload || len(d.states) != 1 {
+		t.Fatalf("partial result did not continue: phase=%v states=%d", d.phase, len(d.states))
+	}
+	if !strings.Contains(d.status, "warning:") || !strings.Contains(d.status, "one item failed") {
+		t.Fatalf("partial warning not surfaced: %q", d.status)
+	}
+}
+
 func TestDashboardQuit(t *testing.T) {
 	d := New(instantItems(nil), nil, t.TempDir(), "test")
 

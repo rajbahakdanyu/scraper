@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -26,6 +27,21 @@ func TestMediaItemFields(t *testing.T) {
 	}
 	if item.Type != MediaTypeVideo {
 		t.Errorf("unexpected type: %s", item.Type)
+	}
+}
+
+func TestPartialErrorFiltersNilErrors(t *testing.T) {
+	first := errors.New("first")
+	err := NewPartialError("album", []error{nil, first, nil})
+	var partial *PartialError
+	if !errors.As(err, &partial) {
+		t.Fatalf("expected PartialError, got %T", err)
+	}
+	if len(partial.Errors) != 1 || !errors.Is(partial, first) {
+		t.Fatalf("unexpected aggregate: %+v", partial)
+	}
+	if NewPartialError("album", []error{nil}) != nil {
+		t.Fatal("all-nil errors should not produce a PartialError")
 	}
 }
 

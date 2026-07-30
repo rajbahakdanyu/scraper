@@ -2,6 +2,7 @@ package filester
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -207,8 +208,9 @@ func TestParseFilesterFolderSkipsPermanentlyEmptyPage(t *testing.T) {
 	scraper.cdnURLs = []string{ts.URL}
 
 	items, err := scraper.Parse(ts.URL + "/f/partial")
-	if err != nil {
-		t.Fatalf("Parse failed: %v", err)
+	var partialErr *model.PartialError
+	if !errors.As(err, &partialErr) {
+		t.Fatalf("expected partial-result warning, got: %v", err)
 	}
 	if len(items) != 2 {
 		t.Fatalf("expected 2 items (page 3 still collected despite page 2 permanently failing), got %d", len(items))

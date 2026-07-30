@@ -296,8 +296,11 @@ func runDryRun(scraper model.Scraper, targetURL string) error {
 	fmt.Printf("Scraping %s...\n", targetURL)
 
 	items, err := scraper.Parse(targetURL)
-	if err != nil {
+	if err != nil && len(items) == 0 {
 		return err
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
 	}
 	if len(items) == 0 {
 		fmt.Println("No items found.")
