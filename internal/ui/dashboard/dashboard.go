@@ -248,7 +248,7 @@ func (d *Dashboard) handleScrapeResult(msg scrapeResultMsg) (tea.Model, tea.Cmd)
 			d.phase = phaseDone
 			return d, nil
 		}
-		if err := os.MkdirAll(albumDest, 0755); err != nil {
+		if err := os.MkdirAll(albumDest, 0750); err != nil {
 			d.states = nil
 			d.loadingErr = fmt.Sprintf("create album directory: %v", err)
 			d.phase = phaseDone

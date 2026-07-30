@@ -200,11 +200,11 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 		err := d.downloadOnce(ctx, item, tempPath)
 		if err == nil {
 			if err := os.Rename(tempPath, finalPath); err != nil {
-				os.Remove(tempPath)
-				os.Remove(resumePath)
+				return errors.Join(err, removeFiles(tempPath, resumePath))
+			}
+			if err := removeFiles(resumePath); err != nil {
 				return err
 			}
-			_ = os.Remove(resumePath)
 			if !d.skipChecksums {
 				if err := fileutil.WriteChecksum(finalPath); err != nil {
 					d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed})
@@ -237,18 +237,18 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 		return fmt.Errorf("download cancelled: %s", item.URL)
 	}
 
+	var cleanupErr error
 	var nre *nonRetryableError
 	if errors.As(lastErr, &nre) {
 		// Will never succeed no matter how many times it's retried, so
 		// there's nothing worth resuming — clean up the partial file.
-		os.Remove(tempPath)
-		os.Remove(resumePath)
+		cleanupErr = removeFiles(tempPath, resumePath)
 	}
 	// Otherwise tempPath is left in place: a later Download call for the
 	// same item resumes from it via a Range request instead of
 	// re-downloading everything from scratch.
 	d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed})
-	return fmt.Errorf("download failed after %d attempts: %w", maxRetries, lastErr)
+	return fmt.Errorf("download failed after %d attempts: %w", maxRetries, errors.Join(lastErr, cleanupErr))
 }
 
 // downloadOnce performs a single download attempt to tempPath. The request
@@ -300,17 +300,15 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, tem
 	case http.StatusPartialContent:
 		start, _, _, err := parseContentRange(resp.Header.Get("Content-Range"))
 		if existing == 0 || err != nil || start != existing || !resume.matches(resp) {
-			_ = os.Remove(tempPath)
-			_ = os.Remove(resumeMetadataPath(tempPath))
-			return fmt.Errorf("invalid partial response for %s; discarded stale partial", item.URL)
+			cleanupErr := removeFiles(tempPath, resumeMetadataPath(tempPath))
+			return errors.Join(fmt.Errorf("invalid partial response for %s; discarded stale partial", item.URL), cleanupErr)
 		}
 	case http.StatusRequestedRangeNotSatisfiable:
 		// Our recorded partial no longer lines up with the remote resource
 		// (e.g. it changed size) — discard it so the next retry attempt
 		// fetches the whole thing fresh.
-		os.Remove(tempPath)
-		os.Remove(resumeMetadataPath(tempPath))
-		return fmt.Errorf("HTTP %d for %s (stale partial download discarded)", resp.StatusCode, item.URL)
+		cleanupErr := removeFiles(tempPath, resumeMetadataPath(tempPath))
+		return errors.Join(fmt.Errorf("HTTP %d for %s (stale partial download discarded)", resp.StatusCode, item.URL), cleanupErr)
 	default:
 		err := fmt.Errorf("HTTP %d for %s", resp.StatusCode, item.URL)
 		if !isRetryableStatus(resp.StatusCode) {
@@ -333,17 +331,18 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, tem
 	} else {
 		flags |= os.O_TRUNC
 	}
-	out, err := os.OpenFile(tempPath, flags, 0644)
+	out, err := os.OpenFile(tempPath, flags, 0600)
 	if err != nil {
 		return err
 	}
 	if existing == 0 {
 		resume = metadataFromResponse(item.URL, resp)
 		if resume.validator() == "" {
-			_ = os.Remove(resumeMetadataPath(tempPath))
+			if err := removeFiles(resumeMetadataPath(tempPath)); err != nil {
+				return errors.Join(err, out.Close())
+			}
 		} else if err := writeResumeMetadata(tempPath, resume); err != nil {
-			out.Close()
-			return err
+			return errors.Join(err, out.Close())
 		}
 	}
 
@@ -531,6 +530,16 @@ func writeResumeMetadata(tempPath string, metadata resumeMetadata) error {
 		return err
 	}
 	return os.WriteFile(resumeMetadataPath(tempPath), data, 0600)
+}
+
+func removeFiles(paths ...string) error {
+	var errs []error
+	for _, path := range paths {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, fmt.Errorf("remove %s: %w", path, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // sanitizeFilename removes characters that are invalid in filenames. It also

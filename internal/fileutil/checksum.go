@@ -30,17 +30,14 @@ func WriteChecksum(path string) error {
 	}
 	tempName := temp.Name()
 	defer os.Remove(tempName)
-	if err := temp.Chmod(0644); err != nil {
-		temp.Close()
-		return err
+	if err := temp.Chmod(0600); err != nil {
+		return errors.Join(err, temp.Close())
 	}
 	if _, err := temp.WriteString(line); err != nil {
-		temp.Close()
-		return err
+		return errors.Join(err, temp.Close())
 	}
 	if err := temp.Sync(); err != nil {
-		temp.Close()
-		return err
+		return errors.Join(err, temp.Close())
 	}
 	if err := temp.Close(); err != nil {
 		return err

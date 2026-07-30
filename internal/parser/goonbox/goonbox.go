@@ -3,6 +3,7 @@ package goonbox
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -55,7 +56,9 @@ func (s *Scraper) Parse(albumURL string) ([]model.MediaItem, error) {
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			resp.Body.Close()
+			if err := resp.Body.Close(); err != nil {
+				return nil, fmt.Errorf("goonbox: close response body: %w", err)
+			}
 			return nil, fmt.Errorf("goonbox: HTTP %d for album %s page %d", resp.StatusCode, albumID, page)
 		}
 
@@ -76,10 +79,11 @@ func (s *Scraper) Parse(albumURL string) ([]model.MediaItem, error) {
 		}
 
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			resp.Body.Close()
-			return nil, err
+			return nil, errors.Join(err, resp.Body.Close())
 		}
-		resp.Body.Close()
+		if err := resp.Body.Close(); err != nil {
+			return nil, fmt.Errorf("goonbox: close response body: %w", err)
+		}
 
 		for _, img := range result.Images {
 			if img.OriginalURL == "" {

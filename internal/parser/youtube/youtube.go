@@ -322,7 +322,7 @@ func (s *Scraper) downloadStreamToFileProgress(ctx context.Context, video *ytdl.
 	}
 	defer stream.Close()
 
-	out, err := os.Create(path)
+	out, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
 		return err
 	}
