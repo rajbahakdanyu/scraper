@@ -3,7 +3,7 @@ package cmd
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/user/scraper/internal/parser/youtube"
+	"github.com/rajbahakdanyu/scraper/internal/parser/youtube"
 )
 
 func newYouTubeCmd(opts globalOptions) *cobra.Command {

@@ -1,5 +1,7 @@
 # Scraper CLI
 
+[![CI](https://github.com/rajbahakdanyu/scraper/actions/workflows/ci.yml/badge.svg)](https://github.com/rajbahakdanyu/scraper/actions/workflows/ci.yml)
+
 A Go-based CLI tool for scraping and downloading media from YouTube,
 CyberDrop, Bunker, GoonBox, and Filester — with a futuristic terminal UI that
 launches instantly and shows live download progress.
@@ -14,6 +16,12 @@ launches instantly and shows live download progress.
 
 ```bash
 go build -o scraper ./cmd/scraper
+```
+
+Or install directly:
+
+```bash
+go install github.com/rajbahakdanyu/scraper/cmd/scraper@latest
 ```
 
 ## Usage

@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/user/scraper/internal/model"
+	"github.com/rajbahakdanyu/scraper/internal/model"
 )
 
 // TestParseFile exercises the real Parse() -> parseFile() code path end to

@@ -3,7 +3,7 @@ package cmd
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/user/scraper/internal/parser/cyberdrop"
+	"github.com/rajbahakdanyu/scraper/internal/parser/cyberdrop"
 )
 
 func newCyberDropCmd(opts globalOptions) *cobra.Command {

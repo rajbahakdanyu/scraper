@@ -21,7 +21,7 @@ import (
 
 	"golang.org/x/time/rate"
 
-	"github.com/user/scraper/internal/model"
+	"github.com/rajbahakdanyu/scraper/internal/model"
 )
 
 const (

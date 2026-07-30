@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/user/scraper/internal/model"
+	"github.com/rajbahakdanyu/scraper/internal/model"
 )
 
 // downloadTokenHandler returns a deterministic token payload for whatever

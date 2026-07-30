@@ -1,4 +1,4 @@
-module github.com/user/scraper
+module github.com/rajbahakdanyu/scraper
 
 go 1.26.5
 

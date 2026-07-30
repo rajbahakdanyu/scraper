@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/user/scraper/internal/model"
+	"github.com/rajbahakdanyu/scraper/internal/model"
 )
 
 // fakeDryRunScraper is a minimal model.Scraper for exercising runDryRun

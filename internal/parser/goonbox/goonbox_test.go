@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/user/scraper/internal/model"
+	"github.com/rajbahakdanyu/scraper/internal/model"
 )
 
 // TestParseGoonBoxAlbum exercises the real Parse() code path end to end

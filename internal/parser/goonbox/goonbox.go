@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/user/scraper/internal/model"
+	"github.com/rajbahakdanyu/scraper/internal/model"
 )
 
 const apiBase = "https://goonbox.cr/api"

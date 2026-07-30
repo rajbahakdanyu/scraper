@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/user/scraper/internal/model"
+	"github.com/rajbahakdanyu/scraper/internal/model"
 )
 
 func TestDownload(t *testing.T) {

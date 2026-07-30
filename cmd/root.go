@@ -10,15 +10,15 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 
-	"github.com/user/scraper/internal/config"
-	"github.com/user/scraper/internal/downloader"
-	"github.com/user/scraper/internal/model"
-	"github.com/user/scraper/internal/parser/bunker"
-	"github.com/user/scraper/internal/parser/cyberdrop"
-	"github.com/user/scraper/internal/parser/filester"
-	"github.com/user/scraper/internal/parser/goonbox"
-	"github.com/user/scraper/internal/parser/youtube"
-	"github.com/user/scraper/internal/ui/dashboard"
+	"github.com/rajbahakdanyu/scraper/internal/config"
+	"github.com/rajbahakdanyu/scraper/internal/downloader"
+	"github.com/rajbahakdanyu/scraper/internal/model"
+	"github.com/rajbahakdanyu/scraper/internal/parser/bunker"
+	"github.com/rajbahakdanyu/scraper/internal/parser/cyberdrop"
+	"github.com/rajbahakdanyu/scraper/internal/parser/filester"
+	"github.com/rajbahakdanyu/scraper/internal/parser/goonbox"
+	"github.com/rajbahakdanyu/scraper/internal/parser/youtube"
+	"github.com/rajbahakdanyu/scraper/internal/ui/dashboard"
 )
 
 // globalOptions holds flags defined on the root command that are inherited

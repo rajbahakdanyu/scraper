@@ -8,7 +8,7 @@ import (
 
 	ytdl "github.com/kkdai/youtube/v2"
 
-	"github.com/user/scraper/internal/model"
+	"github.com/rajbahakdanyu/scraper/internal/model"
 )
 
 func TestExtractVideoID(t *testing.T) {

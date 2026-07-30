@@ -4,7 +4,7 @@ package cmd
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/user/scraper/internal/parser/filester"
+	"github.com/rajbahakdanyu/scraper/internal/parser/filester"
 )
 
 func newFilesterCmd(opts globalOptions) *cobra.Command {

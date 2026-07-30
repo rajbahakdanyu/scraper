@@ -16,7 +16,7 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 
-	"github.com/user/scraper/internal/model"
+	"github.com/rajbahakdanyu/scraper/internal/model"
 )
 
 const defaultBaseURL = "https://filester.sh"

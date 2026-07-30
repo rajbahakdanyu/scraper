@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/user/scraper/internal/model"
+	"github.com/rajbahakdanyu/scraper/internal/model"
 )
 
 func TestParseBunkerAlbum(t *testing.T) {

@@ -14,8 +14,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/user/scraper/internal/model"
-	"github.com/user/scraper/internal/ui/styles"
+	"github.com/rajbahakdanyu/scraper/internal/model"
+	"github.com/rajbahakdanyu/scraper/internal/ui/styles"
 )
 
 type Downloader interface {

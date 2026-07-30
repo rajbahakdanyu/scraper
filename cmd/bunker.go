@@ -3,7 +3,7 @@ package cmd
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/user/scraper/internal/parser/bunker"
+	"github.com/rajbahakdanyu/scraper/internal/parser/bunker"
 )
 
 func newBunkerCmd(opts globalOptions) *cobra.Command {
