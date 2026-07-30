@@ -115,6 +115,36 @@ func TestSelectBestFormatsPicksHighestResolution(t *testing.T) {
 	}
 }
 
+func TestSelectBestFormatsPrefersDefaultAudioLanguage(t *testing.T) {
+	defaultTrack := &struct {
+		DisplayName    string `json:"displayName"`
+		ID             string `json:"id"`
+		AudioIsDefault bool   `json:"audioIsDefault"`
+	}{DisplayName: "English", AudioIsDefault: true}
+	nonDefaultTrack := &struct {
+		DisplayName    string `json:"displayName"`
+		ID             string `json:"id"`
+		AudioIsDefault bool   `json:"audioIsDefault"`
+	}{DisplayName: "Spanish", AudioIsDefault: false}
+	video := &ytdl.Video{Formats: ytdl.FormatList{
+		{Height: 1080, Bitrate: 4000},
+		{Bitrate: 128, AudioChannels: 2, AudioTrack: defaultTrack},
+		{Bitrate: 256, AudioChannels: 2, AudioTrack: nonDefaultTrack},
+	}}
+
+	_, audioFmt := selectBestFormats(video)
+	if audioFmt == nil || audioFmt.AudioTrack == nil || !audioFmt.AudioTrack.AudioIsDefault {
+		t.Fatalf("selected non-default audio: %+v", audioFmt)
+	}
+}
+
+func TestFormatsForDownloadRejectsMuteVideo(t *testing.T) {
+	video := &ytdl.Video{ID: "mute", Formats: ytdl.FormatList{{Height: 1080, Bitrate: 4000}}}
+	if _, _, err := formatsForDownload(video); err == nil || !strings.Contains(err.Error(), "no audio format") {
+		t.Fatalf("expected no-audio error, got %v", err)
+	}
+}
+
 func TestSelectBestFormatsSkipsAudioWhenAlreadyMuxed(t *testing.T) {
 	video := &ytdl.Video{
 		Formats: ytdl.FormatList{
