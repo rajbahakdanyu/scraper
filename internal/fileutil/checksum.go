@@ -69,6 +69,7 @@ func VerifyChecksum(path string) (present, matches bool, err error) {
 }
 
 func sha256File(path string) (string, error) {
+	// #nosec G304 -- callers pass internally allocated download paths for local integrity checks.
 	file, err := os.Open(path)
 	if err != nil {
 		return "", err

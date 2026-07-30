@@ -331,6 +331,7 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, tem
 	} else {
 		flags |= os.O_TRUNC
 	}
+	// #nosec G304 -- tempPath is allocated beneath the configured output directory from a sanitized title.
 	out, err := os.OpenFile(tempPath, flags, 0600)
 	if err != nil {
 		return err
@@ -449,6 +450,7 @@ func (e *nonRetryableError) Unwrap() error { return e.err }
 // downloads retrying around the same time don't all retry at once.
 func backoffWithJitter(base time.Duration, attempt int) time.Duration {
 	d := base << uint(attempt)
+	// #nosec G404 -- retry jitter does not require cryptographic randomness.
 	jitter := time.Duration(rand.Int63n(int64(d)/3 + 1))
 	return d + jitter
 }

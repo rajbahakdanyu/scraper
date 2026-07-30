@@ -130,6 +130,7 @@ const (
 // instant and re-trigger whatever rate limiting caused the retry.
 func backoffWithJitter(base time.Duration, attempt int) time.Duration {
 	d := base << uint(attempt-1)
+	// #nosec G404 -- retry jitter does not require cryptographic randomness.
 	jitter := time.Duration(rand.Int63n(int64(d)/3 + 1))
 	return d + jitter
 }
@@ -357,6 +358,7 @@ func (s *Scraper) resolveFileOnce(slug, knownName string) (model.MediaItem, erro
 		if len(s.cdnURLs) == 0 {
 			return model.MediaItem{}, fmt.Errorf("filester: no CDN server available for %s", slug)
 		}
+		// #nosec G404 -- CDN load distribution is not a security decision.
 		server = s.cdnURLs[rand.Intn(len(s.cdnURLs))]
 	}
 	allowedURLs := append([]string{s.baseURL}, s.cdnURLs...)

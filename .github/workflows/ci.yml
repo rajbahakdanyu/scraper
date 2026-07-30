@@ -30,6 +30,9 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Security scan
+        run: go run github.com/securego/gosec/v2/cmd/gosec@v2.28.0 -quiet ./...
+
       - name: Build
         run: go build ./...
 

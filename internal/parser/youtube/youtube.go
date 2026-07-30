@@ -292,6 +292,7 @@ func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFm
 	if onProgress != nil {
 		onProgress(combinedTotal-1, combinedTotal)
 	}
+	// #nosec G204 -- arguments are passed directly without shell evaluation; paths are internally allocated.
 	cmd := exec.CommandContext(ctx, "ffmpeg", "-y",
 		"-i", videoPath,
 		"-i", audioPath,
@@ -322,6 +323,7 @@ func (s *Scraper) downloadStreamToFileProgress(ctx context.Context, video *ytdl.
 	}
 	defer stream.Close()
 
+	// #nosec G304 -- path is internally allocated under the configured output or private temp directory.
 	out, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
 		return err
