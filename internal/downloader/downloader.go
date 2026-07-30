@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,7 +15,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -135,6 +135,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 	}
 	finalPath := d.paths.Claim(filepath.Join(dest, filename), item.Key())
 	tempPath := finalPath + ".part"
+	resumePath := resumeMetadataPath(tempPath)
 
 	// Skip if the file already exists, is non-empty, and (when a checksum
 	// sidecar is present) still matches it.
@@ -174,8 +175,10 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 		if err == nil {
 			if err := os.Rename(tempPath, finalPath); err != nil {
 				os.Remove(tempPath)
+				os.Remove(resumePath)
 				return err
 			}
+			_ = os.Remove(resumePath)
 			if !d.skipChecksums {
 				// Best-effort: the download itself already succeeded, so a
 				// sidecar write failure (e.g. a momentary disk issue)
@@ -213,6 +216,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 		// Will never succeed no matter how many times it's retried, so
 		// there's nothing worth resuming — clean up the partial file.
 		os.Remove(tempPath)
+		os.Remove(resumePath)
 	}
 	// Otherwise tempPath is left in place: a later Download call for the
 	// same item resumes from it via a Range request instead of
@@ -230,8 +234,17 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 // back to a full re-download instead of corrupting the file.
 func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, tempPath string) error {
 	var existing int64
+	var resume resumeMetadata
 	if info, err := os.Stat(tempPath); err == nil {
 		existing = info.Size()
+	}
+	if existing > 0 {
+		metadata, err := readResumeMetadata(tempPath)
+		if err != nil || metadata.URL != item.URL || metadata.validator() == "" {
+			existing = 0
+		} else {
+			resume = metadata
+		}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "GET", item.URL, nil)
@@ -243,6 +256,7 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, tem
 	}
 	if existing > 0 {
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", existing))
+		req.Header.Set("If-Range", resume.validator())
 	}
 
 	resp, err := d.client.Do(req)
@@ -258,12 +272,18 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, tem
 		// full-content response, so start over from scratch.
 		existing = 0
 	case http.StatusPartialContent:
-		// Resuming from existing bytes, as requested.
+		start, _, _, err := parseContentRange(resp.Header.Get("Content-Range"))
+		if existing == 0 || err != nil || start != existing || !resume.matches(resp) {
+			_ = os.Remove(tempPath)
+			_ = os.Remove(resumeMetadataPath(tempPath))
+			return fmt.Errorf("invalid partial response for %s; discarded stale partial", item.URL)
+		}
 	case http.StatusRequestedRangeNotSatisfiable:
 		// Our recorded partial no longer lines up with the remote resource
 		// (e.g. it changed size) — discard it so the next retry attempt
 		// fetches the whole thing fresh.
 		os.Remove(tempPath)
+		os.Remove(resumeMetadataPath(tempPath))
 		return fmt.Errorf("HTTP %d for %s (stale partial download discarded)", resp.StatusCode, item.URL)
 	default:
 		err := fmt.Errorf("HTTP %d for %s", resp.StatusCode, item.URL)
@@ -277,7 +297,7 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, tem
 	if resp.ContentLength < 0 {
 		total = existing
 	}
-	if fromHeader := parseContentRangeTotal(resp.Header.Get("Content-Range")); fromHeader > 0 {
+	if _, _, fromHeader, err := parseContentRange(resp.Header.Get("Content-Range")); err == nil {
 		total = fromHeader
 	}
 
@@ -290,6 +310,15 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, tem
 	out, err := os.OpenFile(tempPath, flags, 0644)
 	if err != nil {
 		return err
+	}
+	if existing == 0 {
+		resume = metadataFromResponse(item.URL, resp)
+		if resume.validator() == "" {
+			_ = os.Remove(resumeMetadataPath(tempPath))
+		} else if err := writeResumeMetadata(tempPath, resume); err != nil {
+			out.Close()
+			return err
+		}
 	}
 
 	pr := &progressReader{
@@ -312,6 +341,15 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, tem
 	out.Close()
 	if err != nil {
 		return err
+	}
+	if total > 0 {
+		info, statErr := os.Stat(tempPath)
+		if statErr != nil {
+			return statErr
+		}
+		if info.Size() != total {
+			return fmt.Errorf("download size mismatch for %s: got %d, want %d", item.URL, info.Size(), total)
+		}
 	}
 
 	return nil
@@ -422,19 +460,70 @@ func isRetryableStatus(code int) bool {
 	}
 }
 
-// parseContentRangeTotal extracts the total resource size from a
-// "Content-Range: bytes start-end/total" response header, returning 0 if
-// the header is absent or malformed.
-func parseContentRangeTotal(headerVal string) int64 {
-	idx := strings.LastIndex(headerVal, "/")
-	if idx < 0 || idx == len(headerVal)-1 {
-		return 0
+func parseContentRange(headerVal string) (start, end, total int64, err error) {
+	if _, scanErr := fmt.Sscanf(headerVal, "bytes %d-%d/%d", &start, &end, &total); scanErr != nil {
+		return 0, 0, 0, scanErr
 	}
-	total, err := strconv.ParseInt(headerVal[idx+1:], 10, 64)
+	if start < 0 || end < start || total <= end {
+		return 0, 0, 0, fmt.Errorf("invalid Content-Range %q", headerVal)
+	}
+	return start, end, total, nil
+}
+
+type resumeMetadata struct {
+	URL          string `json:"url"`
+	ETag         string `json:"etag,omitempty"`
+	LastModified string `json:"last_modified,omitempty"`
+}
+
+func metadataFromResponse(rawURL string, resp *http.Response) resumeMetadata {
+	etag := resp.Header.Get("ETag")
+	if strings.HasPrefix(etag, "W/") {
+		etag = ""
+	}
+	return resumeMetadata{
+		URL:          rawURL,
+		ETag:         etag,
+		LastModified: resp.Header.Get("Last-Modified"),
+	}
+}
+
+func (m resumeMetadata) validator() string {
+	if m.ETag != "" {
+		return m.ETag
+	}
+	return m.LastModified
+}
+
+func (m resumeMetadata) matches(resp *http.Response) bool {
+	if m.ETag != "" {
+		return resp.Header.Get("ETag") == "" || resp.Header.Get("ETag") == m.ETag
+	}
+	return resp.Header.Get("Last-Modified") == "" || resp.Header.Get("Last-Modified") == m.LastModified
+}
+
+func resumeMetadataPath(tempPath string) string {
+	return tempPath + ".resume.json"
+}
+
+func readResumeMetadata(tempPath string) (resumeMetadata, error) {
+	data, err := os.ReadFile(resumeMetadataPath(tempPath))
 	if err != nil {
-		return 0
+		return resumeMetadata{}, err
 	}
-	return total
+	var metadata resumeMetadata
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return resumeMetadata{}, err
+	}
+	return metadata, nil
+}
+
+func writeResumeMetadata(tempPath string, metadata resumeMetadata) error {
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(resumeMetadataPath(tempPath), data, 0600)
 }
 
 // checksumSidecarPath returns the path of finalPath's companion checksum file.

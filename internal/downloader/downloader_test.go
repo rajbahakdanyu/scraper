@@ -153,11 +153,14 @@ func TestDownloadResumesFromPartialFile(t *testing.T) {
 	const full = "0123456789ABCDEFGHIJ"
 	var mu sync.Mutex
 	var sawRange string
+	var sawIfRange string
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		sawRange = r.Header.Get("Range")
+		sawIfRange = r.Header.Get("If-Range")
 		mu.Unlock()
+		w.Header().Set("ETag", `"v1"`)
 		w.Header().Set("Content-Range", "bytes 10-19/20")
 		w.WriteHeader(http.StatusPartialContent)
 		w.Write([]byte(full[10:]))
@@ -171,6 +174,9 @@ func TestDownloadResumesFromPartialFile(t *testing.T) {
 	if err := os.WriteFile(tempPath, []byte(full[:10]), 0644); err != nil {
 		t.Fatalf("failed to seed partial file: %v", err)
 	}
+	if err := writeResumeMetadata(tempPath, resumeMetadata{URL: ts.URL, ETag: `"v1"`}); err != nil {
+		t.Fatalf("failed to seed resume metadata: %v", err)
+	}
 
 	if err := dl.Download(item, dest); err != nil {
 		t.Fatalf("expected resumed download to succeed, got: %v", err)
@@ -181,6 +187,9 @@ func TestDownloadResumesFromPartialFile(t *testing.T) {
 	mu.Unlock()
 	if gotRange != "bytes=10-" {
 		t.Errorf("Range header = %q, want %q", gotRange, "bytes=10-")
+	}
+	if sawIfRange != `"v1"` {
+		t.Errorf("If-Range header = %q, want %q", sawIfRange, `"v1"`)
 	}
 
 	got, err := os.ReadFile(filepath.Join(dest, "resume.bin"))
@@ -194,9 +203,12 @@ func TestDownloadResumesFromPartialFile(t *testing.T) {
 
 func TestDownloadFallsBackWhenServerIgnoresRange(t *testing.T) {
 	const fresh = "HELLOWORLD"
+	var sawRange string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawRange = r.Header.Get("Range")
 		// Ignores any Range header and always returns the full content,
 		// simulating a server that doesn't support range requests.
+		w.Header().Set("ETag", `"new"`)
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(fresh))
 	}))
@@ -209,6 +221,9 @@ func TestDownloadFallsBackWhenServerIgnoresRange(t *testing.T) {
 	if err := os.WriteFile(tempPath, []byte("STALEGARBAGE"), 0644); err != nil {
 		t.Fatalf("failed to seed partial file: %v", err)
 	}
+	if err := writeResumeMetadata(tempPath, resumeMetadata{URL: ts.URL, ETag: `"old"`}); err != nil {
+		t.Fatalf("failed to seed resume metadata: %v", err)
+	}
 
 	if err := dl.Download(item, dest); err != nil {
 		t.Fatalf("expected download to succeed, got: %v", err)
@@ -220,6 +235,9 @@ func TestDownloadFallsBackWhenServerIgnoresRange(t *testing.T) {
 	}
 	if string(got) != fresh {
 		t.Errorf("final content = %q, want %q (stale partial bytes must be discarded, not prepended)", got, fresh)
+	}
+	if sawRange != "bytes=12-" {
+		t.Errorf("Range header = %q, want %q", sawRange, "bytes=12-")
 	}
 }
 
@@ -245,6 +263,9 @@ func TestDownloadRestartsAfter416(t *testing.T) {
 	if err := os.WriteFile(tempPath, []byte("stale"), 0644); err != nil {
 		t.Fatalf("failed to seed partial file: %v", err)
 	}
+	if err := writeResumeMetadata(tempPath, resumeMetadata{URL: ts.URL, ETag: `"v1"`}); err != nil {
+		t.Fatalf("failed to seed resume metadata: %v", err)
+	}
 
 	if err := dl.Download(item, dest); err != nil {
 		t.Fatalf("expected download to succeed after discarding a stale partial, got: %v", err)
@@ -259,6 +280,48 @@ func TestDownloadRestartsAfter416(t *testing.T) {
 	}
 	if string(gotContent) != fresh {
 		t.Errorf("final content = %q, want %q", gotContent, fresh)
+	}
+}
+
+func TestDownloadRejectsMismatchedContentRange(t *testing.T) {
+	const fresh = "0123456789ABCDEFGHIJ"
+	var requests int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		request := atomic.AddInt32(&requests, 1)
+		w.Header().Set("ETag", `"v1"`)
+		if request == 1 {
+			w.Header().Set("Content-Range", "bytes 0-9/20")
+			w.WriteHeader(http.StatusPartialContent)
+			_, _ = w.Write([]byte(fresh[:10]))
+			return
+		}
+		_, _ = w.Write([]byte(fresh))
+	}))
+	defer ts.Close()
+
+	dl := NewDownloaderWithConfig(1, 0, "")
+	item := model.MediaItem{URL: ts.URL, Title: "mismatch.bin"}
+	dest := t.TempDir()
+	tempPath := filepath.Join(dest, "mismatch.bin.part")
+	if err := os.WriteFile(tempPath, []byte(fresh[:10]), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeResumeMetadata(tempPath, resumeMetadata{URL: ts.URL, ETag: `"v1"`}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := dl.Download(item, dest); err != nil {
+		t.Fatalf("download failed after safe restart: %v", err)
+	}
+	if atomic.LoadInt32(&requests) != 2 {
+		t.Fatalf("requests = %d, want 2", requests)
+	}
+	got, err := os.ReadFile(filepath.Join(dest, "mismatch.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != fresh {
+		t.Fatalf("final content = %q, want %q", got, fresh)
 	}
 }
 
