@@ -48,6 +48,8 @@ type Downloader struct {
 	userAgent     string
 	progress      chan model.ProgressEvent
 	cancelMap     map[string]context.CancelFunc
+	queued        map[string]struct{}
+	cancelled     map[string]struct{}
 	mu            sync.Mutex
 	sem           chan struct{}
 	readTimeout   time.Duration
@@ -73,10 +75,18 @@ func NewDownloaderWithConfig(concurrency int, timeout time.Duration, userAgent s
 		userAgent:   userAgent,
 		progress:    make(chan model.ProgressEvent, progressBufSize),
 		cancelMap:   make(map[string]context.CancelFunc),
+		queued:      make(map[string]struct{}),
+		cancelled:   make(map[string]struct{}),
 		sem:         make(chan struct{}, concurrency),
 		readTimeout: timeout,
 		paths:       fileutil.NewPathAllocator(),
 	}
+}
+
+func (d *Downloader) Prepare(item model.MediaItem) {
+	d.mu.Lock()
+	d.queued[item.Key()] = struct{}{}
+	d.mu.Unlock()
 }
 
 // SetRateLimit caps the combined download speed across all concurrent
@@ -108,11 +118,16 @@ func (d *Downloader) SetSkipChecksums(skip bool) {
 // than deleted, so a later Download call for the same item resumes from
 // where it left off via an HTTP Range request instead of starting over.
 func (d *Downloader) Download(item model.MediaItem, dest string) error {
-	d.sem <- struct{}{}
-	defer func() { <-d.sem }()
-
 	ctx, cancel := context.WithCancel(context.Background())
 	d.mu.Lock()
+	delete(d.queued, item.Key())
+	if _, ok := d.cancelled[item.Key()]; ok {
+		delete(d.cancelled, item.Key())
+		d.mu.Unlock()
+		cancel()
+		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled})
+		return fmt.Errorf("download cancelled: %s", item.URL)
+	}
 	d.cancelMap[item.Key()] = cancel
 	d.mu.Unlock()
 	defer func() {
@@ -121,6 +136,14 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 		d.mu.Unlock()
 		cancel()
 	}()
+
+	select {
+	case d.sem <- struct{}{}:
+		defer func() { <-d.sem }()
+	case <-ctx.Done():
+		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled})
+		return fmt.Errorf("download cancelled: %s", item.URL)
+	}
 
 	filename := sanitizeFilename(item.Title)
 	if filename == "" {
@@ -412,6 +435,8 @@ func (d *Downloader) Cancel(item model.MediaItem) {
 	if cancel, ok := d.cancelMap[item.Key()]; ok {
 		cancel()
 		delete(d.cancelMap, item.Key())
+	} else if _, ok := d.queued[item.Key()]; ok {
+		d.cancelled[item.Key()] = struct{}{}
 	}
 }
 

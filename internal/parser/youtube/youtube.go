@@ -376,6 +376,8 @@ type Downloader struct {
 	progress  chan model.ProgressEvent
 	mu        sync.Mutex
 	cancelMap map[string]context.CancelFunc
+	queued    map[string]struct{}
+	cancelled map[string]struct{}
 	sem       chan struct{}
 	paths     *fileutil.PathAllocator
 }
@@ -391,6 +393,8 @@ func NewDownloader(scraper *Scraper, concurrency int) *Downloader {
 		scraper:   scraper,
 		progress:  make(chan model.ProgressEvent, progressBufSize),
 		cancelMap: make(map[string]context.CancelFunc),
+		queued:    make(map[string]struct{}),
+		cancelled: make(map[string]struct{}),
 		sem:       make(chan struct{}, concurrency),
 		paths:     fileutil.NewPathAllocator(),
 	}
@@ -400,17 +404,29 @@ func NewDownloader(scraper *Scraper, concurrency int) *Downloader {
 // interface shape (declared inline rather than importing
 // internal/ui/dashboard, which would invert the dependency direction).
 var _ interface {
+	Prepare(item model.MediaItem)
 	Download(item model.MediaItem, dest string) error
 	Cancel(item model.MediaItem)
 	Progress() <-chan model.ProgressEvent
 } = (*Downloader)(nil)
 
-func (d *Downloader) Download(item model.MediaItem, dest string) error {
-	d.sem <- struct{}{}
-	defer func() { <-d.sem }()
+func (d *Downloader) Prepare(item model.MediaItem) {
+	d.mu.Lock()
+	d.queued[item.Key()] = struct{}{}
+	d.mu.Unlock()
+}
 
+func (d *Downloader) Download(item model.MediaItem, dest string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	d.mu.Lock()
+	delete(d.queued, item.Key())
+	if _, ok := d.cancelled[item.Key()]; ok {
+		delete(d.cancelled, item.Key())
+		d.mu.Unlock()
+		cancel()
+		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled})
+		return fmt.Errorf("download cancelled: %s", item.URL)
+	}
 	d.cancelMap[item.Key()] = cancel
 	d.mu.Unlock()
 	defer func() {
@@ -419,6 +435,14 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 		d.mu.Unlock()
 		cancel()
 	}()
+
+	select {
+	case d.sem <- struct{}{}:
+		defer func() { <-d.sem }()
+	case <-ctx.Done():
+		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled})
+		return fmt.Errorf("download cancelled: %s", item.URL)
+	}
 
 	d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusDownloading, Start: time.Now()})
 
@@ -454,6 +478,8 @@ func (d *Downloader) Cancel(item model.MediaItem) {
 	if cancel, ok := d.cancelMap[item.Key()]; ok {
 		cancel()
 		delete(d.cancelMap, item.Key())
+	} else if _, ok := d.queued[item.Key()]; ok {
+		d.cancelled[item.Key()] = struct{}{}
 	}
 }
 

@@ -19,6 +19,7 @@ import (
 )
 
 type Downloader interface {
+	Prepare(item model.MediaItem)
 	Download(item model.MediaItem, dest string) error
 	Cancel(item model.MediaItem)
 	Progress() <-chan model.ProgressEvent
@@ -304,10 +305,12 @@ func (d *Dashboard) cancelSelected() {
 	if idx < 0 || idx >= len(d.states) {
 		return
 	}
-	if d.states[idx].status != model.StatusDownloading {
+	if d.states[idx].status != model.StatusPending && d.states[idx].status != model.StatusDownloading {
 		return
 	}
 	d.downloader.Cancel(d.states[idx].item)
+	d.states[idx].status = model.StatusCancelled
+	d.refreshRows()
 }
 
 func (d *Dashboard) startAllDownloads() tea.Cmd {
@@ -319,8 +322,7 @@ func (d *Dashboard) startAllDownloads() tea.Cmd {
 		if d.states[i].item.URL == "" {
 			continue
 		}
-		d.states[i].status = model.StatusDownloading
-		d.states[i].started = time.Now()
+		d.downloader.Prepare(d.states[i].item)
 		cmds = append(cmds, startDownload(d.downloader, d.states[i].item, d.dest))
 	}
 	d.refreshRows()
@@ -493,7 +495,7 @@ func (d *Dashboard) spinnerActive() bool {
 		return true
 	}
 	for _, st := range d.states {
-		if st.status == model.StatusDownloading {
+		if st.status == model.StatusPending || st.status == model.StatusDownloading {
 			return true
 		}
 	}

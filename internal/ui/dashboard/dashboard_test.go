@@ -21,6 +21,8 @@ type fakeDownloader struct {
 	cancelled []model.MediaItem
 }
 
+func (f *fakeDownloader) Prepare(item model.MediaItem) {}
+
 func (f *fakeDownloader) Download(item model.MediaItem, dest string) error {
 	f.mu.Lock()
 	f.calls = append(f.calls, item)
@@ -221,6 +223,21 @@ func TestCancelSelectedItem(t *testing.T) {
 	}
 	if fd.cancelled[0].URL != items[0].URL {
 		t.Errorf("expected first item cancelled, got %s", fd.cancelled[0].URL)
+	}
+}
+
+func TestCancelSelectedPendingItem(t *testing.T) {
+	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 1)}
+	items := []model.MediaItem{{URL: "https://example.com/a.mp4", Title: "a.mp4"}}
+	d := New(instantItems(items), fd, t.TempDir(), "test")
+	d.states = []itemState{{item: items[0], status: model.StatusPending}}
+
+	d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
+
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+	if len(fd.cancelled) != 1 || d.states[0].status != model.StatusCancelled {
+		t.Fatalf("pending cancel failed: calls=%d status=%v", len(fd.cancelled), d.states[0].status)
 	}
 }
 

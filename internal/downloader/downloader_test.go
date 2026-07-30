@@ -132,6 +132,66 @@ func TestCancel(t *testing.T) {
 	}
 }
 
+func TestCancelQueuedDownload(t *testing.T) {
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	var requests int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requests, 1)
+		if r.URL.Path == "/first" {
+			close(firstStarted)
+			<-releaseFirst
+		}
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer ts.Close()
+
+	dl := newTestDownloader(1, 0, "")
+	first := model.MediaItem{ID: "first", URL: ts.URL + "/first", Title: "first.bin"}
+	second := model.MediaItem{ID: "second", URL: ts.URL + "/second", Title: "second.bin"}
+	dest := t.TempDir()
+
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- dl.Download(first, dest) }()
+	<-firstStarted
+
+	dl.Prepare(second)
+	secondDone := make(chan error, 1)
+	go func() { secondDone <- dl.Download(second, dest) }()
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		dl.mu.Lock()
+		_, waiting := dl.cancelMap[second.Key()]
+		dl.mu.Unlock()
+		if waiting {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("second download never entered the queue")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	dl.Cancel(second)
+	select {
+	case err := <-secondDone:
+		if err == nil || !strings.Contains(err.Error(), "cancelled") {
+			t.Fatalf("queued download returned %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("queued cancellation did not return promptly")
+	}
+	if got := atomic.LoadInt32(&requests); got != 1 {
+		t.Fatalf("queued download reached server; requests=%d", got)
+	}
+
+	close(releaseFirst)
+	if err := <-firstDone; err != nil {
+		t.Fatalf("first download failed: %v", err)
+	}
+}
+
 func TestNewDownloaderWithConfig(t *testing.T) {
 	dl := newTestDownloader(3, 10*time.Second, "CustomAgent/2.0")
 	if dl.userAgent != "CustomAgent/2.0" {
