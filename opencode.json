@@ -12,13 +12,13 @@
     "architect": {
       "mode": "all",
       "model": "opencode-go/kimi-k3",
-      "description": "USE THIS FOR: High-level system design, architectural blueprints, planning multi-file refactoring, evaluating edge cases, and root-cause analysis before editing code.",
-      "system": "You are a principal software architect. Analyze project requirements, evaluate structural edge cases, and output clear implementation blueprints before code is modified."
+      "description": "USE THIS FOR: SDD spec generation, task breakdown briefs, global constraints definition, and system architecture planning.",
+      "system": "You are a principal software architect specializing in Spec-Driven Development. Analyze requirements, evaluate structural edge cases, and generate clear SDD specifications and task briefs before code is modified."
     },
     "explore": {
       "mode": "subagent",
       "model": "opencode-go/kimi-k2.7-code",
-      "description": "USE THIS FOR: Fast read-only codebase search, locating file paths, string/pattern search, reading code files, and gathering context without making edits.",
+      "description": "USE THIS FOR: Quick read-only codebase search, checking existing file paths, reading specific files, and inspecting pattern context during task preparation.",
       "permissions": [
         { "action": "edit", "resource": "*", "effect": "deny" },
         { "action": "shell", "resource": "*", "effect": "deny" }
@@ -27,7 +27,7 @@
     "reviewer": {
       "mode": "subagent",
       "model": "opencode-go/deepseek-v4-pro",
-      "description": "USE THIS FOR: Code reviews, inspecting uncommitted git diffs, checking security regressions, finding missing edge cases, and evaluating test coverage.",
+      "description": "USE THIS FOR: SDD task-gate reviews, inspecting multi-file git diffs against briefs, verifying spec compliance, and security regressions without editing code.",
       "permissions": [
         { "action": "edit", "resource": "*", "effect": "deny" },
         { "action": "shell", "resource": "*", "effect": "deny" }
@@ -36,29 +36,29 @@
     "free_coder": {
       "mode": "all",
       "model": "opencode/deepseek-v4-flash-free",
-      "description": "USE THIS FOR: Low-priority coding or backup tasks using zero-cost models when hitting OpenCode Go rate limits or subscription ceilings."
+      "description": "USE THIS FOR: Simple documentation edits or low-priority utility tasks using zero-cost models when hitting rate limits."
     },
     "claude": {
       "mode": "all",
       "model": "opencode/claude-sonnet-4.5",
-      "description": "USE THIS FOR: Emergency problem-solving and complex debugging when open-weight models encounter deadlocks or obscure framework issues."
+      "description": "USE THIS FOR: Resolving complex framework deadlocks, stubborn concurrency bugs, or when open-weight models get stuck during SDD task execution."
     }
   },
 
   "command": {
     "plan": {
-      "description": "Generate an architectural blueprint before editing files",
+      "description": "Generate an architectural SDD blueprint before editing files",
       "agent": "architect",
-      "template": "Create an architectural implementation plan for: $ARGUMENTS.\nInclude impacted files, logic breakdowns, and potential edge cases."
+      "template": "Create an architectural implementation plan and SDD task breakdown for: $ARGUMENTS.\nInclude impacted files, logic breakdowns, global constraints, and potential edge cases."
     },
     "review": {
-      "description": "Review uncommitted git diffs",
+      "description": "Review uncommitted git diffs against SDD task briefs",
       "agent": "reviewer",
       "subtask": true,
-      "template": "Here are the uncommitted changes:\n!`git diff`\n\nReview these diffs for correctness, security vulnerabilities, and missing test coverage."
+      "template": "Here are the uncommitted changes:\n!`git diff`\n\nReview these diffs for correctness, spec compliance against task briefs, security vulnerabilities, and missing test coverage."
     },
     "free": {
-      "description": "Run a task using OpenCode Zen free models when rate-limited on Go",
+      "description": "Run a task using zero-cost free models when rate-limited on Go",
       "agent": "free_coder",
       "template": "$ARGUMENTS"
     }
