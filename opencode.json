@@ -33,6 +33,11 @@
         { "action": "write", "resource": "*", "effect": "deny" }
       ]
     },
+    "free_coder": {
+      "mode": "all",
+      "model": "openrouter/openrouter/free",
+      "description": "Zero-cost backup coding agent using OpenRouter's free models router when hitting OpenCode Go rate limits."
+    },
     "claude": {
       "mode": "all",
       "model": "openrouter/~anthropic/claude-sonnet-latest",
@@ -51,6 +56,11 @@
       "agent": "reviewer",
       "subtask": true,
       "template": "Here are the uncommitted changes:\n!`git diff`\n\nReview these diffs for correctness, security vulnerabilities, and missing test coverage."
+    },
+    "free": {
+      "description": "Run a task using zero-cost free models on OpenRouter when rate-limited",
+      "agent": "free_coder",
+      "template": "$ARGUMENTS"
     }
   }
 }
