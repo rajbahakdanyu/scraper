@@ -259,6 +259,58 @@ func TestCancelDoesNothingForCompletedItem(t *testing.T) {
 	}
 }
 
+func TestStaleProgressDoesNotResurrectCancelledItem(t *testing.T) {
+	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 1)}
+	items := []model.MediaItem{{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100}}
+	d := New(instantItems(items), fd, t.TempDir(), "cyberdrop")
+	d.Update(scrapeResultMsg{items: items})
+
+	// User cancels the item.
+	d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
+	if d.states[0].status != model.StatusCancelled {
+		t.Fatalf("expected cancelled, got %v", d.states[0].status)
+	}
+
+	// A progress event that was buffered before the cancel arrived gets
+	// delivered afterwards — it must not flip the item back to downloading.
+	d.Update(progressMsg(model.ProgressEvent{
+		Item:   d.states[0].item,
+		Bytes:  42,
+		Total:  100,
+		Status: model.StatusDownloading,
+	}))
+	if d.states[0].status != model.StatusCancelled {
+		t.Fatalf("stale progress event resurrected a cancelled item: %v", d.states[0].status)
+	}
+
+	// The cancelled download then returns an error — it must not be
+	// downgraded to failed either.
+	d.applyDone(downloadDoneMsg{key: d.states[0].item.Key(), err: errors.New("download cancelled")})
+	if d.states[0].status != model.StatusCancelled {
+		t.Fatalf("cancelled item ended as %v", d.states[0].status)
+	}
+}
+
+func TestStaleProgressDoesNotResurrectCompletedItem(t *testing.T) {
+	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 1)}
+	items := []model.MediaItem{{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100}}
+	d := New(instantItems(items), fd, t.TempDir(), "cyberdrop")
+	d.Update(scrapeResultMsg{items: items})
+	d.applyDone(downloadDoneMsg{key: d.states[0].item.Key()})
+
+	// An out-of-order downloading event arriving after completion must not
+	// flip the row back to active (which would leave it stuck there).
+	d.Update(progressMsg(model.ProgressEvent{
+		Item:   d.states[0].item,
+		Bytes:  10,
+		Total:  100,
+		Status: model.StatusDownloading,
+	}))
+	if d.states[0].status != model.StatusCompleted {
+		t.Fatalf("stale progress event resurrected a completed item: %v", d.states[0].status)
+	}
+}
+
 func TestSpinnerStopsAfterBatchCompletes(t *testing.T) {
 	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 1)}
 	items := []model.MediaItem{

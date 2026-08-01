@@ -334,6 +334,13 @@ func (d *Dashboard) applyProgress(evt model.ProgressEvent) {
 		if d.states[i].item.Key() != evt.Item.Key() {
 			continue
 		}
+		// Terminal states are authoritative: a progress event that was
+		// buffered before the item finished (cancelled, completed, failed)
+		// must not resurrect it back to an active state.
+		switch d.states[i].status {
+		case model.StatusCompleted, model.StatusFailed, model.StatusCancelled:
+			return
+		}
 		if d.states[i].started.IsZero() {
 			d.states[i].started = time.Now()
 		}
