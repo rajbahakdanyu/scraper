@@ -29,6 +29,18 @@ func TestExtractVideoID(t *testing.T) {
 		{"https://youtu.be/dQw4w9WgXcQ?si=abc", "dQw4w9WgXcQ"},
 		{"https://www.youtube.com/", ""},
 		{"https://example.com/notyoutube", ""},
+		// Modern URL shapes.
+		{"https://www.youtube.com/shorts/dQw4w9WgXcQ", "dQw4w9WgXcQ"},
+		{"https://www.youtube.com/embed/dQw4w9WgXcQ", "dQw4w9WgXcQ"},
+		{"https://www.youtube.com/live/dQw4w9WgXcQ", "dQw4w9WgXcQ"},
+		{"https://music.youtube.com/watch?v=dQw4w9WgXcQ", "dQw4w9WgXcQ"},
+		{"https://m.youtube.com/watch?v=dQw4w9WgXcQ", "dQw4w9WgXcQ"},
+		{"https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ", "dQw4w9WgXcQ"},
+		// Substring matching on "v=" must not false-positive on unrelated
+		// parameters that merely contain it.
+		{"https://www.youtube.com/watch?iv=dQw4w9WgXcQ", ""},
+		{"https://youtu.be/", ""},
+		{"https://www.youtube.com/shorts/", ""},
 	}
 
 	for _, tt := range tests {

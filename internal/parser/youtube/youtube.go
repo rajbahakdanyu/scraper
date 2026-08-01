@@ -427,20 +427,41 @@ func (s *Scraper) ExtractVideoID(rawURL string) string {
 	return s.extractVideoID(rawURL)
 }
 
+// extractVideoID pulls the video ID out of a YouTube URL. It handles the
+// modern URL shapes (/watch?v=, youtu.be, /shorts/, /embed/, /live/) by
+// parsing the URL properly rather than substring-matching "v=" — the old
+// approach both missed the path-based shapes and false-positived on
+// unrelated query parameters that merely contain "v=" (e.g. ?iv=...).
 func (s *Scraper) extractVideoID(rawURL string) string {
-	if strings.Contains(rawURL, "v=") {
-		parts := strings.Split(rawURL, "v=")
-		if len(parts) < 2 {
-			return ""
-		}
-		return strings.Split(parts[1], "&")[0]
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
 	}
-	if strings.Contains(rawURL, "youtu.be/") {
-		parts := strings.Split(rawURL, "youtu.be/")
-		if len(parts) < 2 {
-			return ""
+
+	// Query-parameter form — checked for any host (including schemeless
+	// input like "watch?v=ID") since "v" is a precise parameter name.
+	if v := u.Query().Get("v"); v != "" {
+		return v
+	}
+
+	host := strings.ToLower(u.Hostname())
+	isYouTube := host == "youtu.be" ||
+		host == "youtube.com" || strings.HasSuffix(host, ".youtube.com") ||
+		host == "youtube-nocookie.com" || strings.HasSuffix(host, ".youtube-nocookie.com")
+	if !isYouTube {
+		return ""
+	}
+
+	segments := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if host == "youtu.be" {
+		return segments[0]
+	}
+	// /shorts/ID, /embed/ID, /live/ID, /v/ID
+	if len(segments) == 2 {
+		switch segments[0] {
+		case "shorts", "embed", "live", "v":
+			return segments[1]
 		}
-		return strings.Split(parts[1], "?")[0]
 	}
 	return ""
 }
