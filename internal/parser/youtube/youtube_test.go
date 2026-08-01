@@ -2,6 +2,8 @@
 package youtube
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -281,5 +283,52 @@ func TestCopyStreamToFileSkipsCheckWhenSizeUnknown(t *testing.T) {
 
 	if err := copyStreamToFile(t.Context(), strings.NewReader("whatever"), 0, path, nil, nil); err != nil {
 		t.Fatalf("size 0 (unknown) must not trigger the size check, got %v", err)
+	}
+}
+
+func TestWithRetrySucceedsAfterTransientFailures(t *testing.T) {
+	attempts := 0
+	err := withRetry(t.Context(), func() error {
+		attempts++
+		if attempts < 3 {
+			return errors.New("transient network blip")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("expected retry to succeed, got %v", err)
+	}
+	if attempts != 3 {
+		t.Fatalf("attempts = %d, want 3", attempts)
+	}
+}
+
+func TestWithRetryGivesUpAfterMaxAttempts(t *testing.T) {
+	attempts := 0
+	err := withRetry(t.Context(), func() error {
+		attempts++
+		return errors.New("always failing")
+	})
+	if err == nil {
+		t.Fatal("expected an error after exhausting retries")
+	}
+	if attempts != maxRetries {
+		t.Fatalf("attempts = %d, want %d", attempts, maxRetries)
+	}
+}
+
+func TestWithRetryStopsWhenContextCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	attempts := 0
+	err := withRetry(ctx, func() error {
+		attempts++
+		cancel() // first failure cancels the context (user pressed 'c')
+		return errors.New("cancelled mid-stream")
+	})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if attempts != 1 {
+		t.Fatalf("retry slept through cancellation: attempts = %d, want 1", attempts)
 	}
 }

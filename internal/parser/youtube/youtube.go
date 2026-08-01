@@ -2,6 +2,7 @@
 package youtube
 
 import (
+	"math/rand"
 	"context"
 	"errors"
 	"fmt"
@@ -497,7 +498,42 @@ const (
 	minRateLimitBurst   = 32 * 1024
 	defaultReadTimeout  = 30 * time.Second
 	defaultYouTubeAgent = "Scraper/1.0"
+	maxRetries          = 3
+	retryBaseDelay      = 500 * time.Millisecond
 )
+
+// withRetry runs fn up to maxRetries times with exponential backoff +
+// jitter between attempts, mirroring the generic downloader's policy: a
+// single transient network blip shouldn't fail a whole video. A cancelled
+// context stops the loop immediately instead of sleeping through backoff.
+func withRetry(ctx context.Context, fn func() error) error {
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(backoffWithJitter(retryBaseDelay, attempt)):
+			}
+		}
+		if lastErr = fn(); lastErr == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	return lastErr
+}
+
+// backoffWithJitter returns an exponentially increasing delay (base *
+// 2^attempt) with up to ~30% random jitter added.
+func backoffWithJitter(base time.Duration, attempt int) time.Duration {
+	d := base << uint(attempt)
+	// #nosec G404 -- retry jitter does not require cryptographic randomness.
+	jitter := time.Duration(rand.Int63n(int64(d)/3 + 1))
+	return d + jitter
+}
 
 type DownloaderConfig struct {
 	Concurrency  int
@@ -607,8 +643,10 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 		return fmt.Errorf("youtube: could not extract video ID from %s", item.URL)
 	}
 
-	err := d.scraper.downloadBest(ctx, videoID, dest, item.Key(), d.paths, d.limiter, d.skipSum, func(bytes, total int64) {
-		d.sendProgress(model.ProgressEvent{Item: item, Bytes: bytes, Total: total, Status: model.StatusDownloading})
+	err := withRetry(ctx, func() error {
+		return d.scraper.downloadBest(ctx, videoID, dest, item.Key(), d.paths, d.limiter, d.skipSum, func(bytes, total int64) {
+			d.sendProgress(model.ProgressEvent{Item: item, Bytes: bytes, Total: total, Status: model.StatusDownloading})
+		})
 	})
 
 	switch {
