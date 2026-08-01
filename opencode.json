@@ -6,7 +6,7 @@
   ],
 
   "model": "opencode-go/deepseek-v4-pro",
-  "small_model": "opencode-go/kimi-k2.7-code",
+  "small_model": "opencode-go/deepseek-v4-flash",
 
   "agent": {
     "architect": {
@@ -17,7 +17,7 @@
     },
     "explore": {
       "mode": "subagent",
-      "model": "opencode-go/kimi-k2.7-code",
+      "model": "opencode-go/deepseek-v4-flash",
       "description": "USE THIS FOR: Quick read-only codebase search, checking existing file paths, reading specific files, and inspecting pattern context during task preparation.",
       "permissions": [
         { "action": "edit", "resource": "*", "effect": "deny" },
@@ -26,7 +26,7 @@
     },
     "reviewer": {
       "mode": "subagent",
-      "model": "opencode-go/deepseek-v4-pro",
+      "model": "opencode-go/qwen3.7-max",
       "description": "USE THIS FOR: SDD task-gate reviews, inspecting multi-file git diffs against briefs, verifying spec compliance, and security regressions without editing code.",
       "permissions": [
         { "action": "edit", "resource": "*", "effect": "deny" },
@@ -38,10 +38,10 @@
       "model": "opencode/deepseek-v4-flash-free",
       "description": "USE THIS FOR: Simple documentation edits or low-priority utility tasks using zero-cost models when hitting rate limits."
     },
-    "claude": {
+    "heavy": {
       "mode": "all",
-      "model": "opencode/claude-sonnet-4.5",
-      "description": "USE THIS FOR: Resolving complex framework deadlocks, stubborn concurrency bugs, or when open-weight models get stuck during SDD task execution."
+      "model": "opencode-go/gpt-5.6-luna",
+      "description": "USE THIS FOR: Resolving complex framework deadlocks, subtle race conditions, or when standard models hit logic walls during SDD tasks."
     }
   },
 
