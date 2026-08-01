@@ -2,6 +2,7 @@
 package bunker
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -180,7 +181,11 @@ func (s *Scraper) getSignedMediaURL(dlURL *url.URL, fileID, originalName string)
 	apiURL := dlURL.Scheme + "://" + dlURL.Host + "/api/_001_v2"
 
 	// Step 1: POST to get media metadata
-	req, err := http.NewRequest("POST", apiURL, strings.NewReader(`{"id":"`+fileID+`"}`))
+	body, err := json.Marshal(map[string]string{"id": fileID})
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequest("POST", apiURL, bytes.NewReader(body))
 	if err != nil {
 		return "", err
 	}
