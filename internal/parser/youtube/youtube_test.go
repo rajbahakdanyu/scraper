@@ -246,3 +246,40 @@ func TestDownloaderCancelIsSafeForUnknownItem(t *testing.T) {
 	// Must not panic even though nothing is downloading for this item.
 	d.Cancel(model.MediaItem{URL: "https://www.youtube.com/watch?v=xyz"})
 }
+
+func TestCopyStreamToFileRejectsTruncatedStream(t *testing.T) {
+	// The stream ends cleanly (io.EOF) after fewer bytes than the format
+	// metadata promised — without a size check this truncated file would be
+	// committed and its checksum sidecar would bless the truncation forever.
+	short := strings.NewReader("only-partial-content")
+	path := filepath.Join(t.TempDir(), "video.mp4")
+
+	err := copyStreamToFile(t.Context(), short, 1<<20, path, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "size mismatch") {
+		t.Fatalf("expected a size-mismatch error for a truncated stream, got %v", err)
+	}
+}
+
+func TestCopyStreamToFileAcceptsExactStream(t *testing.T) {
+	content := strings.Repeat("x", 4096)
+	path := filepath.Join(t.TempDir(), "video.mp4")
+
+	if err := copyStreamToFile(t.Context(), strings.NewReader(content), int64(len(content)), path, nil, nil); err != nil {
+		t.Fatalf("unexpected error for an exact-size stream: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != content {
+		t.Fatalf("file content = %d bytes, want %d", len(got), len(content))
+	}
+}
+
+func TestCopyStreamToFileSkipsCheckWhenSizeUnknown(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "video.mp4")
+
+	if err := copyStreamToFile(t.Context(), strings.NewReader("whatever"), 0, path, nil, nil); err != nil {
+		t.Fatalf("size 0 (unknown) must not trigger the size check, got %v", err)
+	}
+}

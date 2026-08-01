@@ -322,7 +322,14 @@ func (s *Scraper) downloadStreamToFileProgress(ctx context.Context, video *ytdl.
 		return err
 	}
 	defer stream.Close()
+	return copyStreamToFile(ctx, stream, size, path, limiter, onProgress)
+}
 
+// copyStreamToFile writes stream to path, reporting progress along the way.
+// When size > 0 the stream must deliver exactly that many bytes: a stream
+// that ends early (io.EOF before size bytes) is rejected as truncated so a
+// partial file can never be committed and blessed with a checksum sidecar.
+func copyStreamToFile(ctx context.Context, stream io.Reader, size int64, path string, limiter *rate.Limiter, onProgress func(int64, int64)) error {
 	// #nosec G304 -- path is internally allocated under the configured output or private temp directory.
 	out, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
@@ -367,6 +374,9 @@ func (s *Scraper) downloadStreamToFileProgress(ctx context.Context, video *ytdl.
 		return err
 	}
 	closed = true
+	if size > 0 && read != size {
+		return fmt.Errorf("download size mismatch: got %d bytes, want %d (stream truncated)", read, size)
+	}
 	return nil
 }
 
