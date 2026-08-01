@@ -2,11 +2,11 @@
 package youtube
 
 import (
-	"math/rand"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/url"
 	"os"
 	"os/exec"
