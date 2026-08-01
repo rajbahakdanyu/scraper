@@ -12,13 +12,13 @@
     "architect": {
       "mode": "all",
       "model": "opencode-go/kimi-k3",
-      "description": "High-level system design, multi-file architectural planning, edge-case evaluation, and complex bug root-cause analysis.",
+      "description": "USE THIS FOR: High-level system design, architectural blueprints, planning multi-file refactoring, evaluating edge cases, and root-cause analysis before editing code.",
       "system": "You are a principal software architect. Analyze project requirements, evaluate structural edge cases, and output clear implementation blueprints before code is modified."
     },
     "explore": {
       "mode": "subagent",
       "model": "opencode-go/kimi-k2.7-code",
-      "description": "Fast read-only codebase search, file reading, pattern matching, and running background tests.",
+      "description": "USE THIS FOR: Fast read-only codebase search, locating file paths, string/pattern search, reading code files, and gathering context without making edits.",
       "permissions": [
         { "action": "edit", "resource": "*", "effect": "deny" },
         { "action": "shell", "resource": "*", "effect": "deny" }
@@ -27,7 +27,7 @@
     "reviewer": {
       "mode": "subagent",
       "model": "opencode-go/kimi-k2.7-code",
-      "description": "Reviews uncommitted code changes, verifies security regressions, and checks edge cases without modifying files.",
+      "description": "USE THIS FOR: Code reviews, inspecting uncommitted git diffs, checking security regressions, finding missing edge cases, and evaluating test coverage.",
       "permissions": [
         { "action": "edit", "resource": "*", "effect": "deny" },
         { "action": "shell", "resource": "*", "effect": "deny" }
@@ -35,13 +35,13 @@
     },
     "free_coder": {
       "mode": "all",
-      "model": "openrouter/openrouter/free",
-      "description": "Zero-cost backup coding agent using OpenRouter's free models router when hitting OpenCode Go rate limits."
+      "model": "opencode/deepseek-v4-flash-free",
+      "description": "USE THIS FOR: Low-priority coding or backup tasks using zero-cost models when hitting OpenCode Go rate limits or subscription ceilings."
     },
     "claude": {
       "mode": "all",
-      "model": "openrouter/~anthropic/claude-sonnet-latest",
-      "description": "Emergency problem solver using Claude Sonnet via OpenRouter when open-weight models hit deadlocks or obscure framework bugs."
+      "model": "opencode/claude-sonnet-4.5",
+      "description": "USE THIS FOR: Emergency problem-solving and complex debugging when open-weight models encounter deadlocks or obscure framework issues."
     }
   },
 
@@ -58,7 +58,7 @@
       "template": "Here are the uncommitted changes:\n!`git diff`\n\nReview these diffs for correctness, security vulnerabilities, and missing test coverage."
     },
     "free": {
-      "description": "Run a task using zero-cost free models on OpenRouter when rate-limited",
+      "description": "Run a task using OpenCode Zen free models when rate-limited on Go",
       "agent": "free_coder",
       "template": "$ARGUMENTS"
     }
