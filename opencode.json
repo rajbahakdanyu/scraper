@@ -13,7 +13,7 @@
       "mode": "all",
       "model": "opencode/kimi-k3",
       "description": "High-level system design, multi-file architectural planning, edge-case evaluation, and complex bug root-cause analysis.",
-      "prompt": "You are a principal software architect. Analyze project requirements, evaluate structural edge cases, and output clear implementation blueprints before code is modified."
+      "system": "You are a principal software architect. Analyze project requirements, evaluate structural edge cases, and output clear implementation blueprints before code is modified."
     },
     "explore": {
       "mode": "subagent",
@@ -21,7 +21,7 @@
       "description": "Fast read-only codebase search, file reading, pattern matching, and running background tests.",
       "permissions": [
         { "action": "edit", "resource": "*", "effect": "deny" },
-        { "action": "write", "resource": "*", "effect": "deny" }
+        { "action": "shell", "resource": "*", "effect": "deny" }
       ]
     },
     "reviewer": {
@@ -30,7 +30,7 @@
       "description": "Reviews uncommitted code changes, verifies security regressions, and checks edge cases without modifying files.",
       "permissions": [
         { "action": "edit", "resource": "*", "effect": "deny" },
-        { "action": "write", "resource": "*", "effect": "deny" }
+        { "action": "shell", "resource": "*", "effect": "deny" }
       ]
     },
     "free_coder": {
