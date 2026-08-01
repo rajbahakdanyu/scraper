@@ -9,6 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/rajbahakdanyu/scraper/internal/config"
 	"github.com/rajbahakdanyu/scraper/internal/downloader"
@@ -291,10 +292,19 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 		return scraper.Parse(targetURL)
 	}
 
+	slug := albumSlugFor(siteName, targetURL)
+
+	// When stdout is not a terminal (piped, redirected, cron), the
+	// bubbletea TUI would emit escape-code garbage — fall back to plain
+	// line-based output instead.
+	if !term.IsTerminal(int(os.Stdout.Fd())) {
+		return runPlain(dl, scraperFn, cfg.OutputDir, slug, os.Stdout)
+	}
+
 	d := dashboard.New(scraperFn, dl, cfg.OutputDir, siteName)
 
 	// Pass the URL slug so the dashboard can create a subfolder for albums.
-	d.SetAlbumSlug(albumSlugFor(siteName, targetURL))
+	d.SetAlbumSlug(slug)
 
 	p := tea.NewProgram(d, tea.WithAltScreen())
 	d.SetSendFunc(func(msg tea.Msg) { p.Send(msg) })
