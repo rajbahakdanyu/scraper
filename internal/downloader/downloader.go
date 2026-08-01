@@ -304,6 +304,17 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, tem
 			return errors.Join(fmt.Errorf("invalid partial response for %s; discarded stale partial", item.URL), cleanupErr)
 		}
 	case http.StatusRequestedRangeNotSatisfiable:
+		// A 416 whose Content-Range total equals our on-disk byte count
+		// means the partial already IS the complete resource (a previous
+		// run finished the body but died before the rename). Keep it and
+		// let Download rename it into place instead of re-downloading
+		// everything. The validator must still match, so a resource that
+		// changed to the same size doesn't get trusted by accident.
+		if existing > 0 && resume.matches(resp) {
+			if total, err := parseContentRangeTotal(resp.Header.Get("Content-Range")); err == nil && total == existing {
+				return nil
+			}
+		}
 		// Our recorded partial no longer lines up with the remote resource
 		// (e.g. it changed size) — discard it so the next retry attempt
 		// fetches the whole thing fresh.
@@ -484,6 +495,19 @@ func parseContentRange(headerVal string) (start, end, total int64, err error) {
 		return 0, 0, 0, fmt.Errorf("invalid Content-Range %q", headerVal)
 	}
 	return start, end, total, nil
+}
+
+// parseContentRangeTotal parses the "bytes */<total>" form of Content-Range
+// that accompanies a 416 response, returning just the resource's total size.
+func parseContentRangeTotal(headerVal string) (int64, error) {
+	var total int64
+	if _, err := fmt.Sscanf(headerVal, "bytes */%d", &total); err != nil {
+		return 0, err
+	}
+	if total < 0 {
+		return 0, fmt.Errorf("invalid Content-Range %q", headerVal)
+	}
+	return total, nil
 }
 
 type resumeMetadata struct {

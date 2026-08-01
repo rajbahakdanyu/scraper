@@ -2,6 +2,7 @@
 package downloader
 
 import (
+	"fmt"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -371,6 +372,53 @@ func TestDownloadRestartsAfter416(t *testing.T) {
 	}
 	if string(gotContent) != fresh {
 		t.Errorf("final content = %q, want %q", gotContent, fresh)
+	}
+}
+
+func TestDownloadTreats416WithCompletePartialAsFinished(t *testing.T) {
+	// A previous run downloaded the full body but died before the rename.
+	// The resume request asks for bytes=<size>-, the server replies 416
+	// with Content-Range "bytes */<size>" — the partial already IS the
+	// complete resource and must be kept, not discarded and re-downloaded.
+	const content = "AlreadyFullyDownloadedContent"
+	var requests int32
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requests, 1)
+		w.Header().Set("ETag", `"v1"`)
+		if r.Header.Get("Range") != "" {
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", len(content)))
+			w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("re-downloaded-from-scratch"))
+	}))
+	defer ts.Close()
+
+	dl := newTestDownloader(1, 0, "")
+	item := model.MediaItem{URL: ts.URL, Title: "complete416.bin"}
+	dest := t.TempDir()
+	tempPath := filepath.Join(dest, "complete416.bin.part")
+	if err := os.WriteFile(tempPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeResumeMetadata(tempPath, resumeMetadata{URL: ts.URL, ETag: `"v1"`}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := dl.Download(item, dest); err != nil {
+		t.Fatalf("complete partial behind a 416 must succeed, got: %v", err)
+	}
+	if got := atomic.LoadInt32(&requests); got != 1 {
+		t.Errorf("expected exactly 1 request (no wasteful re-download), got %d", got)
+	}
+	got, err := os.ReadFile(filepath.Join(dest, "complete416.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != content {
+		t.Fatalf("final content = %q, want the kept partial %q", got, content)
 	}
 }
 
