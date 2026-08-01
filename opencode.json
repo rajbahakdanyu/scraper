@@ -8,7 +8,7 @@
   "model": "opencode-go/deepseek-v4-pro",
   "small_model": "opencode-go/kimi-k2.7-code",
 
-  "agents": {
+  "agent": {
     "architect": {
       "mode": "all",
       "model": "opencode-go/kimi-k3",
