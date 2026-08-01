@@ -25,13 +25,20 @@ import (
 
 type Scraper struct {
 	video *ytdl.Client
+
+	// parsed holds video info already fetched by Parse, keyed by video ID,
+	// so the download path reuses it instead of fetching the same metadata
+	// a second time. Guarded by mu because downloads run concurrently.
+	mu     sync.Mutex
+	parsed map[string]*ytdl.Video
 }
 
 // NewYouTubeScraper creates a YouTube scraper using the kkdai/youtube library
 // for real stream URL extraction and downloads.
 func NewYouTubeScraper() *Scraper {
 	return &Scraper{
-		video: &ytdl.Client{HTTPClient: netutil.NewPublicClient(defaultReadTimeout)},
+		video:  &ytdl.Client{HTTPClient: netutil.NewPublicClient(defaultReadTimeout)},
+		parsed: make(map[string]*ytdl.Video),
 	}
 }
 
@@ -58,6 +65,12 @@ func (s *Scraper) Parse(rawURL string) ([]model.MediaItem, error) {
 	if err != nil {
 		return nil, fmt.Errorf("youtube: failed to fetch video info: %w", err)
 	}
+
+	// Hand the info to the download path (see takeParsedVideo) so the same
+	// video's metadata isn't fetched again when it is downloaded.
+	s.mu.Lock()
+	s.parsed[videoID] = video
+	s.mu.Unlock()
 
 	title := video.Title
 	if title == "" {
@@ -177,13 +190,31 @@ func formatsForDownload(video *ytdl.Video) (videoFmt, audioFmt *ytdl.Format, err
 	return videoFmt, audioFmt, nil
 }
 
+// takeParsedVideo returns the video info Parse already fetched for videoID,
+// or nil when there is none cached (playlist items only get resolved here at
+// download time). The entry is removed as it is claimed: that bounds the
+// map to info nobody has downloaded yet, and a retry attempt after a
+// transient failure re-fetches fresh metadata (and stream URLs) just as
+// every attempt did before the info was reused.
+func (s *Scraper) takeParsedVideo(videoID string) *ytdl.Video {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	video := s.parsed[videoID]
+	delete(s.parsed, videoID)
+	return video
+}
+
 // downloadBest resolves videoID's highest-quality formats and downloads
 // (muxing with ffmpeg if needed) the result to dest. onProgress, if
 // non-nil, is called with cumulative bytes read and the combined total.
 func (s *Scraper) downloadBest(ctx context.Context, videoID, dest, owner string, paths *fileutil.PathAllocator, limiter *rate.Limiter, skipChecksums bool, onProgress func(bytes, total int64)) error {
-	video, err := s.video.GetVideoContext(ctx, videoID)
-	if err != nil {
-		return fmt.Errorf("youtube: failed to fetch video info: %w", err)
+	video := s.takeParsedVideo(videoID)
+	if video == nil {
+		var err error
+		video, err = s.video.GetVideoContext(ctx, videoID)
+		if err != nil {
+			return fmt.Errorf("youtube: failed to fetch video info: %w", err)
+		}
 	}
 
 	title := video.Title
