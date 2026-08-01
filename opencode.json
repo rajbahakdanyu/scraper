@@ -17,7 +17,7 @@
     },
     "explore": {
       "mode": "subagent",
-      "model": "opencode-go/deepseek-v4-pro",
+      "model": "opencode-go/kimi-k2.7-code",
       "description": "USE THIS FOR: Fast read-only codebase search, locating file paths, string/pattern search, reading code files, and gathering context without making edits.",
       "permissions": [
         { "action": "edit", "resource": "*", "effect": "deny" },
