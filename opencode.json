@@ -11,7 +11,7 @@
   "agent": {
     "architect": {
       "mode": "all",
-      "model": "opencode/kimi-k3",
+      "model": "opencode-go/kimi-k3",
       "description": "High-level system design, multi-file architectural planning, edge-case evaluation, and complex bug root-cause analysis.",
       "system": "You are a principal software architect. Analyze project requirements, evaluate structural edge cases, and output clear implementation blueprints before code is modified."
     },
