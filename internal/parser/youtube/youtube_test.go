@@ -344,3 +344,35 @@ func TestWithRetryStopsWhenContextCancelled(t *testing.T) {
 		t.Fatalf("retry slept through cancellation: attempts = %d, want 1", attempts)
 	}
 }
+
+// stubFFmpeg puts an executable named "ffmpeg" on PATH that runs the given
+// shell script body, so mux code can be tested without a real ffmpeg.
+func stubFFmpeg(t *testing.T, script string) {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ffmpeg")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+script+"\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestMuxStreamsSurfacesFFmpegStderr(t *testing.T) {
+	stubFFmpeg(t, `echo "Error opening input: invalid data found" >&2; exit 1`)
+
+	err := muxStreams(t.Context(), "video.mp4", "audio.m4a", "out.part.mp4")
+	if err == nil {
+		t.Fatal("expected an error when ffmpeg fails")
+	}
+	if !strings.Contains(err.Error(), "invalid data found") {
+		t.Fatalf("ffmpeg's stderr must be included in the error, got: %v", err)
+	}
+}
+
+func TestMuxStreamsSucceedsWhenFFmpegDoes(t *testing.T) {
+	stubFFmpeg(t, `exit 0`)
+
+	if err := muxStreams(t.Context(), "video.mp4", "audio.m4a", "out.part.mp4"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

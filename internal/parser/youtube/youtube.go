@@ -2,6 +2,7 @@
 package youtube
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -293,19 +294,8 @@ func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFm
 	if onProgress != nil {
 		onProgress(combinedTotal-1, combinedTotal)
 	}
-	// #nosec G204 -- arguments are passed directly without shell evaluation; paths are internally allocated.
-	cmd := exec.CommandContext(ctx, "ffmpeg", "-y",
-		"-i", videoPath,
-		"-i", audioPath,
-		"-c:v", "copy",
-		"-c:a", "aac",
-		"-movflags", "+faststart",
-		tempOutputPath,
-	)
-	cmd.Stderr = nil
-	cmd.Stdout = nil
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("youtube: ffmpeg mux failed: %w", err)
+	if err := muxStreams(ctx, videoPath, audioPath, tempOutputPath); err != nil {
+		return err
 	}
 	if err := commitOutput(tempOutputPath, outputPath, skipChecksums); err != nil {
 		return err
@@ -313,6 +303,35 @@ func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFm
 
 	if onProgress != nil {
 		onProgress(combinedTotal, combinedTotal)
+	}
+	return nil
+}
+
+// muxStreams combines a separate video and audio stream into outputPath
+// with ffmpeg. ffmpeg's stderr is captured and its last line included in
+// the returned error — a bare "exit status 1" tells the user nothing
+// about why the mux failed.
+func muxStreams(ctx context.Context, videoPath, audioPath, outputPath string) error {
+	var stderr bytes.Buffer
+	// #nosec G204 -- arguments are passed directly without shell evaluation; paths are internally allocated.
+	cmd := exec.CommandContext(ctx, "ffmpeg", "-y",
+		"-i", videoPath,
+		"-i", audioPath,
+		"-c:v", "copy",
+		"-c:a", "aac",
+		"-movflags", "+faststart",
+		outputPath,
+	)
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		detail := strings.TrimSpace(stderr.String())
+		if idx := strings.LastIndex(detail, "\n"); idx >= 0 {
+			detail = detail[idx+1:]
+		}
+		if detail == "" {
+			return fmt.Errorf("youtube: ffmpeg mux failed: %w", err)
+		}
+		return fmt.Errorf("youtube: ffmpeg mux failed: %w: %s", err, detail)
 	}
 	return nil
 }
