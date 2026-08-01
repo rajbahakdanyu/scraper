@@ -40,7 +40,7 @@
     },
     "claude": {
       "mode": "all",
-      "model": "openrouter/anthropic/claude-3.7-sonnet",
+      "model": "openrouter/~anthropic/claude-sonnet-latest",
       "description": "Emergency problem solver using Claude Sonnet via OpenRouter when open-weight models hit deadlocks or obscure framework bugs."
     }
   },
