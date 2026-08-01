@@ -324,6 +324,14 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, tem
 	if _, _, fromHeader, err := parseContentRange(resp.Header.Get("Content-Range")); err == nil {
 		total = fromHeader
 	}
+	// The response carried no length of its own (chunked/HTTP2): fall back
+	// to the scraper-reported item size so a silently truncated body is
+	// still caught by the size check below. Skip this when the transport
+	// transparently decompressed the body — decompressed bytes legitimately
+	// differ from the on-the-wire size the scraper reported.
+	if total <= 0 && item.Size > 0 && !resp.Uncompressed {
+		total = item.Size
+	}
 
 	flags := os.O_CREATE | os.O_WRONLY
 	if existing > 0 {

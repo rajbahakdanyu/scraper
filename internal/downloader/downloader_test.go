@@ -725,3 +725,44 @@ func TestConcurrentDownloadsWithSameTitleUseDistinctPaths(t *testing.T) {
 		t.Fatalf("downloads overwrote each other: contents=%v", contents)
 	}
 }
+
+func TestDownloadRejectsTruncatedChunkedResponse(t *testing.T) {
+	// Flushing before writing the body prevents net/http from sniffing a
+	// Content-Length, so the response really is chunked and the
+	// scraper-reported item size is the only thing that can catch the
+	// short body.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		_, _ = w.Write(make([]byte, 50))
+	}))
+	defer ts.Close()
+
+	dl := newTestDownloader(1, 0, "")
+	item := model.MediaItem{URL: ts.URL, Title: "chunked.bin", Size: 100}
+
+	err := dl.Download(item, t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "size mismatch") {
+		t.Fatalf("expected a size-mismatch error for a truncated chunked body, got %v", err)
+	}
+}
+
+func TestDownloadAcceptsChunkedResponseMatchingItemSize(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		_, _ = w.Write(make([]byte, 100))
+	}))
+	defer ts.Close()
+
+	dl := newTestDownloader(1, 0, "")
+	item := model.MediaItem{URL: ts.URL, Title: "chunked-ok.bin", Size: 100}
+	dest := t.TempDir()
+
+	if err := dl.Download(item, dest); err != nil {
+		t.Fatalf("chunked body matching the item size must succeed: %v", err)
+	}
+	if info, err := os.Stat(filepath.Join(dest, "chunked-ok.bin")); err != nil || info.Size() != 100 {
+		t.Fatalf("final file = %v, %v", info, err)
+	}
+}
