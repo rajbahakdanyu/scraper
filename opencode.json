@@ -5,10 +5,10 @@
     "superpowers@git+https://github.com/obra/superpowers.git"
   ],
 
-  "model": "opencode/deepseek-v4-pro",
-  "small_model": "opencode/kimi-k2.7-code",
+  "model": "opencode-go/deepseek-v4-pro",
+  "small_model": "opencode-go/kimi-k2.7-code",
 
-  "agent": {
+  "agents": {
     "architect": {
       "mode": "all",
       "model": "opencode-go/kimi-k3",
@@ -17,7 +17,7 @@
     },
     "explore": {
       "mode": "subagent",
-      "model": "opencode/kimi-k2.7-code",
+      "model": "opencode-go/kimi-k2.7-code",
       "description": "Fast read-only codebase search, file reading, pattern matching, and running background tests.",
       "permissions": [
         { "action": "edit", "resource": "*", "effect": "deny" },
@@ -26,7 +26,7 @@
     },
     "reviewer": {
       "mode": "subagent",
-      "model": "opencode/kimi-k2.7-code",
+      "model": "opencode-go/kimi-k2.7-code",
       "description": "Reviews uncommitted code changes, verifies security regressions, and checks edge cases without modifying files.",
       "permissions": [
         { "action": "edit", "resource": "*", "effect": "deny" },
@@ -40,7 +40,7 @@
     },
     "claude": {
       "mode": "all",
-      "model": "openrouter/~anthropic/claude-sonnet-latest",
+      "model": "openrouter/anthropic/claude-3.7-sonnet",
       "description": "Emergency problem solver using Claude Sonnet via OpenRouter when open-weight models hit deadlocks or obscure framework bugs."
     }
   },
