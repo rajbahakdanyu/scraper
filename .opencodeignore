@@ -1,0 +1,13 @@
+# Dependencies and locks
+vendor/
+go.sum
+
+# Generated / Protobuf files (if large)
+*.pb.go
+*_gn.go
+
+# Binaries
+*.exe
+*.test
+bin/
+dist/
