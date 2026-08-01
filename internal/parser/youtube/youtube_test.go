@@ -346,21 +346,35 @@ func TestWithRetryStopsWhenContextCancelled(t *testing.T) {
 }
 
 // stubFFmpeg puts an executable named "ffmpeg" on PATH that runs the given
-// shell script body, so mux code can be tested without a real ffmpeg.
-func stubFFmpeg(t *testing.T, script string) {
+// shell script body, so mux code can be tested without a real ffmpeg. The
+// stub records its arguments to the file named in $FFMPEG_ARGS_FILE.
+func stubFFmpeg(t *testing.T, script string) string {
 	t.Helper()
 	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "args")
+	full := "#!/bin/sh\n" + `echo "$@" > "$FFMPEG_ARGS_FILE"` + "\n" + script + "\n"
 	path := filepath.Join(dir, "ffmpeg")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+script+"\n"), 0755); err != nil {
+	if err := os.WriteFile(path, []byte(full), 0755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("FFMPEG_ARGS_FILE", argsFile)
+	return argsFile
+}
+
+func readFFmpegArgs(t *testing.T, argsFile string) string {
+	t.Helper()
+	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }
 
 func TestMuxStreamsSurfacesFFmpegStderr(t *testing.T) {
 	stubFFmpeg(t, `echo "Error opening input: invalid data found" >&2; exit 1`)
 
-	err := muxStreams(t.Context(), "video.mp4", "audio.m4a", "out.part.mp4")
+	err := muxStreams(t.Context(), "video.mp4", "audio.m4a", "out.part.mp4", false)
 	if err == nil {
 		t.Fatal("expected an error when ffmpeg fails")
 	}
@@ -372,7 +386,42 @@ func TestMuxStreamsSurfacesFFmpegStderr(t *testing.T) {
 func TestMuxStreamsSucceedsWhenFFmpegDoes(t *testing.T) {
 	stubFFmpeg(t, `exit 0`)
 
-	if err := muxStreams(t.Context(), "video.mp4", "audio.m4a", "out.part.mp4"); err != nil {
+	if err := muxStreams(t.Context(), "video.mp4", "audio.m4a", "out.part.mp4", false); err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestMuxStreamsCopiesAudioWhenAlreadyAAC(t *testing.T) {
+	argsFile := stubFFmpeg(t, `exit 0`)
+
+	if err := muxStreams(t.Context(), "video.mp4", "audio.m4a", "out.part.mp4", true); err != nil {
+		t.Fatal(err)
+	}
+	args := readFFmpegArgs(t, argsFile)
+	if !strings.Contains(args, "-c:a copy") {
+		t.Fatalf("AAC audio must be stream-copied (lossless, fast), got args: %s", args)
+	}
+}
+
+func TestMuxStreamsTranscodesAudioWhenNotAAC(t *testing.T) {
+	argsFile := stubFFmpeg(t, `exit 0`)
+
+	if err := muxStreams(t.Context(), "video.webm", "audio.webm", "out.part.mp4", false); err != nil {
+		t.Fatal(err)
+	}
+	args := readFFmpegArgs(t, argsFile)
+	if !strings.Contains(args, "-c:a aac") {
+		t.Fatalf("non-AAC audio must be transcoded to AAC for the mp4 container, got args: %s", args)
+	}
+}
+
+func TestAudioCopyable(t *testing.T) {
+	aac := &ytdl.Format{MimeType: `audio/mp4; codecs="mp4a.40.2"`}
+	opus := &ytdl.Format{MimeType: `audio/webm; codecs="opus"`}
+	if !audioCopyable(aac) {
+		t.Error("audio/mp4 (AAC) should be copyable into the mp4 container")
+	}
+	if audioCopyable(opus) {
+		t.Error("audio/webm (opus) must be transcoded, not copied")
 	}
 }

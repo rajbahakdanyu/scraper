@@ -294,7 +294,7 @@ func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFm
 	if onProgress != nil {
 		onProgress(combinedTotal-1, combinedTotal)
 	}
-	if err := muxStreams(ctx, videoPath, audioPath, tempOutputPath); err != nil {
+	if err := muxStreams(ctx, videoPath, audioPath, tempOutputPath, audioCopyable(audioFmt)); err != nil {
 		return err
 	}
 	if err := commitOutput(tempOutputPath, outputPath, skipChecksums); err != nil {
@@ -307,18 +307,36 @@ func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFm
 	return nil
 }
 
+// audioCopyable reports whether format's audio is AAC-in-mp4 (e.g.
+// codecs="mp4a.40.2") and can therefore be stream-copied into the mp4
+// output container. Anything else (opus in webm, ...) must be transcoded
+// to AAC at mux time.
+func audioCopyable(format *ytdl.Format) bool {
+	if format == nil {
+		return false
+	}
+	mime := strings.ToLower(format.MimeType)
+	return strings.Contains(mime, "audio/mp4") && strings.Contains(mime, "mp4a")
+}
+
 // muxStreams combines a separate video and audio stream into outputPath
-// with ffmpeg. ffmpeg's stderr is captured and its last line included in
-// the returned error — a bare "exit status 1" tells the user nothing
-// about why the mux failed.
-func muxStreams(ctx context.Context, videoPath, audioPath, outputPath string) error {
+// with ffmpeg. Video is always stream-copied; audio is stream-copied when
+// audioCopy is true (already AAC) and transcoded to AAC otherwise.
+// ffmpeg's stderr is captured and its last line included in the returned
+// error — a bare "exit status 1" tells the user nothing about why the mux
+// failed.
+func muxStreams(ctx context.Context, videoPath, audioPath, outputPath string, audioCopy bool) error {
 	var stderr bytes.Buffer
+	audioCodec := "aac"
+	if audioCopy {
+		audioCodec = "copy"
+	}
 	// #nosec G204 -- arguments are passed directly without shell evaluation; paths are internally allocated.
 	cmd := exec.CommandContext(ctx, "ffmpeg", "-y",
 		"-i", videoPath,
 		"-i", audioPath,
 		"-c:v", "copy",
-		"-c:a", "aac",
+		"-c:a", audioCodec,
 		"-movflags", "+faststart",
 		outputPath,
 	)
