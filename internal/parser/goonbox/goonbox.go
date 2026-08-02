@@ -40,6 +40,7 @@ func (s *Scraper) Parse(albumURL string) ([]model.MediaItem, error) {
 	}
 
 	var items []model.MediaItem
+	var unsafeErrs []error
 	page := 1
 
 	for {
@@ -90,7 +91,8 @@ func (s *Scraper) Parse(albumURL string) ([]model.MediaItem, error) {
 				continue
 			}
 			if err := netutil.NewPolicy().ValidateURL(img.OriginalURL); err != nil {
-				return nil, fmt.Errorf("goonbox: unsafe image URL: %w", err)
+				unsafeErrs = append(unsafeErrs, fmt.Errorf("unsafe image URL: %w", err))
+				continue
 			}
 			title := img.OriginalFilename
 			if title == "" {
@@ -115,7 +117,7 @@ func (s *Scraper) Parse(albumURL string) ([]model.MediaItem, error) {
 		return nil, fmt.Errorf("goonbox: no images found in album %s", albumID)
 	}
 
-	return items, nil
+	return items, model.NewPartialError("goonbox album", unsafeErrs)
 }
 
 func extractAlbumID(rawURL string) string {

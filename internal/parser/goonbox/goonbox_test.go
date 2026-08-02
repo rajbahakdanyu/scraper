@@ -3,8 +3,10 @@ package goonbox
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/rajbahakdanyu/scraper/internal/model"
@@ -149,6 +151,76 @@ func TestParseGoonBoxAlbumPagination(t *testing.T) {
 	}
 	if items[0].Title != "p1.jpg" || items[1].Title != "p2.jpg" {
 		t.Errorf("expected p1.jpg then p2.jpg, got %s then %s", items[0].Title, items[1].Title)
+	}
+}
+
+// TestParseGoonBoxAlbumSkipsUnsafeImageURLs ensures one unsafe entry does
+// not abort the whole album: safe images are still returned, and the skips
+// surface as a PartialError warning (the pattern cyberdrop/filester/bunker
+// already use for partial success).
+func TestParseGoonBoxAlbumSkipsUnsafeImageURLs(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"album": map[string]string{"title": "Mixed"},
+			"images": []map[string]interface{}{
+				{"original_url": "https://cdn.example.com/safe1.jpg", "original_filename": "safe1.jpg", "size_bytes": float64(100), "mime": "image/jpeg"},
+				{"original_url": "http://127.0.0.1/secret.jpg", "original_filename": "secret.jpg", "size_bytes": float64(200), "mime": "image/jpeg"},
+				{"original_url": "http://192.168.1.1/internal.jpg", "original_filename": "internal.jpg", "size_bytes": float64(300), "mime": "image/jpeg"},
+				{"original_url": "https://cdn.example.com/safe2.jpg", "original_filename": "safe2.jpg", "size_bytes": float64(400), "mime": "image/jpeg"},
+			},
+			"pagination": map[string]int{"current_page": 1, "last_page": 1},
+		})
+	}))
+	defer ts.Close()
+
+	scraper := newTestGoonBoxScraper()
+	scraper.baseURL = ts.URL
+
+	items, err := scraper.Parse(ts.URL + "/a/mixed")
+	var partialErr *model.PartialError
+	if !errors.As(err, &partialErr) {
+		t.Fatalf("expected partial-result warning, got: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected 2 safe items, got %d", len(items))
+	}
+	if items[0].URL != "https://cdn.example.com/safe1.jpg" || items[1].URL != "https://cdn.example.com/safe2.jpg" {
+		t.Errorf("expected only the safe URLs in order, got %s then %s", items[0].URL, items[1].URL)
+	}
+	if len(partialErr.Errors) != 2 {
+		t.Errorf("expected 2 skipped unsafe items counted, got %d", len(partialErr.Errors))
+	}
+}
+
+// TestParseGoonBoxAlbumAllUnsafeImageURLs ensures an album where every image
+// is unsafe still fails (landing on the existing "no images found" error)
+// rather than reporting an empty success.
+func TestParseGoonBoxAlbumAllUnsafeImageURLs(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"images": []map[string]interface{}{
+				{"original_url": "http://127.0.0.1/a.jpg", "original_filename": "a.jpg"},
+				{"original_url": "http://10.0.0.5/b.jpg", "original_filename": "b.jpg"},
+			},
+			"pagination": map[string]int{"current_page": 1, "last_page": 1},
+		})
+	}))
+	defer ts.Close()
+
+	scraper := newTestGoonBoxScraper()
+	scraper.baseURL = ts.URL
+
+	items, err := scraper.Parse(ts.URL + "/a/allunsafe")
+	if err == nil {
+		t.Fatal("expected error when every image URL is unsafe")
+	}
+	if len(items) != 0 {
+		t.Errorf("expected no items, got %d", len(items))
+	}
+	if !strings.Contains(err.Error(), "no images found") {
+		t.Errorf("expected all-skipped album to land on the no-images-found error, got: %v", err)
 	}
 }
 
