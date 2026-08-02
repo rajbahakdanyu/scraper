@@ -60,7 +60,7 @@ func (s *Scraper) Parse(albumURL string) ([]model.MediaItem, error) {
 		if !ok || href == "" {
 			return
 		}
-		fullURL := s.resolveURL(href)
+		fullURL := s.resolveURL(albumURL, href)
 		fileLinks = append(fileLinks, fullURL)
 	})
 
@@ -280,9 +280,18 @@ func (s *Scraper) fetchDoc(pageURL string) (*goquery.Document, error) {
 	return goquery.NewDocumentFromReader(resp.Body)
 }
 
-func (s *Scraper) resolveURL(href string) string {
-	if strings.HasPrefix(href, "http") {
+// resolveURL resolves an href against the page URL it was found on.
+// ResolveReference handles absolute URLs, protocol-relative hrefs
+// (//host/path, inheriting the page scheme), absolute paths and relative
+// paths per RFC 3986.
+func (s *Scraper) resolveURL(pageURL, href string) string {
+	base, err := url.Parse(pageURL)
+	if err != nil {
 		return href
 	}
-	return s.baseURL + href
+	ref, err := url.Parse(href)
+	if err != nil {
+		return href
+	}
+	return base.ResolveReference(ref).String()
 }

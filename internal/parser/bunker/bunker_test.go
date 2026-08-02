@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/rajbahakdanyu/scraper/internal/model"
@@ -125,6 +126,118 @@ func TestGetSignedMediaURLEscapesFileID(t *testing.T) {
 	}
 	if decoded["id"] != fileID {
 		t.Errorf("expected id %q in request body, got %q", fileID, decoded["id"])
+	}
+}
+
+// Regression test: hrefs found on the album page must be resolved relative
+// to the page URL — protocol-relative (//host/path), absolute-path (/path),
+// relative (path) and absolute hrefs all resolve to the correct URL.
+func TestParseBunkerAlbumHrefResolution(t *testing.T) {
+	tests := []struct {
+		name     string
+		tls      bool
+		href     func(tsURL string) string
+		wantPath string
+	}{
+		{
+			name: "protocol-relative href on http page",
+			href: func(tsURL string) string {
+				return "//" + strings.TrimPrefix(tsURL, "http://") + "/f/protorel"
+			},
+			wantPath: "/f/protorel",
+		},
+		{
+			name: "protocol-relative href on https page",
+			tls:  true,
+			href: func(tsURL string) string {
+				return "//" + strings.TrimPrefix(tsURL, "https://") + "/f/protorel"
+			},
+			wantPath: "/f/protorel",
+		},
+		{
+			name:     "absolute path href",
+			href:     func(string) string { return "/f/abspath" },
+			wantPath: "/f/abspath",
+		},
+		{
+			name:     "relative path href",
+			href:     func(string) string { return "f/relpath" },
+			wantPath: "/a/f/relpath",
+		},
+		{
+			name:     "absolute URL href",
+			href:     func(tsURL string) string { return tsURL + "/f/absurl" },
+			wantPath: "/f/absurl",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var filePaths []string
+
+			var ts *httptest.Server
+			mux := http.NewServeMux()
+			mux.HandleFunc("/a/album", func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/html")
+				fmt.Fprintf(w, `<html><body><a href="%s" aria-label="download"></a></body></html>`, tt.href(ts.URL))
+			})
+			mux.HandleFunc("/api/_001_v2", func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]string{
+					"mediafiles": "https://cdn.example.com",
+					"path":       "/storage/media/test.mp4",
+				})
+			})
+			mux.HandleFunc("/sign", func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"token": "testtoken123",
+					"ex":    9999999999,
+				})
+			})
+			// Catch-all serves the file page for any resolved file URL and
+			// records the request path so the test can verify resolution.
+			mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				filePaths = append(filePaths, r.URL.Path)
+				mu.Unlock()
+				w.Header().Set("Content-Type", "text/html")
+				fmt.Fprintf(w, `<html><head><title>test.mp4 | Bunkr</title></head><body>
+<a href="%s/file/61567794">Download</a></body></html>`, ts.URL)
+			})
+
+			if tt.tls {
+				ts = httptest.NewTLSServer(mux)
+			} else {
+				ts = httptest.NewServer(mux)
+			}
+			defer ts.Close()
+
+			scraper := newTestBunkerScraper()
+			scraper.baseURL = ts.URL
+			scraper.signURL = ts.URL + "/sign"
+			if tt.tls {
+				scraper.client = ts.Client()
+			}
+
+			items, err := scraper.Parse(ts.URL + "/a/album")
+			if err != nil {
+				t.Fatalf("Parse failed: %v", err)
+			}
+			if len(items) != 1 {
+				t.Fatalf("expected 1 item, got %d", len(items))
+			}
+			if !strings.Contains(items[0].URL, "cdn.example.com/storage/media/test.mp4") {
+				t.Errorf("expected CDN URL containing cdn.example.com, got %s", items[0].URL)
+			}
+
+			mu.Lock()
+			defer mu.Unlock()
+			if len(filePaths) != 1 || filePaths[0] != tt.wantPath {
+				t.Errorf("expected file page request path %q, got %v", tt.wantPath, filePaths)
+			}
+		})
 	}
 }
 
