@@ -15,6 +15,9 @@ import (
 
 const apiBase = "https://goonbox.cr/api"
 
+// maxAlbumPages bounds pagination: far above any real album, so only a buggy or hostile API ever hits it.
+const maxAlbumPages = 1000
+
 type Scraper struct {
 	client    *http.Client
 	userAgent string
@@ -107,7 +110,7 @@ func (s *Scraper) Parse(albumURL string) ([]model.MediaItem, error) {
 			})
 		}
 
-		if page >= result.Pagination.LastPage {
+		if page >= result.Pagination.LastPage || page >= maxAlbumPages {
 			break
 		}
 		page++

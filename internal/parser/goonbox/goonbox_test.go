@@ -4,9 +4,11 @@ package goonbox
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/rajbahakdanyu/scraper/internal/model"
@@ -151,6 +153,46 @@ func TestParseGoonBoxAlbumPagination(t *testing.T) {
 	}
 	if items[0].Title != "p1.jpg" || items[1].Title != "p2.jpg" {
 		t.Errorf("expected p1.jpg then p2.jpg, got %s then %s", items[0].Title, items[1].Title)
+	}
+}
+
+// TestParseGoonBoxAlbumPaginationCapped ensures a hostile API that always
+// claims another page exists cannot keep Parse fetching forever: Parse
+// stops at maxAlbumPages requests and returns the items gathered so far
+// with no error.
+func TestParseGoonBoxAlbumPaginationCapped(t *testing.T) {
+	var requests int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&requests, 1)
+		if n > maxAlbumPages {
+			// Sentinel: fails the test fast instead of hanging if the
+			// pagination cap regresses.
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"images": []map[string]interface{}{{
+				"original_url":      fmt.Sprintf("https://cdn.example.com/img%d.jpg", n),
+				"original_filename": fmt.Sprintf("img%d.jpg", n),
+			}},
+			"pagination": map[string]int{"current_page": int(n), "last_page": int(n) + 1},
+		})
+	}))
+	defer ts.Close()
+
+	scraper := newTestGoonBoxScraper()
+	scraper.baseURL = ts.URL
+
+	items, err := scraper.Parse(ts.URL + "/a/hostile")
+	if err != nil {
+		t.Fatalf("expected no error when the page cap is hit, got: %v", err)
+	}
+	if got := atomic.LoadInt32(&requests); got != maxAlbumPages {
+		t.Errorf("expected exactly %d requests (the cap), got %d", maxAlbumPages, got)
+	}
+	if len(items) != maxAlbumPages {
+		t.Errorf("expected %d items collected before the cap, got %d", maxAlbumPages, len(items))
 	}
 }
 
