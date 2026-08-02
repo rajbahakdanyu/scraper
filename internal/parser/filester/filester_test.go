@@ -223,6 +223,56 @@ func TestParseFilesterFolderSkipsPermanentlyEmptyPage(t *testing.T) {
 	}
 }
 
+// TestParseFilesterFolderPermanentPageErrorNotRetried ensures that when a
+// page retry hits a permanent error (a 404 can never recover), the page
+// stops retrying immediately instead of burning the remaining attempts on
+// backoff sleeps — and is then skipped like any other unrecoverable page.
+func TestParseFilesterFolderPermanentPageErrorNotRetried(t *testing.T) {
+	var page2Requests int32
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/f/gone", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		switch r.URL.Query().Get("page") {
+		case "2":
+			if atomic.AddInt32(&page2Requests, 1) == 1 {
+				w.Write([]byte(`<html><body></body></html>`)) // transiently empty
+				return
+			}
+			w.WriteHeader(http.StatusNotFound) // permanent: retrying can't fix this
+		case "3":
+			w.Write([]byte(`<html><body>
+				<div class="file-item" data-name="p3.jpg" data-size="60" onclick="window.location.href='/d/p3'"></div>
+			</body></html>`))
+		default:
+			w.Write([]byte(`<html><body>
+				<button id="loadAllPagesBtn" data-total="3">Load all pages</button>
+				<div class="file-item" data-name="p1.jpg" data-size="40" onclick="window.location.href='/d/p1'"></div>
+			</body></html>`))
+		}
+	})
+	mux.HandleFunc("/v2/api/public/download", downloadTokenHandler("", false))
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	scraper := newTestFilesterScraper()
+	scraper.baseURL = ts.URL
+	scraper.cdnURLs = []string{ts.URL}
+
+	items, err := scraper.Parse(ts.URL + "/f/gone")
+	var partialErr *model.PartialError
+	if !errors.As(err, &partialErr) {
+		t.Fatalf("expected partial-result warning, got: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items (page 2 skipped after permanent 404), got %d", len(items))
+	}
+	if n := atomic.LoadInt32(&page2Requests); n != 2 {
+		t.Errorf("expected exactly 2 requests for page 2 (empty once, then 404 stops retries), got %d", n)
+	}
+}
+
 func TestParseFilesterSingleFile(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v2/api/public/download", downloadTokenHandler("", false))
@@ -261,6 +311,141 @@ func TestParseFilesterFolderNotFound(t *testing.T) {
 
 	if _, err := scraper.Parse(ts.URL + "/f/missing"); err == nil {
 		t.Error("expected error for missing folder")
+	}
+}
+
+// TestParseFilesterSingleFileNotFoundNotRetried guards against the bug
+// where a permanent failure from the download-token endpoint (a 404 means
+// the file simply doesn't exist) was retried with exponential backoff,
+// making the user wait through several sleeps just to be told the file is
+// gone.
+func TestParseFilesterSingleFileNotFoundNotRetried(t *testing.T) {
+	var tokenRequests int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&tokenRequests, 1)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	scraper := newTestFilesterScraper()
+	scraper.baseURL = ts.URL
+
+	if _, err := scraper.Parse(ts.URL + "/d/missing"); err == nil {
+		t.Fatal("expected error for missing file")
+	}
+	if n := atomic.LoadInt32(&tokenRequests); n != 1 {
+		t.Errorf("expected exactly 1 token request for a permanent 404, got %d", n)
+	}
+}
+
+// TestParseFilesterSingleFileMalformedTokenNotRetried ensures an
+// undecodable token response fails immediately: retrying the same request
+// can never make the body parse.
+func TestParseFilesterSingleFileMalformedTokenNotRetried(t *testing.T) {
+	var tokenRequests int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&tokenRequests, 1)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`not json`))
+	}))
+	defer ts.Close()
+
+	scraper := newTestFilesterScraper()
+	scraper.baseURL = ts.URL
+
+	if _, err := scraper.Parse(ts.URL + "/d/garbage"); err == nil {
+		t.Fatal("expected error for malformed token response")
+	}
+	if n := atomic.LoadInt32(&tokenRequests); n != 1 {
+		t.Errorf("expected exactly 1 token request for an undecodable response, got %d", n)
+	}
+}
+
+// TestParseFilesterSingleFileIncompleteTokenNotRetried ensures a
+// well-formed but useless token response (missing file/token fields) fails
+// immediately: validation errors can't be fixed by retrying either.
+func TestParseFilesterSingleFileIncompleteTokenNotRetried(t *testing.T) {
+	var tokenRequests int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&tokenRequests, 1)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"file": "", "token": ""})
+	}))
+	defer ts.Close()
+
+	scraper := newTestFilesterScraper()
+	scraper.baseURL = ts.URL
+
+	if _, err := scraper.Parse(ts.URL + "/d/incomplete"); err == nil {
+		t.Fatal("expected error for incomplete token response")
+	}
+	if n := atomic.LoadInt32(&tokenRequests); n != 1 {
+		t.Errorf("expected exactly 1 token request for an incomplete token, got %d", n)
+	}
+}
+
+// TestParseFilesterSingleFileRetriesTransientServerError ensures transient
+// failures keep the existing retry behavior: a 500 that recovers on the
+// next attempt still succeeds.
+func TestParseFilesterSingleFileRetriesTransientServerError(t *testing.T) {
+	var tokenRequests int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v2/api/public/download", func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&tokenRequests, 1) == 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		downloadTokenHandler("", false)(w, r)
+	})
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	scraper := newTestFilesterScraper()
+	scraper.baseURL = ts.URL
+	scraper.cdnURLs = []string{ts.URL}
+
+	items, err := scraper.Parse(ts.URL + "/d/flaky")
+	if err != nil {
+		t.Fatalf("expected transient 500 to be retried successfully, got: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if n := atomic.LoadInt32(&tokenRequests); n != 2 {
+		t.Errorf("expected 2 token requests (500 then success), got %d", n)
+	}
+}
+
+// TestParseFilesterSingleFileRetriesRateLimit ensures 429 (rate limiting)
+// is treated as transient and retried, same as a 5xx.
+func TestParseFilesterSingleFileRetriesRateLimit(t *testing.T) {
+	var tokenRequests int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v2/api/public/download", func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&tokenRequests, 1) == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		downloadTokenHandler("", false)(w, r)
+	})
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	scraper := newTestFilesterScraper()
+	scraper.baseURL = ts.URL
+	scraper.cdnURLs = []string{ts.URL}
+
+	items, err := scraper.Parse(ts.URL + "/d/limited")
+	if err != nil {
+		t.Fatalf("expected transient 429 to be retried successfully, got: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if n := atomic.LoadInt32(&tokenRequests); n != 2 {
+		t.Errorf("expected 2 token requests (429 then success), got %d", n)
 	}
 }
 

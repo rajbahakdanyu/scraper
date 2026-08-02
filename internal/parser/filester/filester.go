@@ -4,6 +4,7 @@ package filester
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net/http"
@@ -135,6 +136,29 @@ func backoffWithJitter(base time.Duration, attempt int) time.Duration {
 	return d + jitter
 }
 
+// nonRetryableError marks an error that will never succeed no matter how
+// many times it's retried (e.g. an HTTP 4xx client error other than
+// 408/429, or an undecodable/invalid token response that retrying can't
+// fix). Mirrors the downloader's error classification; deliberately
+// duplicated rather than shared (see BACKLOG.md).
+type nonRetryableError struct{ err error }
+
+func (e *nonRetryableError) Error() string { return e.err.Error() }
+func (e *nonRetryableError) Unwrap() error { return e.err }
+
+// isRetryableStatus reports whether an HTTP status code represents a
+// transient failure worth retrying (5xx, request timeout, rate limiting) as
+// opposed to a client error (bad URL, forbidden, not found, ...) that will
+// never succeed no matter how many times it's retried.
+func isRetryableStatus(code int) bool {
+	switch code {
+	case http.StatusRequestTimeout, http.StatusTooManyRequests:
+		return true
+	default:
+		return code >= 500
+	}
+}
+
 // parseFolder fetches every page of a folder listing, then resolves each
 // file's real download URL concurrently.
 //
@@ -254,6 +278,13 @@ func (s *Scraper) fetchFolderPage(id string, page int) (entries []folderEntry, p
 
 		doc, ferr := s.fetchDoc(pageURL)
 		if ferr != nil {
+			var nre *nonRetryableError
+			if errors.As(ferr, &nre) {
+				// A permanent error (e.g. the folder 404ing mid-scan)
+				// can never recover — stop retrying this page now
+				// instead of sleeping through the remaining attempts.
+				return nil, pageTotal, ferr
+			}
 			continue
 		}
 		if entries = extractFileItems(doc); len(entries) > 0 {
@@ -299,7 +330,10 @@ func extractFileItems(doc *goquery.Document) []folderEntry {
 // page-listing phase, and one that was found to hit the same kind of
 // rate limiting with zero retry coverage at all: any single failed
 // token request was silently dropped from the final result with no
-// error surfaced. Retries with backoff+jitter before giving up.
+// error surfaced. Retries with backoff+jitter before giving up —
+// except for permanent failures (a 4xx other than 408/429, an
+// undecodable or invalid token response), which no amount of retrying
+// can fix and so are returned immediately.
 func (s *Scraper) resolveFile(slug, knownName string) (model.MediaItem, error) {
 	var lastErr error
 	for attempt := 1; attempt <= maxResolveRetries; attempt++ {
@@ -309,6 +343,13 @@ func (s *Scraper) resolveFile(slug, knownName string) (model.MediaItem, error) {
 		item, err := s.resolveFileOnce(slug, knownName)
 		if err == nil {
 			return item, nil
+		}
+		var nre *nonRetryableError
+		if errors.As(err, &nre) {
+			// Client errors (404, 403, ...) and token responses that
+			// fail to decode or validate will never succeed no matter
+			// how many times we retry — stop immediately.
+			return model.MediaItem{}, err
 		}
 		lastErr = err
 	}
@@ -337,7 +378,11 @@ func (s *Scraper) resolveFileOnce(slug, knownName string) (model.MediaItem, erro
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return model.MediaItem{}, fmt.Errorf("filester: download token request failed (HTTP %d) for %s", resp.StatusCode, slug)
+		err := fmt.Errorf("filester: download token request failed (HTTP %d) for %s", resp.StatusCode, slug)
+		if !isRetryableStatus(resp.StatusCode) {
+			return model.MediaItem{}, &nonRetryableError{err}
+		}
+		return model.MediaItem{}, err
 	}
 
 	var tok struct {
@@ -347,27 +392,27 @@ func (s *Scraper) resolveFileOnce(slug, knownName string) (model.MediaItem, erro
 		Name   string `json:"name"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&tok); err != nil {
-		return model.MediaItem{}, err
+		return model.MediaItem{}, &nonRetryableError{err}
 	}
 	if tok.File == "" || tok.Token == "" {
-		return model.MediaItem{}, fmt.Errorf("filester: incomplete download token for %s", slug)
+		return model.MediaItem{}, &nonRetryableError{fmt.Errorf("filester: incomplete download token for %s", slug)}
 	}
 
 	server := tok.Server
 	if server == "" {
 		if len(s.cdnURLs) == 0 {
-			return model.MediaItem{}, fmt.Errorf("filester: no CDN server available for %s", slug)
+			return model.MediaItem{}, &nonRetryableError{fmt.Errorf("filester: no CDN server available for %s", slug)}
 		}
 		// #nosec G404 -- CDN load distribution is not a security decision.
 		server = s.cdnURLs[rand.Intn(len(s.cdnURLs))]
 	}
 	allowedURLs := append([]string{s.baseURL}, s.cdnURLs...)
 	if err := netutil.NewPolicy(allowedURLs...).ValidateURL(server); err != nil {
-		return model.MediaItem{}, fmt.Errorf("filester: unsafe CDN server for %s: %w", slug, err)
+		return model.MediaItem{}, &nonRetryableError{fmt.Errorf("filester: unsafe CDN server for %s: %w", slug, err)}
 	}
 	for _, segment := range strings.Split(tok.File, "/") {
 		if segment == "." || segment == ".." {
-			return model.MediaItem{}, fmt.Errorf("filester: unsafe CDN path for %s", slug)
+			return model.MediaItem{}, &nonRetryableError{fmt.Errorf("filester: unsafe CDN path for %s", slug)}
 		}
 	}
 
@@ -420,7 +465,11 @@ func (s *Scraper) fetchDoc(pageURL string) (*goquery.Document, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("filester: HTTP %d for %s", resp.StatusCode, pageURL)
+		err := fmt.Errorf("filester: HTTP %d for %s", resp.StatusCode, pageURL)
+		if !isRetryableStatus(resp.StatusCode) {
+			return nil, &nonRetryableError{err}
+		}
+		return nil, err
 	}
 
 	return goquery.NewDocumentFromReader(resp.Body)
