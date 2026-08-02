@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -57,7 +58,38 @@ func loadGlobalConfig(opts globalOptions) (*config.Config, error) {
 		cfg.SkipChecksums = opts.skipChecksums
 	}
 
+	// Single choke point covering both the --output flag and the config
+	// file's output_dir: the flag override above bypasses config.Load's own
+	// expansion, and the shell never expands a quoted `-o "~"` value.
+	outputDir, err := expandHomePath(cfg.OutputDir)
+	if err != nil {
+		return nil, err
+	}
+	cfg.OutputDir = outputDir
+
 	return cfg, nil
+}
+
+// expandHomePath expands a leading "~" in path to the user's home
+// directory: exactly "~" maps to the home dir and "~/..." to a path under
+// it. "~user" forms are rejected with a clear error — silently creating a
+// directory literally named "~user" is never what the user meant. Paths
+// without a leading "~" (relative or absolute) pass through untouched.
+func expandHomePath(path string) (string, error) {
+	if path == "" || path[0] != '~' {
+		return path, nil
+	}
+	if path != "~" && !strings.HasPrefix(path, "~/") {
+		return "", fmt.Errorf("cannot expand %q: ~user home directories are not supported", path)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "", fmt.Errorf("expand %q: home directory unavailable", path)
+	}
+	if path == "~" {
+		return home, nil
+	}
+	return filepath.Join(home, strings.TrimPrefix(path, "~/")), nil
 }
 
 func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {

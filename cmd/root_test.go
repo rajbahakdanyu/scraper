@@ -147,6 +147,76 @@ func TestLoadGlobalConfigHonorsExplicitDefaultValues(t *testing.T) {
 	}
 }
 
+func TestExpandHomePath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	tests := []struct {
+		name    string
+		in      string
+		want    string
+		wantErr bool
+	}{
+		{"bare tilde expands to the home directory", "~", home, false},
+		{"tilde slash expands under the home directory", "~/Downloads/foo", filepath.Join(home, "Downloads/foo"), false},
+		{"tilde user is rejected", "~user/x", "", true},
+		{"tilde user without a slash is rejected", "~user", "", true},
+		{"relative path passes through unchanged", "relative/dir", "relative/dir", false},
+		{"dot passes through unchanged", ".", ".", false},
+		{"absolute path passes through unchanged", "/tmp/out", "/tmp/out", false},
+		{"empty path passes through unchanged", "", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := expandHomePath(tt.in)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expandHomePath(%q) expected an error, got %q", tt.in, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("expandHomePath(%q) unexpected error: %v", tt.in, err)
+			}
+			if got != tt.want {
+				t.Errorf("expandHomePath(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadGlobalConfigExpandsHomeInOutputFlag(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// A nonexistent config path yields defaults, isolating the flag path.
+	configPath := filepath.Join(t.TempDir(), "nonexistent.yaml")
+
+	cfg, err := loadGlobalConfig(globalOptions{
+		configPath: configPath,
+		output:     "~/out",
+		outputSet:  true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(home, "out"); cfg.OutputDir != want {
+		t.Errorf("OutputDir = %q, want %q (a quoted --output ~/out must not stay literal)", cfg.OutputDir, want)
+	}
+}
+
+func TestLoadGlobalConfigRejectsTildeUserOutput(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "nonexistent.yaml")
+
+	_, err := loadGlobalConfig(globalOptions{
+		configPath: configPath,
+		output:     "~user/x",
+		outputSet:  true,
+	})
+	if err == nil {
+		t.Fatal("expected an error for a ~user output dir instead of a literal ~user directory")
+	}
+}
+
 func TestLoadGlobalConfigReturnsMalformedYAMLError(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "bad.yaml")
 	if err := os.WriteFile(configPath, []byte("output_dir: [\n"), 0600); err != nil {
