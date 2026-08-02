@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rajbahakdanyu/scraper/internal/model"
@@ -13,6 +14,9 @@ import (
 )
 
 const apiBase = "https://api.cyberdrop.cr/api"
+
+// maxConcurrentResolutions bounds how many album files resolve at once.
+const maxConcurrentResolutions = 10
 
 type Scraper struct {
 	client    *http.Client
@@ -167,22 +171,43 @@ func (s *Scraper) parseAlbum(slug string) ([]model.MediaItem, error) {
 	}
 
 	var items []model.MediaItem
-	var resolveErrs []error
-	for _, f := range album.Files {
-		// Resolve each file's download URL
-		fileItems, err := s.parseFile(f.Slug)
-		if err != nil {
-			resolveErrs = append(resolveErrs, fmt.Errorf("file %s: %w", f.Slug, err))
+	// Resolve files concurrently (bounded fan-out); results and errors are
+	// recorded by index so album order is preserved regardless of which
+	// resolution finishes first.
+	resolved := make([]model.MediaItem, len(album.Files))
+	resolveErrs := make([]error, len(album.Files))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, maxConcurrentResolutions)
+
+	for i, f := range album.Files {
+		wg.Add(1)
+		go func(idx int, fileSlug string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			fileItems, err := s.parseFile(fileSlug)
+			if err != nil {
+				resolveErrs[idx] = fmt.Errorf("file %s: %w", fileSlug, err)
+				return
+			}
+			resolved[idx] = fileItems[0]
+		}(i, f.Slug)
+	}
+	wg.Wait()
+
+	for i, f := range album.Files {
+		if resolveErrs[i] != nil {
 			continue
 		}
+		item := resolved[i]
 		// Use album metadata for title/size if available
 		if f.Name != "" {
-			fileItems[0].Title = f.Name
+			item.Title = f.Name
 		}
 		if f.Size > 0 {
-			fileItems[0].Size = f.Size
+			item.Size = f.Size
 		}
-		items = append(items, fileItems[0])
+		items = append(items, item)
 	}
 
 	if len(items) == 0 {
