@@ -22,6 +22,9 @@ type Downloader interface {
 	Prepare(item model.MediaItem)
 	Download(item model.MediaItem, dest string) error
 	Cancel(item model.MediaItem)
+	// Shutdown cancels every in-flight download and closes the progress
+	// channel once they have unwound.
+	Shutdown()
 	Progress() <-chan model.ProgressEvent
 }
 
@@ -188,6 +191,11 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "ctrl+c", "esc":
 			d.quitting = true
+			if d.downloader != nil {
+				// Cancel in-flight downloads and close the progress
+				// channel (drainProgress's range loop then exits).
+				d.downloader.Shutdown()
+			}
 			return d, tea.Quit
 		case "up", "k":
 			d.table.MoveUp(1)
@@ -281,8 +289,8 @@ func (d *Dashboard) handleScrapeResult(msg scrapeResultMsg) (tea.Model, tea.Cmd)
 }
 
 // drainProgress reads from the downloader's progress channel in a loop
-// and sends each event to the tea program via sendFunc. This runs for
-// the lifetime of the dashboard and doesn't block the event loop.
+// and sends each event to the tea program via sendFunc. It exits when the
+// downloader closes the channel (Shutdown) and doesn't block the event loop.
 func (d *Dashboard) drainProgress() {
 	if d.downloader == nil || d.sendFunc == nil {
 		return

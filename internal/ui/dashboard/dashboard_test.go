@@ -19,6 +19,7 @@ type fakeDownloader struct {
 	ch        chan model.ProgressEvent
 	calls     []model.MediaItem
 	cancelled []model.MediaItem
+	shutdowns int
 }
 
 func (f *fakeDownloader) Prepare(item model.MediaItem) {}
@@ -33,6 +34,12 @@ func (f *fakeDownloader) Download(item model.MediaItem, dest string) error {
 func (f *fakeDownloader) Cancel(item model.MediaItem) {
 	f.mu.Lock()
 	f.cancelled = append(f.cancelled, item)
+	f.mu.Unlock()
+}
+
+func (f *fakeDownloader) Shutdown() {
+	f.mu.Lock()
+	f.shutdowns++
 	f.mu.Unlock()
 }
 
@@ -150,6 +157,27 @@ func TestDashboardQuit(t *testing.T) {
 	}
 	if !d.quitting {
 		t.Error("expected quitting to be true")
+	}
+}
+
+func TestDashboardQuitShutsDownDownloader(t *testing.T) {
+	// Every quit key (q, ctrl+c, esc) must trigger downloader shutdown so
+	// in-flight downloads are cancelled and the progress channel closes.
+	for _, key := range []tea.KeyMsg{
+		{Type: tea.KeyRunes, Runes: []rune("q")},
+		{Type: tea.KeyCtrlC},
+		{Type: tea.KeyEsc},
+	} {
+		fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 1)}
+		d := New(instantItems(nil), fd, t.TempDir(), "test")
+
+		d.Update(key)
+
+		fd.mu.Lock()
+		if fd.shutdowns != 1 {
+			t.Errorf("key %q: expected Shutdown to be called once, got %d", key.String(), fd.shutdowns)
+		}
+		fd.mu.Unlock()
 	}
 }
 

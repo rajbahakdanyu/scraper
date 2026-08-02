@@ -441,6 +441,10 @@ func TestAudioCopyable(t *testing.T) {
 type fakeYouTube struct {
 	server      *httptest.Server
 	playerPosts atomic.Int32
+	// blockStream makes /stream hang until the client goes away, for
+	// in-flight cancellation tests; streamRequests counts /stream hits.
+	blockStream    bool
+	streamRequests atomic.Int32
 }
 
 // startFakeYouTube serves every endpoint the ytdl client touches: the front
@@ -469,6 +473,11 @@ func startFakeYouTube(t *testing.T, videoID, title, content string) *fakeYouTube
 		case strings.HasPrefix(r.URL.Path, "/s/player/"):
 			fmt.Fprint(w, "// fake base.js; the fake stream URL has no n-parameter to decode")
 		case r.URL.Path == "/stream":
+			f.streamRequests.Add(1)
+			if f.blockStream {
+				<-r.Context().Done() // hang until the client aborts
+				return
+			}
 			if rangeParam := r.URL.Query().Get("range"); rangeParam != "" {
 				var start, end int
 				if _, err := fmt.Sscanf(rangeParam, "%d-%d", &start, &end); err != nil || end >= len(content) {
@@ -574,4 +583,85 @@ func TestDownloadWithoutParseFetchesVideoInfoOnce(t *testing.T) {
 		t.Errorf("video info fetches = %d, want exactly 1", got)
 	}
 	assertDownloadedFile(t, dest, "Test Video.mp4", content)
+}
+
+// waitProgressClosed drains ch until it closes, failing the test if that
+// takes longer than timeout.
+func waitProgressClosed(t *testing.T, ch <-chan model.ProgressEvent, timeout time.Duration) {
+	t.Helper()
+	deadline := time.After(timeout)
+	for {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				return
+			}
+		case <-deadline:
+			t.Fatal("progress channel was not closed")
+		}
+	}
+}
+
+func TestDownloaderShutdownCancelsInFlightDownload(t *testing.T) {
+	const videoID = "shutdown01"
+	fake := startFakeYouTube(t, videoID, "Slow Video", "some stream content")
+	fake.blockStream = true
+
+	scraper := NewYouTubeScraper()
+	d := NewDownloaderWithConfig(scraper, DownloaderConfig{Concurrency: 1})
+	fake.wire(scraper)
+
+	item := model.MediaItem{URL: videoWatchURL(videoID), Title: "Slow Video", Type: model.MediaTypeVideo}
+	downloadDone := make(chan error, 1)
+	go func() { downloadDone <- d.Download(item, t.TempDir()) }()
+
+	// Wait until the stream request is genuinely in flight.
+	startDeadline := time.Now().Add(5 * time.Second)
+	for fake.streamRequests.Load() == 0 {
+		if time.Now().After(startDeadline) {
+			t.Fatal("stream request never started")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	start := time.Now()
+	d.Shutdown()
+
+	select {
+	case err := <-downloadDone:
+		if err == nil || !strings.Contains(err.Error(), "cancelled") {
+			t.Fatalf("expected a cancellation error, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Shutdown did not cancel the in-flight download")
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("in-flight download took %v to abort after Shutdown", elapsed)
+	}
+
+	// Once the in-flight download has returned, the progress channel must
+	// close so a consumer ranging over Progress() terminates.
+	waitProgressClosed(t, d.Progress(), 5*time.Second)
+}
+
+func TestDownloaderFailsFastAfterShutdown(t *testing.T) {
+	d := NewDownloaderWithConfig(NewYouTubeScraper(), DownloaderConfig{Concurrency: 1})
+	d.Shutdown()
+
+	// The channel closes asynchronously; the fail-fast path must never
+	// send on it (a send on a closed channel would panic).
+	waitProgressClosed(t, d.Progress(), 5*time.Second)
+
+	start := time.Now()
+	item := model.MediaItem{URL: videoWatchURL("shutdown02"), Title: "Late", Type: model.MediaTypeVideo}
+	err := d.Download(item, t.TempDir())
+	if err == nil {
+		t.Fatal("expected Download to fail fast after Shutdown")
+	}
+	if !strings.Contains(err.Error(), "shut down") {
+		t.Errorf("expected a shutdown error, got %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("Download blocked for %v after Shutdown", elapsed)
+	}
 }

@@ -49,6 +49,12 @@ type Downloader struct {
 	limiter       *rate.Limiter
 	skipChecksums bool
 	paths         *fileutil.PathAllocator
+	// wg tracks in-flight Download calls. Shutdown closes the progress
+	// channel only after wg drains, so a sendProgress can never hit a
+	// closed channel. shuttingDown (guarded by mu) makes post-Shutdown
+	// Download calls fail fast instead of joining wg.
+	wg           sync.WaitGroup
+	shuttingDown bool
 }
 
 // NewDownloaderWithConfig creates a Downloader using settings from a config.
@@ -107,16 +113,26 @@ func (d *Downloader) SetSkipChecksums(skip bool) {
 func (d *Downloader) Download(item model.MediaItem, dest string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	d.mu.Lock()
+	if d.shuttingDown {
+		// Fail fast after Shutdown. This path is not tracked by d.wg, so
+		// it must not sendProgress — the channel may already be closed.
+		d.mu.Unlock()
+		cancel()
+		return fmt.Errorf("downloader is shut down: %s", item.URL)
+	}
+	d.wg.Add(1)
 	delete(d.queued, item.Key())
 	if _, ok := d.cancelled[item.Key()]; ok {
 		delete(d.cancelled, item.Key())
 		d.mu.Unlock()
 		cancel()
 		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled})
+		d.wg.Done()
 		return fmt.Errorf("download cancelled: %s", item.URL)
 	}
 	d.cancelMap[item.Key()] = cancel
 	d.mu.Unlock()
+	defer d.wg.Done()
 	defer func() {
 		d.mu.Lock()
 		delete(d.cancelMap, item.Key())
@@ -442,7 +458,40 @@ func (d *Downloader) Cancel(item model.MediaItem) {
 	}
 }
 
-// Progress returns a read-only channel of download progress events.
+// Shutdown cancels every active download — aborting in-flight HTTP
+// requests and unblocking downloads still waiting on the concurrency
+// semaphore — and closes the progress channel once the last in-flight
+// Download returns, so a consumer ranging over Progress() terminates.
+// sendProgress is only ever called from Download goroutines (tracked by
+// d.wg), so closing after they all return can never panic with a send on
+// a closed channel. Shutdown is idempotent and non-blocking (the channel
+// closes asynchronously); afterwards Download calls fail fast instead of
+// starting new work.
+func (d *Downloader) Shutdown() {
+	d.mu.Lock()
+	if d.shuttingDown {
+		d.mu.Unlock()
+		return
+	}
+	d.shuttingDown = true
+	cancels := make([]context.CancelFunc, 0, len(d.cancelMap))
+	for _, cancel := range d.cancelMap {
+		cancels = append(cancels, cancel)
+	}
+	d.mu.Unlock()
+
+	for _, cancel := range cancels {
+		cancel()
+	}
+
+	go func() {
+		d.wg.Wait()
+		close(d.progress)
+	}()
+}
+
+// Progress returns a read-only channel of download progress events. The
+// channel is closed by Shutdown once all in-flight downloads have returned.
 func (d *Downloader) Progress() <-chan model.ProgressEvent {
 	return d.progress
 }

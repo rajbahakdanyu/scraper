@@ -814,3 +814,279 @@ func TestDownloadAcceptsChunkedResponseMatchingItemSize(t *testing.T) {
 		t.Fatalf("final file = %v, %v", info, err)
 	}
 }
+
+// waitProgressClosed drains ch until it closes, failing the test if that
+// takes longer than timeout.
+func waitProgressClosed(t *testing.T, ch <-chan model.ProgressEvent, timeout time.Duration) {
+	t.Helper()
+	deadline := time.After(timeout)
+	for {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				return
+			}
+		case <-deadline:
+			t.Fatal("progress channel was not closed")
+		}
+	}
+}
+
+func TestShutdownCancelsInFlightDownload(t *testing.T) {
+	requestStarted := make(chan struct{})
+	var once sync.Once
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		once.Do(func() { close(requestStarted) })
+		<-r.Context().Done() // block until the client aborts
+	}))
+	defer ts.Close()
+
+	dl := newTestDownloader(1, 0, "")
+	item := model.MediaItem{URL: ts.URL, Title: "slow.bin"}
+
+	downloadDone := make(chan error, 1)
+	go func() { downloadDone <- dl.Download(item, t.TempDir()) }()
+	<-requestStarted
+
+	start := time.Now()
+	dl.Shutdown()
+
+	select {
+	case err := <-downloadDone:
+		if err == nil || !strings.Contains(err.Error(), "cancelled") {
+			t.Fatalf("expected a cancellation error, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Shutdown did not cancel the in-flight download")
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("in-flight download took %v to abort after Shutdown", elapsed)
+	}
+
+	// Once the in-flight download has returned, the progress channel must
+	// close so a consumer ranging over Progress() terminates.
+	waitProgressClosed(t, dl.Progress(), 5*time.Second)
+}
+
+func TestShutdownUnblocksQueuedDownloads(t *testing.T) {
+	firstStarted := make(chan struct{})
+	var requests int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&requests, 1) == 1 {
+			close(firstStarted)
+		}
+		<-r.Context().Done()
+	}))
+	defer ts.Close()
+
+	dl := newTestDownloader(1, 0, "")
+	first := model.MediaItem{ID: "first", URL: ts.URL + "/first", Title: "first.bin"}
+	second := model.MediaItem{ID: "second", URL: ts.URL + "/second", Title: "second.bin"}
+	dest := t.TempDir()
+
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- dl.Download(first, dest) }()
+	<-firstStarted
+
+	secondDone := make(chan error, 1)
+	go func() { secondDone <- dl.Download(second, dest) }()
+
+	// Wait until the second download is queued behind the semaphore.
+	deadline := time.Now().Add(time.Second)
+	for {
+		dl.mu.Lock()
+		_, waiting := dl.cancelMap[second.Key()]
+		dl.mu.Unlock()
+		if waiting {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("second download never entered the queue")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	dl.Shutdown()
+	for name, done := range map[string]chan error{"first": firstDone, "second": secondDone} {
+		select {
+		case err := <-done:
+			if err == nil || !strings.Contains(err.Error(), "cancelled") {
+				t.Errorf("%s download returned %v, want a cancellation", name, err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Errorf("%s download did not return after Shutdown", name)
+		}
+	}
+	if got := atomic.LoadInt32(&requests); got != 1 {
+		t.Errorf("queued download reached the server after Shutdown; requests=%d", got)
+	}
+}
+
+func TestShutdownDeliversBufferedEventsBeforeClosing(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("ok"))
+	}))
+	defer ts.Close()
+
+	dl := newTestDownloader(1, 0, "")
+	item := model.MediaItem{URL: ts.URL, Title: "quick.bin"}
+	if err := dl.Download(item, t.TempDir()); err != nil {
+		t.Fatalf("download failed: %v", err)
+	}
+
+	dl.Shutdown()
+
+	// Events the download emitted before Shutdown must still be delivered
+	// to a consumer that only starts ranging after Shutdown returned.
+	var sawCompleted bool
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case evt, ok := <-dl.Progress():
+			if !ok {
+				if !sawCompleted {
+					t.Error("progress channel closed before the completed event was delivered")
+				}
+				return
+			}
+			if evt.Status == model.StatusCompleted {
+				sawCompleted = true
+			}
+		case <-deadline:
+			t.Fatal("progress channel was not closed after Shutdown")
+		}
+	}
+}
+
+func TestDownloadFailsFastAfterShutdown(t *testing.T) {
+	dl := newTestDownloader(1, 0, "")
+	dl.Shutdown()
+
+	// The channel closes asynchronously; the fail-fast path must never
+	// send on it (a send on a closed channel would panic).
+	waitProgressClosed(t, dl.Progress(), 5*time.Second)
+
+	start := time.Now()
+	err := dl.Download(model.MediaItem{URL: "http://example.com/x", Title: "x"}, t.TempDir())
+	if err == nil {
+		t.Fatal("expected Download to fail fast after Shutdown")
+	}
+	if !strings.Contains(err.Error(), "shut down") {
+		t.Errorf("expected a shutdown error, got %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("Download blocked for %v after Shutdown", elapsed)
+	}
+}
+
+func TestShutdownIsIdempotent(t *testing.T) {
+	dl := newTestDownloader(1, 0, "")
+	dl.Shutdown()
+	dl.Shutdown() // a second call must not block or close the channel twice
+	waitProgressClosed(t, dl.Progress(), 5*time.Second)
+}
+
+func TestShutdownKeepsPartialFileForResume(t *testing.T) {
+	gotBytes := make(chan struct{})
+	var once sync.Once
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "20")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("PARTIAL8"))
+		w.(http.Flusher).Flush()
+		once.Do(func() { close(gotBytes) })
+		<-r.Context().Done()
+	}))
+	defer ts.Close()
+
+	dl := newTestDownloader(1, 0, "")
+	item := model.MediaItem{URL: ts.URL, Title: "resume_shutdown.bin"}
+	dest := t.TempDir()
+
+	downloadDone := make(chan error, 1)
+	go func() { downloadDone <- dl.Download(item, dest) }()
+
+	// Wait until the partial bytes have actually landed on disk.
+	tempPath := filepath.Join(dest, "resume_shutdown.bin.part")
+	<-gotBytes
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if info, err := os.Stat(tempPath); err == nil && info.Size() == 8 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("partial bytes never landed on disk")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	dl.Shutdown()
+	select {
+	case err := <-downloadDone:
+		if err == nil || !strings.Contains(err.Error(), "cancelled") {
+			t.Fatalf("expected a cancellation error, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Shutdown did not cancel the in-flight download")
+	}
+
+	info, err := os.Stat(tempPath)
+	if err != nil {
+		t.Fatalf("interrupted download must keep its .part file for resume: %v", err)
+	}
+	if info.Size() != 8 {
+		t.Errorf("expected .part to keep its 8 downloaded bytes, got %d", info.Size())
+	}
+}
+
+// TestShutdownWithConcurrentDownloads hammers the sendProgress-vs-close
+// race: many in-flight downloads emitting progress events while Shutdown
+// cancels them and closes the channel. Run with -race; a send on a closed
+// channel would panic.
+func TestShutdownWithConcurrentDownloads(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		flusher, _ := w.(http.Flusher)
+		for i := 0; i < 100; i++ {
+			if _, err := w.Write(make([]byte, 1024)); err != nil {
+				return // client went away
+			}
+			if flusher != nil {
+				flusher.Flush()
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}))
+	defer ts.Close()
+
+	dl := newTestDownloader(4, 0, "")
+	dest := t.TempDir()
+	errs := make(chan error, 8)
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			item := model.MediaItem{
+				ID:    fmt.Sprintf("%d", i),
+				URL:   ts.URL,
+				Title: fmt.Sprintf("file%d.bin", i),
+			}
+			errs <- dl.Download(item, dest)
+		}(i)
+	}
+
+	// Let the downloads get genuinely mid-body, then shut down.
+	time.Sleep(50 * time.Millisecond)
+	dl.Shutdown()
+
+	waitProgressClosed(t, dl.Progress(), 10*time.Second)
+
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil && !strings.Contains(err.Error(), "cancelled") {
+			t.Errorf("unexpected download error after Shutdown: %v", err)
+		}
+	}
+}

@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 
 	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 	"github.com/rajbahakdanyu/scraper/internal/model"
@@ -99,6 +101,24 @@ func runPlain(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error
 		}
 		dest = albumDest
 	}
+
+	// SIGINT/SIGTERM triggers the same downloader shutdown the TUI quit
+	// path uses: in-flight downloads are cancelled and the progress channel
+	// closes, which ends the consumer loop below. signal.Notify runs here
+	// (not inside the watcher goroutine) so no signal can arrive before the
+	// handler is registered.
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signals)
+	watcherDone := make(chan struct{})
+	defer close(watcherDone)
+	go func() {
+		select {
+		case <-signals:
+			dl.Shutdown()
+		case <-watcherDone:
+		}
+	}()
 
 	printer := newPlainPrinter(out)
 	errs := make([]error, len(items))

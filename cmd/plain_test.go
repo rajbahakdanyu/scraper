@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/rajbahakdanyu/scraper/internal/model"
 )
@@ -23,13 +26,18 @@ type fakePlainDownloader struct {
 	mu         sync.Mutex
 	downloaded []model.MediaItem
 	dests      []string
+	// blockOnDownload makes Download hang until Shutdown is called, for
+	// exercising the signal-triggered shutdown path.
+	blockOnDownload bool
+	shutdownCh      chan struct{}
 }
 
 func newFakePlainDownloader() *fakePlainDownloader {
 	return &fakePlainDownloader{
-		progress: make(chan model.ProgressEvent, 100),
-		scripted: map[string][]model.ProgressEvent{},
-		errs:     map[string]error{},
+		progress:   make(chan model.ProgressEvent, 100),
+		scripted:   map[string][]model.ProgressEvent{},
+		errs:       map[string]error{},
+		shutdownCh: make(chan struct{}),
 	}
 }
 
@@ -39,7 +47,12 @@ func (f *fakePlainDownloader) Download(item model.MediaItem, dest string) error 
 	f.mu.Lock()
 	f.downloaded = append(f.downloaded, item)
 	f.dests = append(f.dests, dest)
+	block := f.blockOnDownload
 	f.mu.Unlock()
+	if block {
+		<-f.shutdownCh
+		return fmt.Errorf("download cancelled: %s", item.URL)
+	}
 	for _, evt := range f.scripted[item.URL] {
 		evt.Item = item
 		f.progress <- evt
@@ -48,6 +61,16 @@ func (f *fakePlainDownloader) Download(item model.MediaItem, dest string) error 
 }
 
 func (f *fakePlainDownloader) Cancel(item model.MediaItem) {}
+
+func (f *fakePlainDownloader) Shutdown() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	select {
+	case <-f.shutdownCh:
+	default:
+		close(f.shutdownCh)
+	}
+}
 
 func (f *fakePlainDownloader) Progress() <-chan model.ProgressEvent { return f.progress }
 
@@ -275,6 +298,56 @@ func TestRunPlainTerminatesOnClosedProgressChannel(t *testing.T) {
 	}
 	if len(dl.downloaded) != 1 {
 		t.Errorf("expected the item to be downloaded, got %d downloads", len(dl.downloaded))
+	}
+}
+
+func TestRunPlainShutsDownOnInterrupt(t *testing.T) {
+	// Safety net: with at least one Notify registered for SIGINT, the
+	// self-sent signal below can never terminate the test process, even if
+	// it arrives before runPlain's own watcher is ready.
+	safety := make(chan os.Signal, 1)
+	signal.Notify(safety, os.Interrupt)
+	defer signal.Stop(safety)
+
+	dest := t.TempDir()
+	dl := newFakePlainDownloader()
+	dl.blockOnDownload = true
+	items := []model.MediaItem{{URL: "https://example.com/one.mp4", Title: "one.mp4"}}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runPlain(dl, itemsScraper(items, nil), dest, "", &bytes.Buffer{})
+	}()
+
+	// Wait until the download is genuinely in flight, so the interrupt
+	// exercises the shutdown path rather than racing startup.
+	startDeadline := time.Now().Add(2 * time.Second)
+	for {
+		dl.mu.Lock()
+		started := len(dl.downloaded) == 1
+		dl.mu.Unlock()
+		if started {
+			break
+		}
+		if time.Now().After(startDeadline) {
+			t.Fatal("download never started")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	if err := syscall.Kill(syscall.Getpid(), syscall.SIGINT); err != nil {
+		t.Fatalf("send SIGINT: %v", err)
+	}
+
+	// The blocked download only returns once the signal watcher triggers
+	// Shutdown, so a prompt return proves the wiring.
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Error("expected a non-nil error after interrupting a download")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("runPlain did not return after SIGINT")
 	}
 }
 
