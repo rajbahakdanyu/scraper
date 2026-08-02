@@ -53,19 +53,37 @@ func VerifyChecksum(path string) (present, matches bool, err error) {
 		}
 		return true, false, err
 	}
-	fields := strings.Fields(string(data))
-	if len(fields) < 1 {
+	// Parse the first line in sha256sum format: "<hex> <mode><filename>",
+	// where <mode> is a marker character — ' ' (text, what WriteChecksum
+	// writes) or '*' (binary). The filename may contain spaces, so split
+	// only on the first space instead of fields-splitting.
+	content := strings.TrimSpace(string(data))
+	if content == "" {
 		return true, false, fmt.Errorf("empty checksum sidecar")
 	}
-	expected, err := hex.DecodeString(fields[0])
+	line, _, _ := strings.Cut(content, "\n")
+	line = strings.TrimSpace(line)
+	digest, rest, _ := strings.Cut(line, " ")
+	expected, err := hex.DecodeString(digest)
 	if err != nil || len(expected) != sha256.Size {
-		return true, false, fmt.Errorf("invalid SHA-256 digest %q", fields[0])
+		return true, false, fmt.Errorf("invalid SHA-256 digest %q", digest)
+	}
+	// rest is "<mode><filename>"; fewer than two characters means no
+	// filename was recorded, which is tolerated as before. If the sidecar
+	// names a different file — base names compared, since the sidecar
+	// stores the name as written at creation (WriteChecksum writes the
+	// basename) — it was written for something else (renamed file, copied
+	// folder) and says nothing about this file. Report it as absent, the
+	// same as a missing sidecar, so the caller re-verifies rather than
+	// trusting a stale association or failing hard.
+	if len(rest) > 1 && filepath.Base(rest[1:]) != filepath.Base(path) {
+		return false, false, nil
 	}
 	got, err := sha256File(path)
 	if err != nil {
 		return true, false, err
 	}
-	return true, strings.EqualFold(got, fields[0]), nil
+	return true, strings.EqualFold(got, digest), nil
 }
 
 func sha256File(path string) (string, error) {
