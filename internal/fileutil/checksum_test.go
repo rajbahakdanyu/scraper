@@ -3,6 +3,7 @@ package fileutil
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -67,6 +68,59 @@ func TestVerifyChecksumFilenameWithSpaces(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := WriteChecksum(path); err != nil {
+		t.Fatal(err)
+	}
+	present, matches, err := VerifyChecksum(path)
+	if err != nil || !present || !matches {
+		t.Fatalf("verification = present %v matches %v err %v", present, matches, err)
+	}
+}
+
+func TestVerifyChecksumRejectsHashOnlySidecar(t *testing.T) {
+	// A hash-only sidecar line (just the digest, no filename field at all)
+	// carries zero evidence it was written for this file. Even when the
+	// hash matches the file's bytes it must be reported as absent, the
+	// same as a mismatched-name sidecar, so the caller re-verifies
+	// instead of trusting an unattributed digest.
+	path := filepath.Join(t.TempDir(), "file.bin")
+	if err := os.WriteFile(path, []byte("content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteChecksum(path); err != nil {
+		t.Fatal(err)
+	}
+	sidecar, err := os.ReadFile(ChecksumPath(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, _, _ := strings.Cut(string(sidecar), " ")
+	if err := os.WriteFile(ChecksumPath(path), []byte(hash+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	present, matches, err := VerifyChecksum(path)
+	if err != nil || present || matches {
+		t.Fatalf("verification = present %v matches %v err %v", present, matches, err)
+	}
+}
+
+func TestVerifyChecksumAcceptsGNUBinaryMarker(t *testing.T) {
+	// GNU "sha256sum -b" writes "<hash> *<name>": the mode marker between
+	// the single separating space and the filename is '*' instead of ' '.
+	// The parser must tolerate that form and still verify.
+	path := filepath.Join(t.TempDir(), "file.bin")
+	if err := os.WriteFile(path, []byte("content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteChecksum(path); err != nil {
+		t.Fatal(err)
+	}
+	sidecar, err := os.ReadFile(ChecksumPath(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, _, _ := strings.Cut(string(sidecar), " ")
+	line := hash + " *" + filepath.Base(path) + "\n"
+	if err := os.WriteFile(ChecksumPath(path), []byte(line), 0644); err != nil {
 		t.Fatal(err)
 	}
 	present, matches, err := VerifyChecksum(path)

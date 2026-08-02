@@ -69,14 +69,16 @@ func VerifyChecksum(path string) (present, matches bool, err error) {
 		return true, false, fmt.Errorf("invalid SHA-256 digest %q", digest)
 	}
 	// rest is "<mode><filename>"; fewer than two characters means no
-	// filename was recorded, which is tolerated as before. If the sidecar
-	// names a different file — base names compared, since the sidecar
-	// stores the name as written at creation (WriteChecksum writes the
-	// basename) — it was written for something else (renamed file, copied
-	// folder) and says nothing about this file. Report it as absent, the
-	// same as a missing sidecar, so the caller re-verifies rather than
-	// trusting a stale association or failing hard.
-	if len(rest) > 1 && filepath.Base(rest[1:]) != filepath.Base(path) {
+	// filename was recorded (hash-only line, or a mode marker with no
+	// name). Such a sidecar carries zero evidence it was written for this
+	// file, so it is treated exactly like one that names a different file
+	// — base names compared, since the sidecar stores the name as written
+	// at creation (WriteChecksum writes the basename) — i.e. written for
+	// something else (renamed file, copied folder) or for nothing
+	// identifiable at all. Report it as absent, the same as a missing
+	// sidecar, so the caller re-verifies rather than trusting a stale
+	// association or failing hard.
+	if len(rest) <= 1 || filepath.Base(rest[1:]) != filepath.Base(path) {
 		return false, false, nil
 	}
 	got, err := sha256File(path)
