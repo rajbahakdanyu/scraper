@@ -3,6 +3,7 @@ package bunker
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -39,9 +40,10 @@ func (s *Scraper) Name() string {
 	return "bunker"
 }
 
-// Parse fetches a Bunker album page, extracts file links, visits each file
-// page to get the dl.bunkr.cr link, then uses the bunkr API + signing service
-// to resolve the final signed CDN download URL.
+// Parse fetches a Bunker album page, extracts file links, and visits each
+// file page to get the dl.bunkr.cr link. The final signed CDN download URL
+// (API + signing service) is NOT resolved at parse time — signatures carry
+// an expiry, so each item's Resolve func signs lazily at download time.
 func (s *Scraper) Parse(albumURL string) ([]model.MediaItem, error) {
 	// Strip query params — ?advanced=1 switches to JS-rendered mode
 	// which doesn't have server-side file links in the HTML.
@@ -101,8 +103,10 @@ func (s *Scraper) Parse(albumURL string) ([]model.MediaItem, error) {
 	return result, model.NewPartialError("bunker album", errs)
 }
 
-// parseFilePage visits a /f/<id> page to get the dl.bunkr.cr download link,
-// then resolves the signed CDN URL via the API.
+// parseFilePage visits a /f/<id> page to get the dl.bunkr.cr download link
+// and the file's title — the stable metadata. The signed CDN URL itself is
+// deferred to the item's Resolve func: the API + signing exchange runs at
+// download time so the signature can't expire sitting in the queue.
 func (s *Scraper) parseFilePage(fileURL string) (model.MediaItem, error) {
 	doc, err := s.fetchDoc(fileURL)
 	if err != nil {
@@ -160,24 +164,24 @@ func (s *Scraper) parseFilePage(fileURL string) (model.MediaItem, error) {
 		title = fileID
 	}
 
-	// Use the API to get the signed CDN URL
-	mediaURL, err := s.getSignedMediaURL(dlURL, fileID, title)
-	if err != nil {
-		return model.MediaItem{}, err
-	}
-
+	// The item carries the stable dl.bunkr.cr URL (meaningful for display,
+	// unique per file for MediaItem.Key()); the signed CDN URL is produced
+	// lazily at download time via the API + signing service.
 	return model.MediaItem{
-		URL:      mediaURL,
+		URL:      dlURL.String(),
 		Title:    title,
 		MimeType: "application/octet-stream",
 		Type:     model.MediaTypeForName(title),
+		Resolve: func(ctx context.Context) (string, error) {
+			return s.getSignedMediaURL(ctx, dlURL, fileID, title)
+		},
 	}, nil
 }
 
 // getSignedMediaURL replicates the bunkr download flow:
 // 1. POST to /api/_001_v2 with the file ID → get CDN base + path
 // 2. Sign the URL via glb-apisign.cdn.cr/sign
-func (s *Scraper) getSignedMediaURL(dlURL *url.URL, fileID, originalName string) (string, error) {
+func (s *Scraper) getSignedMediaURL(ctx context.Context, dlURL *url.URL, fileID, originalName string) (string, error) {
 	apiURL := dlURL.Scheme + "://" + dlURL.Host + "/api/_001_v2"
 
 	// Step 1: POST to get media metadata
@@ -185,7 +189,7 @@ func (s *Scraper) getSignedMediaURL(dlURL *url.URL, fileID, originalName string)
 	if err != nil {
 		return "", err
 	}
-	req, err := http.NewRequest("POST", apiURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(body))
 	if err != nil {
 		return "", err
 	}
@@ -225,7 +229,7 @@ func (s *Scraper) getSignedMediaURL(dlURL *url.URL, fileID, originalName string)
 	}
 
 	// Step 2: Sign the URL
-	signReq, err := http.NewRequest("GET", s.signURL+"?path="+url.QueryEscape(parsedURL.Path), nil)
+	signReq, err := http.NewRequestWithContext(ctx, "GET", s.signURL+"?path="+url.QueryEscape(parsedURL.Path), nil)
 	if err != nil {
 		return "", fmt.Errorf("bunker: build signing request: %w", err)
 	}

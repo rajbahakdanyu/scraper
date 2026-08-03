@@ -1,6 +1,7 @@
 package filester
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -43,7 +44,12 @@ func downloadTokenHandler(serverURL string, includeServer bool) http.HandlerFunc
 	}
 }
 
+// TestParseFilesterFolder exercises lazy folder parsing: items are built
+// from the listing metadata with zero token-exchange requests, and each
+// item's Resolve func performs the signed-token exchange at download time.
 func TestParseFilesterFolder(t *testing.T) {
+	var tokenRequests int32
+
 	mux := http.NewServeMux()
 
 	html := `<html><body>
@@ -58,6 +64,7 @@ func TestParseFilesterFolder(t *testing.T) {
 
 	var ts *httptest.Server
 	mux.HandleFunc("/v2/api/public/download", func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&tokenRequests, 1)
 		downloadTokenHandler(ts.URL, true)(w, r)
 	})
 
@@ -81,10 +88,6 @@ func TestParseFilesterFolder(t *testing.T) {
 	if items[0].Size != 1000 {
 		t.Errorf("expected size 1000, got %d", items[0].Size)
 	}
-	wantURL := fmt.Sprintf("%s/v2/file-slugA?download=true&n=video1.mp4&token=tok-slugA", ts.URL)
-	if items[0].URL != wantURL {
-		t.Errorf("expected URL %s, got %s", wantURL, items[0].URL)
-	}
 	if items[0].Type != model.MediaTypeVideo {
 		t.Errorf("expected video type, got %s", items[0].Type)
 	}
@@ -94,6 +97,126 @@ func TestParseFilesterFolder(t *testing.T) {
 	}
 	if items[1].Type != model.MediaTypeImage {
 		t.Errorf("expected image type, got %s", items[1].Type)
+	}
+
+	// The signed download token is NOT exchanged during Parse — items
+	// carry the stable file page URL and a resolver instead.
+	if got := atomic.LoadInt32(&tokenRequests); got != 0 {
+		t.Errorf("Parse exchanged %d download tokens eagerly; resolution must be lazy", got)
+	}
+	if items[0].URL != ts.URL+"/d/slugA" {
+		t.Errorf("expected the stable page URL until download time, got %s", items[0].URL)
+	}
+	if items[0].Resolve == nil {
+		t.Fatal("expected a Resolve func for lazy token resolution")
+	}
+
+	resolved, err := items[0].Resolve(context.Background())
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	wantURL := fmt.Sprintf("%s/v2/file-slugA?download=true&n=video1.mp4&token=tok-slugA", ts.URL)
+	if resolved != wantURL {
+		t.Errorf("expected resolved URL %s, got %s", wantURL, resolved)
+	}
+	if got := atomic.LoadInt32(&tokenRequests); got != 1 {
+		t.Errorf("expected 1 token request after Resolve, got %d", got)
+	}
+}
+
+// TestParseFilesterFolderResolverClassifiesPermanentErrors keeps the
+// permanent-vs-transient classification when resolution moves into the
+// lazy resolver: a 404 from the token endpoint (the file is gone) is not
+// retried, and surfaces as a model.PermanentError so the downloader fails
+// the item immediately instead of retrying with backoff.
+func TestParseFilesterFolderResolverClassifiesPermanentErrors(t *testing.T) {
+	var tokenRequests int32
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/f/gone", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(`<html><body>
+			<div class="file-item" data-name="gone.bin" data-size="10" onclick="window.location.href='/d/slugGone'"></div>
+		</body></html>`))
+	})
+	mux.HandleFunc("/v2/api/public/download", func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&tokenRequests, 1)
+		w.WriteHeader(http.StatusNotFound)
+	})
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	scraper := newTestFilesterScraper()
+	scraper.baseURL = ts.URL
+
+	items, err := scraper.Parse(ts.URL + "/f/gone")
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+
+	_, err = items[0].Resolve(context.Background())
+	if err == nil {
+		t.Fatal("expected resolver error for a deleted file")
+	}
+	var pe *model.PermanentError
+	if !errors.As(err, &pe) {
+		t.Errorf("expected a model.PermanentError so the downloader fails fast, got %T: %v", err, err)
+	}
+	if got := atomic.LoadInt32(&tokenRequests); got != 1 {
+		t.Errorf("permanent 404 must not be retried, got %d token requests", got)
+	}
+}
+
+// TestParseFilesterFolderResolverRetriesTransientErrors keeps the
+// transient classification through the lazy resolver: a 500 from the token
+// endpoint is retried with backoff and succeeds on the next attempt.
+func TestParseFilesterFolderResolverRetriesTransientErrors(t *testing.T) {
+	var tokenRequests int32
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/f/flaky", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(`<html><body>
+			<div class="file-item" data-name="flaky.bin" data-size="10" onclick="window.location.href='/d/slugFlaky'"></div>
+		</body></html>`))
+	})
+	var ts *httptest.Server
+	mux.HandleFunc("/v2/api/public/download", func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&tokenRequests, 1) == 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		downloadTokenHandler(ts.URL, true)(w, r)
+	})
+
+	ts = httptest.NewServer(mux)
+	defer ts.Close()
+
+	scraper := newTestFilesterScraper()
+	scraper.baseURL = ts.URL
+
+	items, err := scraper.Parse(ts.URL + "/f/flaky")
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+
+	resolved, err := items[0].Resolve(context.Background())
+	if err != nil {
+		t.Fatalf("expected transient 500 to be retried successfully, got: %v", err)
+	}
+	wantURL := fmt.Sprintf("%s/v2/file-slugFlaky?download=true&n=flaky.bin&token=tok-slugFlaky", ts.URL)
+	if resolved != wantURL {
+		t.Errorf("expected resolved URL %s, got %s", wantURL, resolved)
+	}
+	if got := atomic.LoadInt32(&tokenRequests); got != 2 {
+		t.Errorf("expected 2 token requests (500 then success), got %d", got)
 	}
 }
 

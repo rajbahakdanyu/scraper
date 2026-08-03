@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -28,13 +29,35 @@ const (
 // MediaItem represents a single media item to be downloaded
 type MediaItem struct {
 	ID        string    // Per-run identity used to distinguish duplicate URLs
-	URL       string    // URL of the media resource
+	URL       string    // URL of the media resource (a stable page URL when Resolve is set)
 	Title     string    // Display title of the media
 	Size      int64     // Size of the media in bytes
 	MimeType  string    // MIME type of the media
 	Type      MediaType // Type of media (video/image/etc.)
 	Thumbnail string    // URL or path to thumbnail preview
+	// Resolve, when non-nil, produces the final download URL lazily at
+	// download time instead of URL being that final URL. Parsers set this
+	// for signed/expiring URLs: resolving a whole album eagerly guarantees
+	// expired signatures by the time later items download, and a stale
+	// signature breaks cross-run resume. URL then holds a stable,
+	// meaningful placeholder (e.g. the file's page URL) used for identity
+	// and display only. Resolve must be safe to call more than once (the
+	// downloader re-resolves after a 403) and from concurrent download
+	// goroutines. A returned error is retried with backoff unless it is a
+	// *PermanentError, which fails the item immediately.
+	Resolve func(ctx context.Context) (string, error)
 }
+
+// PermanentError marks an error returned by MediaItem.Resolve as
+// permanent: the file is gone upstream or the resolve request can never
+// succeed, so the downloader fails the item immediately instead of
+// retrying with backoff. Transient failures (network errors, 5xx, 429)
+// are returned unwrapped and retried like any other transient download
+// failure.
+type PermanentError struct{ Err error }
+
+func (e *PermanentError) Error() string { return e.Err.Error() }
+func (e *PermanentError) Unwrap() error { return e.Err }
 
 func (m MediaItem) Key() string {
 	if m.ID != "" {

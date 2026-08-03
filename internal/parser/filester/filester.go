@@ -3,6 +3,7 @@ package filester
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,7 +13,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
@@ -60,7 +60,12 @@ func (s *Scraper) Parse(rawURL string) ([]model.MediaItem, error) {
 	kind, id := extractKindAndID(rawURL)
 	switch kind {
 	case "d":
-		item, err := s.resolveFile(id, "")
+		// A single file stays eager, unlike folder items: the token
+		// exchange is the only source of the file's real name (a lazy
+		// item's Title must carry the real extension for the downloader's
+		// filename), and a queue of one starts downloading immediately so
+		// the signature can't expire in the queue.
+		item, err := s.resolveFile(context.Background(), id, "")
 		if err != nil {
 			return nil, err
 		}
@@ -115,13 +120,6 @@ const (
 	// settings above but for resolveFile's download-token requests.
 	maxResolveRetries     = 4
 	resolveRetryBaseDelay = 1500 * time.Millisecond
-	// resolveConcurrency bounds how many download-token requests run at
-	// once. This used to be 10 with zero retry coverage — a much burstier
-	// request pattern than the (now paced) page-listing phase, and a
-	// prime suspect for additional silent losses on large albums. Lowered
-	// alongside adding retries so the two changes compound instead of
-	// fighting each other.
-	resolveConcurrency = 4
 )
 
 // backoffWithJitter returns an exponentially increasing delay (base *
@@ -159,8 +157,13 @@ func isRetryableStatus(code int) bool {
 	}
 }
 
-// parseFolder fetches every page of a folder listing, then resolves each
-// file's real download URL concurrently.
+// parseFolder fetches every page of a folder listing and builds one item
+// per file straight from the listing metadata — no per-file requests at
+// all. Each item's Resolve func exchanges the file's slug for a signed
+// download token lazily at download time (tokens expire, so resolving a
+// whole folder eagerly would hand later queue items stale signatures; a
+// token-exchange failure surfaces per item then, not as a parse-time
+// PartialError).
 //
 // A folder-listing request can transiently come back with zero items
 // (rate limiting, a momentary server blip) even though we already know
@@ -204,42 +207,42 @@ func (s *Scraper) parseFolder(id string) ([]model.MediaItem, error) {
 		return nil, fmt.Errorf("filester: no files found in folder %s", id)
 	}
 
-	// Resolve download URLs concurrently (bounded), mirroring the bunker
-	// scraper's fetch-file-pages-concurrently approach.
-	items := make([]model.MediaItem, len(allEntries))
-	errs := make([]error, len(allEntries))
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, resolveConcurrency)
-
-	for i, e := range allEntries {
-		wg.Add(1)
-		go func(idx int, entry folderEntry) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			item, err := s.resolveFile(entry.slug, entry.name)
-			if err == nil {
-				item.Size = entry.size
-			}
-			items[idx] = item
-			errs[idx] = err
-		}(i, e)
-	}
-	wg.Wait()
-
-	var result []model.MediaItem
-	for i := range items {
-		if errs[i] == nil {
-			result = append(result, items[i])
-		} else {
-			partialErrs = append(partialErrs, fmt.Errorf("file %s: %w", allEntries[i].name, errs[i]))
+	items := make([]model.MediaItem, 0, len(allEntries))
+	for _, e := range allEntries {
+		entry := e
+		title := entry.name
+		if title == "" {
+			title = entry.slug
 		}
+		items = append(items, model.MediaItem{
+			// The placeholder URL keeps the file's stable page URL —
+			// meaningful for display and unique per file for
+			// MediaItem.Key().
+			URL:      fmt.Sprintf("%s/d/%s", s.baseURL, entry.slug),
+			Title:    title,
+			Size:     entry.size,
+			MimeType: "application/octet-stream",
+			Type:     model.MediaTypeForName(title),
+			Resolve: func(ctx context.Context) (string, error) {
+				item, err := s.resolveFile(ctx, entry.slug, entry.name)
+				if err != nil {
+					// Keep the permanent/transient classification
+					// across the package boundary: a 404 from the
+					// token endpoint can never succeed, so the
+					// downloader fails the item immediately instead
+					// of retrying with backoff.
+					var nre *nonRetryableError
+					if errors.As(err, &nre) {
+						return "", &model.PermanentError{Err: err}
+					}
+					return "", err
+				}
+				return item.URL, nil
+			},
+		})
 	}
-	if len(result) == 0 {
-		return nil, fmt.Errorf("filester: could not resolve any download URLs in folder %s: %w", id, model.NewPartialError("filester folder", partialErrs))
-	}
-	return result, model.NewPartialError("filester folder", partialErrs)
+
+	return items, model.NewPartialError("filester folder", partialErrs)
 }
 
 // fetchFolderPage fetches one page of a folder listing. A genuine fetch
@@ -325,22 +328,25 @@ func extractFileItems(doc *goquery.Document) []folderEntry {
 // {file, token, server?, name?}), replicating /js/file_dl.js's
 // generatePublicDownloadToken() + buildMediaUrl(tokenData, true).
 //
-// This runs with resolveConcurrency requests in flight at once across
-// potentially 1000+ files — a much burstier pattern than the paced
-// page-listing phase, and one that was found to hit the same kind of
-// rate limiting with zero retry coverage at all: any single failed
-// token request was silently dropped from the final result with no
-// error surfaced. Retries with backoff+jitter before giving up —
-// except for permanent failures (a 4xx other than 408/429, an
-// undecodable or invalid token response), which no amount of retrying
-// can fix and so are returned immediately.
-func (s *Scraper) resolveFile(slug, knownName string) (model.MediaItem, error) {
+// Folder items call this lazily at download time via their Resolve func,
+// from concurrent download goroutines across potentially 1000+ files — a
+// much burstier pattern than the paced page-listing phase, and one that
+// was found to hit the same kind of rate limiting with zero retry
+// coverage at all. Retries with backoff+jitter before giving up — except
+// for permanent failures (a 4xx other than 408/429, an undecodable or
+// invalid token response), which no amount of retrying can fix and so are
+// returned immediately.
+func (s *Scraper) resolveFile(ctx context.Context, slug, knownName string) (model.MediaItem, error) {
 	var lastErr error
 	for attempt := 1; attempt <= maxResolveRetries; attempt++ {
 		if attempt > 1 {
-			time.Sleep(backoffWithJitter(resolveRetryBaseDelay, attempt-1))
+			select {
+			case <-ctx.Done():
+				return model.MediaItem{}, ctx.Err()
+			case <-time.After(backoffWithJitter(resolveRetryBaseDelay, attempt-1)):
+			}
 		}
-		item, err := s.resolveFileOnce(slug, knownName)
+		item, err := s.resolveFileOnce(ctx, slug, knownName)
 		if err == nil {
 			return item, nil
 		}
@@ -358,13 +364,13 @@ func (s *Scraper) resolveFile(slug, knownName string) (model.MediaItem, error) {
 
 // resolveFileOnce is a single attempt at the token exchange described on
 // resolveFile.
-func (s *Scraper) resolveFileOnce(slug, knownName string) (model.MediaItem, error) {
+func (s *Scraper) resolveFileOnce(ctx context.Context, slug, knownName string) (model.MediaItem, error) {
 	body, err := json.Marshal(map[string]string{"file_slug": slug})
 	if err != nil {
 		return model.MediaItem{}, err
 	}
 
-	req, err := http.NewRequest("POST", s.baseURL+"/v2/api/public/download", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", s.baseURL+"/v2/api/public/download", bytes.NewReader(body))
 	if err != nil {
 		return model.MediaItem{}, err
 	}

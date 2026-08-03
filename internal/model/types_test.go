@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -27,6 +28,21 @@ func TestMediaItemFields(t *testing.T) {
 	}
 	if item.Type != MediaTypeVideo {
 		t.Errorf("unexpected type: %s", item.Type)
+	}
+}
+
+func TestPermanentError(t *testing.T) {
+	inner := errors.New("file deleted upstream")
+	err := error(&PermanentError{Err: inner})
+	if err.Error() != "file deleted upstream" {
+		t.Errorf("unexpected message: %v", err)
+	}
+	if !errors.Is(err, inner) {
+		t.Error("PermanentError should unwrap to its inner error")
+	}
+	var pe *PermanentError
+	if !errors.As(fmt.Errorf("resolve signed URL: %w", err), &pe) {
+		t.Error("PermanentError should be discoverable through wrapping")
 	}
 }
 

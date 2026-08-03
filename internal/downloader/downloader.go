@@ -110,6 +110,13 @@ func (d *Downloader) SetSkipChecksums(skip bool) {
 // exhausted (or the download is cancelled) the .part file is kept rather
 // than deleted, so a later Download call for the same item resumes from
 // where it left off via an HTTP Range request instead of starting over.
+//
+// Items with a Resolve func get their final download URL lazily, at
+// download time and bound to the download's ctx: signed URLs expire, so
+// resolving at parse time would guarantee stale signatures for later items
+// in a long queue. A 403 on a resolved URL (an expired signature) is
+// retried once with a freshly re-resolved URL instead of failing
+// permanently; a second 403 is permanent like any other client error.
 func (d *Downloader) Download(item model.MediaItem, dest string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	d.mu.Lock()
@@ -202,6 +209,16 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 		Start:  time.Now(),
 	})
 
+	// resolvedURL is the URL actually fetched. For items with a Resolve
+	// func it starts empty and is produced lazily inside the retry loop,
+	// so a transient resolution failure is retried with backoff like any
+	// other transient failure, and a 403 can trigger one re-resolve.
+	resolvedURL := item.URL
+	if item.Resolve != nil {
+		resolvedURL = ""
+	}
+	reResolved := false
+
 	var lastErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
@@ -213,7 +230,27 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 			}
 		}
 
-		err := d.downloadOnce(ctx, item, tempPath)
+		if item.Resolve != nil && resolvedURL == "" {
+			u, err := item.Resolve(ctx)
+			if err != nil {
+				lastErr = err
+				if ctx.Err() != nil {
+					break
+				}
+				var pe *model.PermanentError
+				if errors.As(err, &pe) {
+					// The resolver asserts this can never succeed
+					// (e.g. a 404 from the resolve API): fail
+					// permanently, same as a nonRetryable HTTP status.
+					lastErr = &nonRetryableError{err: err}
+					break
+				}
+				continue
+			}
+			resolvedURL = u
+		}
+
+		err := d.downloadOnce(ctx, item, resolvedURL, tempPath)
 		if err == nil {
 			if err := os.Rename(tempPath, finalPath); err != nil {
 				return errors.Join(err, removeFiles(tempPath, resumePath))
@@ -242,6 +279,16 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 		}
 		var nre *nonRetryableError
 		if errors.As(err, &nre) {
+			// A 403 on a lazily resolved signed URL almost always means
+			// the signature expired between resolution and request —
+			// re-resolve once for a fresh URL and retry with it. A
+			// second 403 (or any nonRetryable failure for an item
+			// without a resolver) stays permanent.
+			if item.Resolve != nil && !reResolved && nre.statusCode == http.StatusForbidden {
+				reResolved = true
+				resolvedURL = ""
+				continue
+			}
 			// Client errors (404, 403, ...) will never succeed no matter
 			// how many times we retry — stop immediately.
 			break
@@ -267,14 +314,16 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 	return fmt.Errorf("download failed after %d attempts: %w", maxRetries, errors.Join(lastErr, cleanupErr))
 }
 
-// downloadOnce performs a single download attempt to tempPath. The request
-// and the response body read are both bound to ctx, so cancelling ctx
-// aborts an in-flight attempt immediately instead of waiting for it to
-// finish. If tempPath already has bytes on disk (a previous attempt left
-// them there), it requests the remainder via a Range header and appends;
-// if the server doesn't honor the range (a plain 200 response) it falls
-// back to a full re-download instead of corrupting the file.
-func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, tempPath string) error {
+// downloadOnce performs a single download attempt to tempPath, fetching
+// resolvedURL (the item's final download URL, produced by its Resolve func
+// when it has one). The request and the response body read are both bound
+// to ctx, so cancelling ctx aborts an in-flight attempt immediately
+// instead of waiting for it to finish. If tempPath already has bytes on
+// disk (a previous attempt left them there), it requests the remainder via
+// a Range header and appends; if the server doesn't honor the range (a
+// plain 200 response) it falls back to a full re-download instead of
+// corrupting the file.
+func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, resolvedURL, tempPath string) error {
 	var existing int64
 	var resume resumeMetadata
 	if info, err := os.Stat(tempPath); err == nil {
@@ -282,14 +331,21 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, tem
 	}
 	if existing > 0 {
 		metadata, err := readResumeMetadata(tempPath)
-		if err != nil || metadata.URL != item.URL || metadata.validator() == "" {
+		// Items with a Resolve func get a freshly signed URL every run, so
+		// the recorded URL legitimately differs from this run's resolved
+		// URL. What actually protects resume integrity is the validator
+		// (ETag/Last-Modified, sent as If-Range and re-checked against the
+		// response) — URL equality is only an extra guard for items whose
+		// URL is final and stable.
+		urlMismatch := item.Resolve == nil && metadata.URL != resolvedURL
+		if err != nil || metadata.validator() == "" || urlMismatch {
 			existing = 0
 		} else {
 			resume = metadata
 		}
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", item.URL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", resolvedURL, nil)
 	if err != nil {
 		return err
 	}
@@ -317,7 +373,7 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, tem
 		start, _, _, err := parseContentRange(resp.Header.Get("Content-Range"))
 		if existing == 0 || err != nil || start != existing || !resume.matches(resp) {
 			cleanupErr := removeFiles(tempPath, resumeMetadataPath(tempPath))
-			return errors.Join(fmt.Errorf("invalid partial response for %s; discarded stale partial", item.URL), cleanupErr)
+			return errors.Join(fmt.Errorf("invalid partial response for %s; discarded stale partial", resolvedURL), cleanupErr)
 		}
 	case http.StatusRequestedRangeNotSatisfiable:
 		// A 416 whose Content-Range total equals our on-disk byte count
@@ -335,11 +391,11 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, tem
 		// (e.g. it changed size) — discard it so the next retry attempt
 		// fetches the whole thing fresh.
 		cleanupErr := removeFiles(tempPath, resumeMetadataPath(tempPath))
-		return errors.Join(fmt.Errorf("HTTP %d for %s (stale partial download discarded)", resp.StatusCode, item.URL), cleanupErr)
+		return errors.Join(fmt.Errorf("HTTP %d for %s (stale partial download discarded)", resp.StatusCode, resolvedURL), cleanupErr)
 	default:
-		err := fmt.Errorf("HTTP %d for %s", resp.StatusCode, item.URL)
+		err := fmt.Errorf("HTTP %d for %s", resp.StatusCode, resolvedURL)
 		if !isRetryableStatus(resp.StatusCode) {
-			return &nonRetryableError{err}
+			return &nonRetryableError{err: err, statusCode: resp.StatusCode}
 		}
 		return err
 	}
@@ -372,7 +428,7 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, tem
 		return err
 	}
 	if existing == 0 {
-		resume = metadataFromResponse(item.URL, resp)
+		resume = metadataFromResponse(resolvedURL, resp)
 		if resume.validator() == "" {
 			if err := removeFiles(resumeMetadataPath(tempPath)); err != nil {
 				return errors.Join(err, out.Close())
@@ -411,7 +467,7 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, tem
 			return statErr
 		}
 		if info.Size() != total {
-			return fmt.Errorf("download size mismatch for %s: got %d, want %d", item.URL, info.Size(), total)
+			return fmt.Errorf("download size mismatch for %s: got %d, want %d", resolvedURL, info.Size(), total)
 		}
 	}
 
@@ -507,8 +563,13 @@ func (d *Downloader) sendProgress(evt model.ProgressEvent) {
 }
 
 // nonRetryableError marks an error that will never succeed no matter how
-// many times it's retried (e.g. an HTTP 4xx client error other than 408/429).
-type nonRetryableError struct{ err error }
+// many times it's retried (e.g. an HTTP 4xx client error other than
+// 408/429). statusCode is the HTTP status that caused it, or 0 when the
+// failure wasn't an HTTP response (e.g. a permanent resolver error).
+type nonRetryableError struct {
+	err        error
+	statusCode int
+}
 
 func (e *nonRetryableError) Error() string { return e.err.Error() }
 func (e *nonRetryableError) Unwrap() error { return e.err }

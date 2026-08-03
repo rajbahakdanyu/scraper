@@ -2,6 +2,7 @@
 package bunker
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/rajbahakdanyu/scraper/internal/model"
@@ -22,6 +24,8 @@ func newTestBunkerScraper() *Scraper {
 }
 
 func TestParseBunkerAlbum(t *testing.T) {
+	var apiRequests, signRequests int32
+
 	mux := http.NewServeMux()
 
 	// Album page
@@ -46,6 +50,7 @@ func TestParseBunkerAlbum(t *testing.T) {
 	})
 	// Mock dl.bunkr.cr API
 	mux.HandleFunc("/api/_001_v2", func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&apiRequests, 1)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{
 			"mediafiles": "https://cdn.example.com",
@@ -53,6 +58,7 @@ func TestParseBunkerAlbum(t *testing.T) {
 		})
 	})
 	mux.HandleFunc("/sign", func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&signRequests, 1)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"token": "testtoken123",
@@ -75,11 +81,40 @@ func TestParseBunkerAlbum(t *testing.T) {
 	if items[0].Title != "Jamie Lo (39).mp4" {
 		t.Errorf("expected title 'Jamie Lo (39).mp4', got %s", items[0].Title)
 	}
-	if !strings.Contains(items[0].URL, "cdn.example.com/storage/media/test.mp4") {
-		t.Errorf("expected CDN URL containing cdn.example.com, got %s", items[0].URL)
-	}
 	if items[0].Type != model.MediaTypeVideo {
 		t.Errorf("expected video type, got %s", items[0].Type)
+	}
+
+	// The signed CDN URL (token + expiry) is NOT resolved during Parse —
+	// the item carries the stable dl.bunkr URL and a resolver instead.
+	if got := atomic.LoadInt32(&apiRequests); got != 0 {
+		t.Errorf("Parse hit the signing API %d times eagerly; resolution must be lazy", got)
+	}
+	if got := atomic.LoadInt32(&signRequests); got != 0 {
+		t.Errorf("Parse requested %d signatures eagerly; resolution must be lazy", got)
+	}
+	if items[0].URL != ts.URL+"/file/61567794" {
+		t.Errorf("expected the stable dl URL until download time, got %s", items[0].URL)
+	}
+	if items[0].Resolve == nil {
+		t.Fatal("expected a Resolve func for lazy signed-URL resolution")
+	}
+
+	resolved, err := items[0].Resolve(context.Background())
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if !strings.Contains(resolved, "cdn.example.com/storage/media/test.mp4") {
+		t.Errorf("expected CDN URL containing cdn.example.com, got %s", resolved)
+	}
+	if !strings.Contains(resolved, "token=testtoken123") {
+		t.Errorf("expected signed URL to carry the signature token, got %s", resolved)
+	}
+	if got := atomic.LoadInt32(&apiRequests); got != 1 {
+		t.Errorf("expected 1 API request after Resolve, got %d", got)
+	}
+	if got := atomic.LoadInt32(&signRequests); got != 1 {
+		t.Errorf("expected 1 signing request after Resolve, got %d", got)
 	}
 }
 
@@ -116,7 +151,7 @@ func TestGetSignedMediaURLEscapesFileID(t *testing.T) {
 		t.Fatalf("failed to parse dl URL: %v", err)
 	}
 
-	if _, err := scraper.getSignedMediaURL(dlURL, fileID, "test.mp4"); err != nil {
+	if _, err := scraper.getSignedMediaURL(context.Background(), dlURL, fileID, "test.mp4"); err != nil {
 		t.Fatalf("getSignedMediaURL failed: %v", err)
 	}
 
@@ -228,8 +263,12 @@ func TestParseBunkerAlbumHrefResolution(t *testing.T) {
 			if len(items) != 1 {
 				t.Fatalf("expected 1 item, got %d", len(items))
 			}
-			if !strings.Contains(items[0].URL, "cdn.example.com/storage/media/test.mp4") {
-				t.Errorf("expected CDN URL containing cdn.example.com, got %s", items[0].URL)
+			resolved, err := items[0].Resolve(context.Background())
+			if err != nil {
+				t.Fatalf("Resolve failed: %v", err)
+			}
+			if !strings.Contains(resolved, "cdn.example.com/storage/media/test.mp4") {
+				t.Errorf("expected CDN URL containing cdn.example.com, got %s", resolved)
 			}
 
 			mu.Lock()
