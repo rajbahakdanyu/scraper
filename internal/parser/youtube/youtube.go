@@ -224,7 +224,10 @@ func (s *Scraper) downloadBest(ctx context.Context, videoID, dest, owner string,
 
 	videoFmt, audioFmt, err := formatsForDownload(video)
 	if err != nil {
-		return err
+		// The video has no downloadable formats (region-locked,
+		// members-only, audio-less, ...) — refetching the same metadata
+		// on a retry won't change that.
+		return &nonRetryableError{err}
 	}
 
 	if audioFmt == nil {
@@ -270,7 +273,7 @@ func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFm
 
 	tmpDir, err := os.MkdirTemp("", "scraper-yt-")
 	if err != nil {
-		return err
+		return &nonRetryableError{err}
 	}
 	defer os.RemoveAll(tmpDir)
 
@@ -373,6 +376,15 @@ func muxStreams(ctx context.Context, videoPath, audioPath, outputPath string, au
 	)
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		// A failure to even start ffmpeg (binary missing, not executable)
+		// is permanent — retrying the download can't install ffmpeg. An
+		// ExitError means ffmpeg ran and rejected the inputs (e.g. a
+		// truncated stream); a retry downloads fresh bytes and can
+		// succeed, so that stays retryable.
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) {
+			return &nonRetryableError{fmt.Errorf("youtube: failed to start ffmpeg: %w", err)}
+		}
 		detail := strings.TrimSpace(stderr.String())
 		if idx := strings.LastIndex(detail, "\n"); idx >= 0 {
 			detail = detail[idx+1:]
@@ -402,7 +414,9 @@ func copyStreamToFile(ctx context.Context, stream io.Reader, size int64, path st
 	// #nosec G304 -- path is internally allocated under the configured output or private temp directory.
 	out, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
-		return err
+		// Local filesystem failures are permanent — a retry can't make
+		// the destination writable.
+		return &nonRetryableError{err}
 	}
 	closed := false
 	defer func() {
@@ -422,7 +436,7 @@ func copyStreamToFile(ctx context.Context, stream io.Reader, size int64, path st
 				}
 			}
 			if _, werr := out.Write(buf[:n]); werr != nil {
-				return werr
+				return &nonRetryableError{werr}
 			}
 			read += int64(n)
 			if onProgress != nil {
@@ -440,7 +454,7 @@ func copyStreamToFile(ctx context.Context, stream io.Reader, size int64, path st
 		}
 	}
 	if err := out.Close(); err != nil {
-		return err
+		return &nonRetryableError{err}
 	}
 	closed = true
 	if size > 0 && read != size {
@@ -449,43 +463,51 @@ func copyStreamToFile(ctx context.Context, stream io.Reader, size int64, path st
 	return nil
 }
 
+// prepareOutput's failures are all local filesystem operations, so every
+// error it returns is wrapped as nonRetryable: retrying the download can't
+// fix a filesystem problem.
 func prepareOutput(path string, skipChecksums bool) (bool, error) {
 	info, err := os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
 	if err != nil {
-		return false, err
+		return false, &nonRetryableError{err}
 	}
 	if info.Size() == 0 {
-		return false, os.Remove(path)
+		if err := os.Remove(path); err != nil {
+			return false, &nonRetryableError{err}
+		}
+		return false, nil
 	}
 	if skipChecksums {
 		return true, nil
 	}
 	present, matches, err := fileutil.VerifyChecksum(path)
 	if err != nil {
-		return false, err
+		return false, &nonRetryableError{err}
 	}
 	if !present || matches {
 		return true, nil
 	}
 	if err := os.Remove(path); err != nil {
-		return false, err
+		return false, &nonRetryableError{err}
 	}
 	if err := os.Remove(fileutil.ChecksumPath(path)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return false, err
+		return false, &nonRetryableError{err}
 	}
 	return false, nil
 }
 
+// commitOutput's failures are all local filesystem operations, so every
+// error it returns is wrapped as nonRetryable (see prepareOutput).
 func commitOutput(tempPath, finalPath string, skipChecksums bool) error {
 	if err := os.Rename(tempPath, finalPath); err != nil {
-		return err
+		return &nonRetryableError{err}
 	}
 	if !skipChecksums {
 		if err := fileutil.WriteChecksum(finalPath); err != nil {
-			return fmt.Errorf("write checksum for %s: %w", finalPath, err)
+			return &nonRetryableError{fmt.Errorf("write checksum for %s: %w", finalPath, err)}
 		}
 	}
 	return nil
@@ -591,10 +613,22 @@ const (
 	retryBaseDelay      = 500 * time.Millisecond
 )
 
+// nonRetryableError marks an error that will never succeed no matter how
+// many times it's retried (no downloadable formats, a missing ffmpeg
+// binary, a local filesystem failure). Mirrors the downloader's error
+// classification; deliberately duplicated rather than shared (see
+// BACKLOG.md).
+type nonRetryableError struct{ err error }
+
+func (e *nonRetryableError) Error() string { return e.err.Error() }
+func (e *nonRetryableError) Unwrap() error { return e.err }
+
 // withRetry runs fn up to maxRetries times with exponential backoff +
 // jitter between attempts, mirroring the generic downloader's policy: a
 // single transient network blip shouldn't fail a whole video. A cancelled
-// context stops the loop immediately instead of sleeping through backoff.
+// context stops the loop immediately instead of sleeping through backoff,
+// and a nonRetryableError (a permanent failure retrying can't fix) stops
+// it after the first attempt.
 func withRetry(ctx context.Context, fn func() error) error {
 	var lastErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
@@ -609,6 +643,13 @@ func withRetry(ctx context.Context, fn func() error) error {
 			return nil
 		}
 		if ctx.Err() != nil {
+			break
+		}
+		var nre *nonRetryableError
+		if errors.As(lastErr, &nre) {
+			// Permanent failure (no formats, missing ffmpeg, local
+			// filesystem): another attempt would just re-download the
+			// same bytes to fail the same way.
 			break
 		}
 	}

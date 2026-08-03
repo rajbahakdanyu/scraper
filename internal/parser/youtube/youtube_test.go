@@ -349,6 +349,37 @@ func TestWithRetryStopsWhenContextCancelled(t *testing.T) {
 	}
 }
 
+func TestWithRetryDoesNotRetryPermanentErrors(t *testing.T) {
+	attempts := 0
+	err := withRetry(t.Context(), func() error {
+		attempts++
+		return &nonRetryableError{errors.New("youtube: no video formats found for xyz")}
+	})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if attempts != 1 {
+		t.Fatalf("permanent error was retried: attempts = %d, want 1", attempts)
+	}
+}
+
+func TestDownloadBestNoFormatsIsPermanent(t *testing.T) {
+	// A video whose metadata carries no downloadable formats can never
+	// succeed no matter how many times the download is retried, so
+	// downloadBest must classify the failure as non-retryable.
+	scraper := NewYouTubeScraper()
+	scraper.parsed["nofmts"] = &ytdl.Video{ID: "nofmts", Title: "No Formats"}
+
+	err := scraper.downloadBest(t.Context(), "nofmts", t.TempDir(), "owner", fileutil.NewPathAllocator(), nil, true, nil)
+	if err == nil {
+		t.Fatal("expected an error for a video with no downloadable formats")
+	}
+	var nre *nonRetryableError
+	if !errors.As(err, &nre) {
+		t.Fatalf("format-selection failure must be classified permanent, got %T: %v", err, err)
+	}
+}
+
 // stubFFmpeg puts an executable named "ffmpeg" on PATH that runs the given
 // shell script body, so mux code can be tested without a real ffmpeg. The
 // stub records its arguments to the file named in $FFMPEG_ARGS_FILE.
@@ -384,6 +415,37 @@ func TestMuxStreamsSurfacesFFmpegStderr(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "invalid data found") {
 		t.Fatalf("ffmpeg's stderr must be included in the error, got: %v", err)
+	}
+}
+
+func TestMuxStreamsMissingFFmpegIsPermanent(t *testing.T) {
+	// No ffmpeg on PATH at all: the exec-startup failure must be
+	// classified permanent — no amount of retrying installs ffmpeg.
+	t.Setenv("PATH", t.TempDir())
+
+	err := muxStreams(t.Context(), "video.mp4", "audio.m4a", "out.part.mp4", false)
+	if err == nil {
+		t.Fatal("expected an error when ffmpeg is not installed")
+	}
+	var nre *nonRetryableError
+	if !errors.As(err, &nre) {
+		t.Fatalf("a missing ffmpeg binary must be permanent (not retried), got %T: %v", err, err)
+	}
+}
+
+func TestMuxStreamsMuxFailureStaysRetryable(t *testing.T) {
+	// ffmpeg started fine but rejected the inputs (e.g. a truncated or
+	// corrupt stream): a retry downloads fresh bytes and can succeed, so
+	// a mux failure must stay retryable.
+	stubFFmpeg(t, `exit 1`)
+
+	err := muxStreams(t.Context(), "video.mp4", "audio.m4a", "out.part.mp4", false)
+	if err == nil {
+		t.Fatal("expected an error when ffmpeg fails")
+	}
+	var nre *nonRetryableError
+	if errors.As(err, &nre) {
+		t.Fatalf("a mux failure must stay retryable, got %T: %v", err, err)
 	}
 }
 
@@ -583,6 +645,29 @@ func TestDownloadWithoutParseFetchesVideoInfoOnce(t *testing.T) {
 		t.Errorf("video info fetches = %d, want exactly 1", got)
 	}
 	assertDownloadedFile(t, dest, "Test Video.mp4", content)
+}
+
+func TestDownloadNoFormatsFailsAfterOneAttempt(t *testing.T) {
+	// A format-selection failure is permanent: Download must fail after
+	// exactly one attempt instead of downloading nothing three times.
+	const videoID = "noformats01"
+	fake := startFakeYouTube(t, videoID, "No Formats", "fake content")
+
+	scraper := NewYouTubeScraper()
+	d := NewDownloaderWithConfig(scraper, DownloaderConfig{Concurrency: 1})
+	fake.wire(scraper)
+	// Seed a format-less video as if Parse had fetched it. Any retry
+	// attempt after the first would re-fetch the metadata and show up
+	// here as an extra player post.
+	scraper.parsed[videoID] = &ytdl.Video{ID: videoID, Title: "No Formats"}
+
+	item := model.MediaItem{URL: videoWatchURL(videoID), Title: "No Formats", Type: model.MediaTypeVideo}
+	if err := d.Download(item, t.TempDir()); err == nil {
+		t.Fatal("expected an error for a video with no downloadable formats")
+	}
+	if got := fake.playerPosts.Load(); got != 0 {
+		t.Errorf("permanent format-selection failure was retried: %d extra metadata fetches, want 0", got)
+	}
 }
 
 // waitProgressClosed drains ch until it closes, failing the test if that

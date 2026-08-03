@@ -4,6 +4,7 @@ package bunker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -115,6 +116,57 @@ func TestParseBunkerAlbum(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&signRequests); got != 1 {
 		t.Errorf("expected 1 signing request after Resolve, got %d", got)
+	}
+}
+
+// TestResolve404IsPermanentNotRetried: when the signing API 404s (the file
+// is gone upstream), the resolver surfaces a model.PermanentError — the
+// classification the downloader uses to fail the item immediately — and
+// the API sees exactly one request. The downloader half (a PermanentError
+// fails the download with no retries) is covered by the downloader's
+// TestDownloadPermanentResolverErrorFailsImmediately.
+func TestResolve404IsPermanentNotRetried(t *testing.T) {
+	var apiRequests int32
+
+	mux := http.NewServeMux()
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	mux.HandleFunc("/a/album", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, `<html><body><a href="/f/gone" aria-label="download"></a></body></html>`)
+	})
+	mux.HandleFunc("/f/gone", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprintf(w, `<html><head><title>gone.mp4 | Bunkr</title></head><body>
+<a href="%s/file/61567794">Download</a></body></html>`, ts.URL)
+	})
+	mux.HandleFunc("/api/_001_v2", func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&apiRequests, 1)
+		w.WriteHeader(http.StatusNotFound)
+	})
+
+	scraper := newTestBunkerScraper()
+	scraper.baseURL = ts.URL
+
+	items, err := scraper.Parse(ts.URL + "/a/album")
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+
+	_, err = items[0].Resolve(context.Background())
+	if err == nil {
+		t.Fatal("expected resolver error for a deleted file")
+	}
+	var pe *model.PermanentError
+	if !errors.As(err, &pe) {
+		t.Errorf("expected a model.PermanentError so the downloader fails fast, got %T: %v", err, err)
+	}
+	if got := atomic.LoadInt32(&apiRequests); got != 1 {
+		t.Errorf("expected exactly 1 API request (no retries), got %d", got)
 	}
 }
 

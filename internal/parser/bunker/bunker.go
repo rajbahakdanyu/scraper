@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -38,6 +39,45 @@ func NewBunkerScraper() *Scraper {
 
 func (s *Scraper) Name() string {
 	return "bunker"
+}
+
+// nonRetryableError marks an error that will never succeed no matter how
+// many times it's retried (e.g. an HTTP 4xx client error other than
+// 408/429). Mirrors the downloader's error classification; deliberately
+// duplicated rather than shared (see BACKLOG.md).
+type nonRetryableError struct{ err error }
+
+func (e *nonRetryableError) Error() string { return e.err.Error() }
+func (e *nonRetryableError) Unwrap() error { return e.err }
+
+// isRetryableStatus reports whether an HTTP status code represents a
+// transient failure worth retrying (5xx, request timeout, rate limiting)
+// as opposed to a client error (bad URL, forbidden, not found, ...) that
+// will never succeed no matter how many times it's retried.
+func isRetryableStatus(code int) bool {
+	switch code {
+	case http.StatusRequestTimeout, http.StatusTooManyRequests:
+		return true
+	default:
+		return code >= 500
+	}
+}
+
+// permanentIfNotRetryable translates a permanent resolve-API failure (a
+// 4xx other than 408/429 — e.g. the file is gone upstream) into a
+// model.PermanentError so the downloader fails the item immediately
+// instead of retrying with backoff. Transient failures (5xx, 408, 429,
+// network errors) pass through unwrapped and keep the downloader's retry
+// behavior.
+func permanentIfNotRetryable(signedURL string, err error) (string, error) {
+	if err == nil {
+		return signedURL, nil
+	}
+	var nre *nonRetryableError
+	if errors.As(err, &nre) {
+		return "", &model.PermanentError{Err: err}
+	}
+	return "", err
 }
 
 // Parse fetches a Bunker album page, extracts file links, and visits each
@@ -173,7 +213,7 @@ func (s *Scraper) parseFilePage(fileURL string) (model.MediaItem, error) {
 		MimeType: "application/octet-stream",
 		Type:     model.MediaTypeForName(title),
 		Resolve: func(ctx context.Context) (string, error) {
-			return s.getSignedMediaURL(ctx, dlURL, fileID, title)
+			return permanentIfNotRetryable(s.getSignedMediaURL(ctx, dlURL, fileID, title))
 		},
 	}, nil
 }
@@ -204,7 +244,11 @@ func (s *Scraper) getSignedMediaURL(ctx context.Context, dlURL *url.URL, fileID,
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("bunker API returned HTTP %d", resp.StatusCode)
+		err := fmt.Errorf("bunker API returned HTTP %d", resp.StatusCode)
+		if !isRetryableStatus(resp.StatusCode) {
+			return "", &nonRetryableError{err}
+		}
+		return "", err
 	}
 
 	var meta struct {
