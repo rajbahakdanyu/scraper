@@ -59,10 +59,13 @@ downloading anything or launching the TUI:
 ### Batch mode
 
 Pass multiple URLs to download them all in sequence (each scraped as it goes,
-in the order given), instead of launching a fresh TUI per URL:
+in the order given), instead of launching a fresh TUI per URL. All URLs must
+be from the same site type — all YouTube, or all non-YouTube (which may mix
+CyberDrop, Bunker, GoonBox, and Filester):
 
 ```bash
-./scraper https://youtu.be/VIDEO_ID https://cyberdrop.cr/f/FILE_ID
+./scraper https://youtu.be/VIDEO_ID "https://www.youtube.com/playlist?list=ID"
+./scraper https://cyberdrop.cr/f/FILE_ID https://bunkr.cr/a/ALBUM_ID
 ```
 
 Or read URLs from a file, one per line, with `-i, --input-file`:
@@ -78,8 +81,8 @@ or `--input-file` are present:
 cat urls.txt | ./scraper
 ```
 
-In batch mode each site is detected from its URL and downloads into its own
-album subfolder under the output directory.
+Each URL is detected from its host and downloads into its own album
+subfolder under the output directory.
 
 ### Script-friendly output
 
@@ -91,7 +94,9 @@ text lines as items are scraped and downloaded:
 ```
 
 `-j, --json` outputs JSON Lines instead — one JSON event per line
-(`scrape`, `download`, `complete`, `summary`); it implies `--no-tui`:
+(`album_start`, `item`, `summary`, `error`); it implies `--no-tui`. Combined
+with `--dry-run`, it emits a single JSON document describing the albums
+(URLs, items, sizes) with no download:
 
 ```bash
 ./scraper -j --dry-run https://filester.sh/f/FOLDER_ID
