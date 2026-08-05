@@ -79,6 +79,11 @@ func loadGlobalConfig(opts globalOptions) (*config.Config, error) {
 		cfg.Cookies = opts.cookies
 	}
 	if cfg.Cookies != "" {
+		expandedCookies, err := expandHomePath(cfg.Cookies)
+		if err != nil {
+			return nil, err
+		}
+		cfg.Cookies = expandedCookies
 		parsed, err := netutil.ParseNetscapeCookies(cfg.Cookies)
 		if err != nil {
 			return nil, fmt.Errorf("cookies: %w", err)

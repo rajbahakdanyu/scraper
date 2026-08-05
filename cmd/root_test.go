@@ -614,6 +614,38 @@ func TestLoadGlobalConfigCookiesFileNotFound(t *testing.T) {
 	}
 }
 
+func TestLoadGlobalConfigCookiesExpandsTilde(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("cannot determine home directory")
+	}
+	cookieDir := filepath.Join(home, "scraper-test-cookie-home")
+	if err := os.MkdirAll(cookieDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(cookieDir)
+
+	cookiesPath := filepath.Join(cookieDir, "c.txt")
+	cookieContent := ".example.com\tTRUE\t/\tFALSE\t9999999999\tsession\tval\n"
+	if err := os.WriteFile(cookiesPath, []byte(cookieContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+	tildePath := filepath.Join("~", "scraper-test-cookie-home", "c.txt")
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	cfgContent := "cookies: " + tildePath + "\n"
+	if err := os.WriteFile(configPath, []byte(cfgContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadGlobalConfig(globalOptions{configPath: configPath})
+	if err != nil {
+		t.Fatalf("expected tilde expansion to work: %v", err)
+	}
+	cookies := cfg.ParsedCookies()
+	if len(cookies) != 1 || cookies[0].Name != "session" {
+		t.Errorf("expected parsed cookies from tilde-path config, got %v", cookies)
+	}
+}
+
 func TestRunWithScraperAppliesCookiesToDownloader(t *testing.T) {
 	cookiesPath := filepath.Join(t.TempDir(), "cookies.txt")
 	cookieContent := ".example.com\tTRUE\t/\tFALSE\t9999999999\ttoken\tval\n"
