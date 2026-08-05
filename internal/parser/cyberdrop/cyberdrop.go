@@ -47,6 +47,16 @@ func NewCyberDropScraperWithProxy(proxyURL string) (*Scraper, error) {
 	}, nil
 }
 
+func (s *Scraper) SetCookies(cookies []*http.Cookie) {
+	s.client = netutil.WithCookies(s.client, cookies)
+}
+
+func NewCyberDropScraperWithCookies(cookies []*http.Cookie) *Scraper {
+	s := NewCyberDropScraper()
+	s.SetCookies(cookies)
+	return s
+}
+
 func (s *Scraper) Name() string {
 	return "cyberdrop"
 }

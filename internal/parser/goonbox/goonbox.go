@@ -47,6 +47,16 @@ func NewGoonBoxScraperWithProxy(proxyURL string) (*Scraper, error) {
 	}, nil
 }
 
+func (s *Scraper) SetCookies(cookies []*http.Cookie) {
+	s.client = netutil.WithCookies(s.client, cookies)
+}
+
+func NewGoonBoxScraperWithCookies(cookies []*http.Cookie) *Scraper {
+	s := NewGoonBoxScraper()
+	s.SetCookies(cookies)
+	return s
+}
+
 func (s *Scraper) Name() string {
 	return "goonbox"
 }

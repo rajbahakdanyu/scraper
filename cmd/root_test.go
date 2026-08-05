@@ -303,7 +303,7 @@ func TestRootCmdAutoDetectsUnknownDomain(t *testing.T) {
 }
 
 func TestScraperRegistry(t *testing.T) {
-	reg, err := scraperRegistry("")
+	reg, err := scraperRegistry("", nil)
 	if err != nil {
 		t.Fatalf("scraperRegistry failed: %v", err)
 	}

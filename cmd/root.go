@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -230,7 +231,7 @@ func NewRootCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				reg, err := scraperRegistry(cfg.Proxy)
+				reg, err := scraperRegistry(cfg.Proxy, cfg.ParsedCookies())
 				if err != nil {
 					return err
 				}
@@ -295,7 +296,7 @@ Fish:  scraper completion fish | source`,
 
 // scraperRegistry maps a site name to its scraper, used by detectSite's
 // auto-detect path.
-func scraperRegistry(proxyURL string) (map[string]model.Scraper, error) {
+func scraperRegistry(proxyURL string, cookies []*http.Cookie) (map[string]model.Scraper, error) {
 	reg := map[string]model.Scraper{
 		"youtube": youtube.NewYouTubeScraper(),
 	}
@@ -316,15 +317,28 @@ func scraperRegistry(proxyURL string) (map[string]model.Scraper, error) {
 		if err != nil {
 			return nil, err
 		}
+		if len(cookies) > 0 {
+			cy.SetCookies(cookies)
+			bu.SetCookies(cookies)
+			gb.SetCookies(cookies)
+			fs.SetCookies(cookies)
+		}
 		reg["cyberdrop"] = cy
 		reg["bunker"] = bu
 		reg["goonbox"] = gb
 		reg["filester"] = fs
 	} else {
-		reg["cyberdrop"] = cyberdrop.NewCyberDropScraper()
-		reg["bunker"] = bunker.NewBunkerScraper()
-		reg["goonbox"] = goonbox.NewGoonBoxScraper()
-		reg["filester"] = filester.NewFilesterScraper()
+		if len(cookies) > 0 {
+			reg["cyberdrop"] = cyberdrop.NewCyberDropScraperWithCookies(cookies)
+			reg["bunker"] = bunker.NewBunkerScraperWithCookies(cookies)
+			reg["goonbox"] = goonbox.NewGoonBoxScraperWithCookies(cookies)
+			reg["filester"] = filester.NewFilesterScraperWithCookies(cookies)
+		} else {
+			reg["cyberdrop"] = cyberdrop.NewCyberDropScraper()
+			reg["bunker"] = bunker.NewBunkerScraper()
+			reg["goonbox"] = goonbox.NewGoonBoxScraper()
+			reg["filester"] = filester.NewFilesterScraper()
+		}
 	}
 	return reg, nil
 }
@@ -576,7 +590,7 @@ func runBatch(opts globalOptions, urls []string) error {
 		return err
 	}
 
-	reg, err := scraperRegistry(cfg.Proxy)
+	reg, err := scraperRegistry(cfg.Proxy, cfg.ParsedCookies())
 	if err != nil {
 		return err
 	}
