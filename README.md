@@ -26,9 +26,9 @@ go install github.com/rajbahakdanyu/scraper/cmd/scraper@latest
 
 ## Usage
 
-Every command launches the TUI immediately (unless `--dry-run` is set —
-see below). The scraper runs in the background with a loading spinner,
-then transitions to the download view.
+Every command launches the TUI immediately (unless `--dry-run`, `--no-tui`,
+or `--json` is set — see below). The scraper runs in the background with a
+loading spinner, then transitions to the download view.
 
 The site can be auto-detected from the URL — just pass a bare URL with no
 subcommand:
@@ -54,6 +54,47 @@ downloading anything or launching the TUI:
 
 ```bash
 ./scraper --dry-run https://filester.sh/f/FOLDER_ID
+```
+
+### Batch mode
+
+Pass multiple URLs to download them all in sequence (each scraped as it goes,
+in the order given), instead of launching a fresh TUI per URL:
+
+```bash
+./scraper https://youtu.be/VIDEO_ID https://cyberdrop.cr/f/FILE_ID
+```
+
+Or read URLs from a file, one per line, with `-i, --input-file`:
+
+```bash
+./scraper -i urls.txt
+```
+
+URLs given on stdin (a pipe) are also accepted when no positional arguments
+or `--input-file` are present:
+
+```bash
+cat urls.txt | ./scraper
+```
+
+In batch mode each site is detected from its URL and downloads into its own
+album subfolder under the output directory.
+
+### Script-friendly output
+
+For scripting and logs, `--no-tui` disables the terminal UI and prints plain
+text lines as items are scraped and downloaded:
+
+```bash
+./scraper --no-tui https://youtu.be/VIDEO_ID
+```
+
+`-j, --json` outputs JSON Lines instead — one JSON event per line
+(`scrape`, `download`, `complete`, `summary`); it implies `--no-tui`:
+
+```bash
+./scraper -j --dry-run https://filester.sh/f/FOLDER_ID
 ```
 
 ### YouTube
@@ -94,15 +135,35 @@ directly to the output directory.
 | `-o, --output`   | `.`     | Output directory                             |
 | `--concurrent`   | `5`     | Maximum concurrent downloads                 |
 | `--config`       | (none)  | Config file path (default: `~/.scraper.yaml`)|
+| `-i, --input-file`| (none) | Read URLs from a file, one per line (batch mode) |
 | `--limit-rate`   | (none)  | Cap total download speed (e.g. `500K`, `2M`, `1G`); unlimited by default |
 | `--no-checksums` | `false` | Don't write/verify `.sha256` checksum sidecar files |
 | `-n, --dry-run`  | `false` | List item count/total size without downloading anything |
+| `--no-tui`       | `false` | Disable the terminal UI; print plain text output |
+| `-j, --json`     | `false` | Output JSON Lines (one event per line); implies `--no-tui` |
+| `--proxy`        | (none)  | HTTP/S proxy URL for all requests (e.g. `http://proxy:8080`) |
+
+Additional subcommands:
+
+| Subcommand | Description                                      |
+|------------|--------------------------------------------------|
+| `version`  | Print the version                               |
+| `completion [bash\|zsh\|fish\|powershell]` | Generate a shell completion script |
+
+For example, to enable completions in Bash or Zsh:
+
+```bash
+source <(./scraper completion bash)
+source <(./scraper completion zsh)
+```
 
 ### TUI Keybindings
 
 | Key             | Action                           |
 |-----------------|-----------------------------------|
 | `↑/k`, `↓/j`    | Navigate the item list           |
+| `enter`         | Show the error for a failed item |
+| `r`             | Retry the selected failed item   |
 | `c`             | Cancel the selected item          |
 | `q`, `ctrl+c`   | Quit                              |
 
@@ -117,9 +178,11 @@ timeout: 30s
 user_agent: "Scraper/1.0"
 rate_limit: 2M
 skip_checksums: false
+proxy: http://proxy:8080
 ```
 
-CLI flags override config file values.
+CLI flags override config file values. `--proxy`/`proxy` routes every
+outbound request (scraping and downloads) through the given HTTP/S proxy.
 
 Every completed download gets a `<file>.sha256` sidecar (standard
 `sha256sum`-compatible format) next to it, unless `skip_checksums`/
