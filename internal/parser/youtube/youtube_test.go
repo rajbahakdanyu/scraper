@@ -114,7 +114,7 @@ func TestVideoWatchURLRoundTripsWithExtractVideoID(t *testing.T) {
 	}
 }
 
-func TestSelectBestFormatsPicksHighestResolution(t *testing.T) {
+func TestSelectFormatsPicksHighestResolution(t *testing.T) {
 	video := &ytdl.Video{
 		Formats: ytdl.FormatList{
 			{Height: 360, Bitrate: 500},
@@ -124,7 +124,7 @@ func TestSelectBestFormatsPicksHighestResolution(t *testing.T) {
 			{Height: 0, Bitrate: 256, AudioChannels: 2}, // audio-only, higher bitrate
 		},
 	}
-	videoFmt, audioFmt := selectBestFormats(video)
+	videoFmt, audioFmt := selectFormats(video, 0)
 	if videoFmt == nil || videoFmt.Height != 1080 {
 		t.Fatalf("expected 1080p video format, got %+v", videoFmt)
 	}
@@ -133,7 +133,7 @@ func TestSelectBestFormatsPicksHighestResolution(t *testing.T) {
 	}
 }
 
-func TestSelectBestFormatsPrefersDefaultAudioLanguage(t *testing.T) {
+func TestSelectFormatsPrefersDefaultAudioLanguage(t *testing.T) {
 	defaultTrack := &struct {
 		DisplayName    string `json:"displayName"`
 		ID             string `json:"id"`
@@ -150,7 +150,7 @@ func TestSelectBestFormatsPrefersDefaultAudioLanguage(t *testing.T) {
 		{Bitrate: 256, AudioChannels: 2, AudioTrack: nonDefaultTrack},
 	}}
 
-	_, audioFmt := selectBestFormats(video)
+	_, audioFmt := selectFormats(video, 0)
 	if audioFmt == nil || audioFmt.AudioTrack == nil || !audioFmt.AudioTrack.AudioIsDefault {
 		t.Fatalf("selected non-default audio: %+v", audioFmt)
 	}
@@ -158,19 +158,19 @@ func TestSelectBestFormatsPrefersDefaultAudioLanguage(t *testing.T) {
 
 func TestFormatsForDownloadRejectsMuteVideo(t *testing.T) {
 	video := &ytdl.Video{ID: "mute", Formats: ytdl.FormatList{{Height: 1080, Bitrate: 4000}}}
-	if _, _, err := formatsForDownload(video); err == nil || !strings.Contains(err.Error(), "no audio format") {
+	if _, _, err := formatsForDownload(video, 0, false); err == nil || !strings.Contains(err.Error(), "no audio format") {
 		t.Fatalf("expected no-audio error, got %v", err)
 	}
 }
 
-func TestSelectBestFormatsSkipsAudioWhenAlreadyMuxed(t *testing.T) {
+func TestSelectFormatsSkipsAudioWhenAlreadyMuxed(t *testing.T) {
 	video := &ytdl.Video{
 		Formats: ytdl.FormatList{
 			{Height: 1080, Bitrate: 4000, AudioChannels: 2}, // already muxed
 			{Height: 0, Bitrate: 256, AudioChannels: 2},
 		},
 	}
-	videoFmt, audioFmt := selectBestFormats(video)
+	videoFmt, audioFmt := selectFormats(video, 0)
 	if videoFmt == nil || videoFmt.Height != 1080 {
 		t.Fatalf("expected 1080p video format, got %+v", videoFmt)
 	}
@@ -179,21 +179,21 @@ func TestSelectBestFormatsSkipsAudioWhenAlreadyMuxed(t *testing.T) {
 	}
 }
 
-func TestSelectBestFormatsBreaksHeightTiesByBitrate(t *testing.T) {
+func TestSelectFormatsBreaksHeightTiesByBitrate(t *testing.T) {
 	video := &ytdl.Video{
 		Formats: ytdl.FormatList{
 			{Height: 1080, Bitrate: 3000},
 			{Height: 1080, Bitrate: 5000},
 		},
 	}
-	videoFmt, _ := selectBestFormats(video)
+	videoFmt, _ := selectFormats(video, 0)
 	if videoFmt == nil || videoFmt.Bitrate != 5000 {
 		t.Fatalf("expected the higher-bitrate 1080p format, got %+v", videoFmt)
 	}
 }
 
-func TestSelectBestFormatsNoFormats(t *testing.T) {
-	videoFmt, audioFmt := selectBestFormats(&ytdl.Video{})
+func TestSelectFormatsNoFormats(t *testing.T) {
+	videoFmt, audioFmt := selectFormats(&ytdl.Video{}, 0)
 	if videoFmt != nil || audioFmt != nil {
 		t.Errorf("expected nil, nil for a video with no formats, got %+v, %+v", videoFmt, audioFmt)
 	}
@@ -206,7 +206,7 @@ func TestEstimatedSizeSumsVideoAndAudio(t *testing.T) {
 			{Height: 0, AudioChannels: 2, ContentLength: 200},
 		},
 	}
-	if got := estimatedSize(video); got != 1200 {
+	if got := estimatedSize(video, 0); got != 1200 {
 		t.Errorf("estimatedSize = %d, want 1200", got)
 	}
 }
@@ -727,6 +727,134 @@ func TestDownloaderShutdownCancelsInFlightDownload(t *testing.T) {
 	// Once the in-flight download has returned, the progress channel must
 	// close so a consumer ranging over Progress() terminates.
 	waitProgressClosed(t, d.Progress(), 5*time.Second)
+}
+
+func TestSelectFormatsQualityCap(t *testing.T) {
+	video := &ytdl.Video{
+		Formats: ytdl.FormatList{
+			{Height: 1080, Bitrate: 4000},
+			{Height: 720, Bitrate: 2000},
+			{Height: 480, Bitrate: 1000},
+			{Height: 0, Bitrate: 128, AudioChannels: 2},
+		},
+	}
+	videoFmt, _ := selectFormats(video, 720)
+	if videoFmt == nil || videoFmt.Height != 720 {
+		t.Fatalf("expected 720p with quality cap, got %+v", videoFmt)
+	}
+}
+
+func TestSelectFormatsMaxHeightZeroIsUncapped(t *testing.T) {
+	video := &ytdl.Video{
+		Formats: ytdl.FormatList{
+			{Height: 1080, Bitrate: 4000},
+			{Height: 720, Bitrate: 2000},
+		},
+	}
+	videoFmt, _ := selectFormats(video, 0)
+	if videoFmt == nil || videoFmt.Height != 1080 {
+		t.Fatalf("expected 1080p (uncapped), got %+v", videoFmt)
+	}
+}
+
+func TestSelectFormatsHeightTieBreakByBitrate(t *testing.T) {
+	video := &ytdl.Video{
+		Formats: ytdl.FormatList{
+			{Height: 720, Bitrate: 2000},
+			{Height: 720, Bitrate: 4000},
+		},
+	}
+	videoFmt, _ := selectFormats(video, 720)
+	if videoFmt == nil || videoFmt.Bitrate != 4000 {
+		t.Fatalf("expected higher-bitrate 720p, got %+v", videoFmt)
+	}
+}
+
+func TestSelectFormatsQualityFallback(t *testing.T) {
+	video := &ytdl.Video{
+		Formats: ytdl.FormatList{
+			{Height: 480, Bitrate: 1000},
+			{Height: 360, Bitrate: 500},
+		},
+	}
+	videoFmt, _ := selectFormats(video, 1080)
+	if videoFmt == nil || videoFmt.Height != 480 {
+		t.Fatalf("expected fallback to 480p, got %+v", videoFmt)
+	}
+}
+
+func TestSelectBestAudio(t *testing.T) {
+	video := &ytdl.Video{
+		Formats: ytdl.FormatList{
+			{Height: 1080, Bitrate: 4000},
+			{Height: 0, Bitrate: 128, AudioChannels: 2},
+			{Height: 0, Bitrate: 256, AudioChannels: 2},
+		},
+	}
+	audioFmt := selectBestAudio(video)
+	if audioFmt == nil || audioFmt.Bitrate != 256 {
+		t.Fatalf("expected 256-bitrate audio, got %+v", audioFmt)
+	}
+}
+
+func TestSelectBestAudioPrefersDefaultTrack(t *testing.T) {
+	defaultTrack := &struct {
+		DisplayName    string `json:"displayName"`
+		ID             string `json:"id"`
+		AudioIsDefault bool   `json:"audioIsDefault"`
+	}{DisplayName: "English", AudioIsDefault: true}
+	nonDefaultTrack := &struct {
+		DisplayName    string `json:"displayName"`
+		ID             string `json:"id"`
+		AudioIsDefault bool   `json:"audioIsDefault"`
+	}{DisplayName: "Spanish", AudioIsDefault: false}
+	video := &ytdl.Video{Formats: ytdl.FormatList{
+		{Height: 0, Bitrate: 128, AudioChannels: 2, AudioTrack: nonDefaultTrack},
+		{Height: 0, Bitrate: 64, AudioChannels: 2, AudioTrack: defaultTrack},
+	}}
+	audioFmt := selectBestAudio(video)
+	if audioFmt == nil || audioFmt.AudioTrack == nil || !audioFmt.AudioTrack.AudioIsDefault {
+		t.Fatalf("expected default audio track, got %+v", audioFmt)
+	}
+}
+
+func TestSelectBestAudioNoAudioFormats(t *testing.T) {
+	video := &ytdl.Video{
+		Formats: ytdl.FormatList{
+			{Height: 1080, Bitrate: 4000},
+		},
+	}
+	audioFmt := selectBestAudio(video)
+	if audioFmt != nil {
+		t.Fatalf("expected nil when no audio-only formats, got %+v", audioFmt)
+	}
+}
+
+func TestFormatsForDownloadAudioOnly(t *testing.T) {
+	video := &ytdl.Video{ID: "test", Formats: ytdl.FormatList{
+		{Height: 1080, Bitrate: 4000},
+		{Height: 0, Bitrate: 128, AudioChannels: 2},
+	}}
+	videoFmt, audioFmt, err := formatsForDownload(video, 0, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if videoFmt != nil {
+		t.Fatalf("expected nil videoFmt for audio-only, got %+v", videoFmt)
+	}
+	if audioFmt == nil || audioFmt.Bitrate != 128 {
+		t.Fatalf("expected audio format for audio-only, got %+v", audioFmt)
+	}
+}
+
+func TestFormatsForDownloadAudioOnlyNoAudio(t *testing.T) {
+	video := &ytdl.Video{ID: "mute", Formats: ytdl.FormatList{
+		{Height: 1080, Bitrate: 4000},
+	}}
+	_, _, err := formatsForDownload(video, 0, true)
+	if err == nil || !strings.Contains(err.Error(), "no audio format") {
+		t.Fatalf("expected no-audio error for audio-only, got %v", err)
+	}
 }
 
 func TestDownloaderFailsFastAfterShutdown(t *testing.T) {

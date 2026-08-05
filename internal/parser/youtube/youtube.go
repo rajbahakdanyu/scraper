@@ -82,7 +82,7 @@ func (s *Scraper) Parse(rawURL string) ([]model.MediaItem, error) {
 	return []model.MediaItem{{
 		URL:   videoWatchURL(videoID),
 		Title: title,
-		Size:  estimatedSize(video),
+		Size:  estimatedSize(video, 0),
 		Type:  model.MediaTypeVideo,
 	}}, nil
 }
@@ -118,10 +118,10 @@ func (s *Scraper) parsePlaylist(rawURL string) ([]model.MediaItem, error) {
 	return items, nil
 }
 
-// estimatedSize sums the content lengths of the formats selectBestFormats
+// estimatedSize sums the content lengths of the formats selectFormats
 // would pick, for display before any download starts. 0 if unknown.
-func estimatedSize(video *ytdl.Video) int64 {
-	videoFmt, audioFmt := selectBestFormats(video)
+func estimatedSize(video *ytdl.Video, maxHeight int) int64 {
+	videoFmt, audioFmt := selectFormats(video, maxHeight)
 	var size int64
 	if videoFmt != nil {
 		size += videoFmt.ContentLength
@@ -132,13 +132,16 @@ func estimatedSize(video *ytdl.Video) int64 {
 	return size
 }
 
-// selectBestFormats picks the highest-resolution video format available
-// (ties broken by bitrate) and, if needed, prefers the default-language
-// audio-only track before comparing bitrate.
-func selectBestFormats(video *ytdl.Video) (videoFmt, audioFmt *ytdl.Format) {
+// selectFormats picks the best video format (capped at maxHeight when set,
+// 0 = no cap) and the best audio-only format. When maxHeight is set and
+// no format fits, the displayable best is returned with a stderr warning.
+func selectFormats(video *ytdl.Video, maxHeight int) (videoFmt, audioFmt *ytdl.Format) {
 	for i := range video.Formats {
 		f := &video.Formats[i]
 		if f.Height == 0 {
+			continue
+		}
+		if maxHeight > 0 && f.Height > maxHeight {
 			continue
 		}
 		if videoFmt == nil || f.Height > videoFmt.Height ||
@@ -146,27 +149,41 @@ func selectBestFormats(video *ytdl.Video) (videoFmt, audioFmt *ytdl.Format) {
 			videoFmt = f
 		}
 	}
+	if videoFmt == nil && maxHeight > 0 {
+		videoFmt, _ = selectFormats(video, 0)
+		if videoFmt != nil {
+			fmt.Fprintf(os.Stderr, "youtube: quality %dp not available, falling back to %dp\n", maxHeight, videoFmt.Height)
+		}
+	}
 	if videoFmt == nil || videoFmt.AudioChannels > 0 {
 		return videoFmt, nil
 	}
+	audioFmt = selectBestAudio(video)
+	return videoFmt, audioFmt
+}
+
+// selectBestAudio picks the best audio-only format (Height==0,
+// AudioChannels>0): prefers the default audio track, then highest bitrate.
+func selectBestAudio(video *ytdl.Video) *ytdl.Format {
+	var best *ytdl.Format
 	for i := range video.Formats {
 		f := &video.Formats[i]
 		if f.AudioChannels == 0 || f.Height != 0 {
 			continue
 		}
-		if betterAudioFormat(f, audioFmt) {
-			audioFmt = f
+		if betterAudioFormat(f, best) {
+			best = f
 		}
 	}
-	if audioFmt == nil {
+	if best == nil {
 		for i := range video.Formats {
 			f := &video.Formats[i]
-			if f.AudioChannels > 0 && betterAudioFormat(f, audioFmt) {
-				audioFmt = f
+			if f.AudioChannels > 0 && betterAudioFormat(f, best) {
+				best = f
 			}
 		}
 	}
-	return videoFmt, audioFmt
+	return best
 }
 
 func betterAudioFormat(candidate, current *ytdl.Format) bool {
@@ -181,15 +198,24 @@ func betterAudioFormat(candidate, current *ytdl.Format) bool {
 	return candidate.Bitrate > current.Bitrate
 }
 
-func formatsForDownload(video *ytdl.Video) (videoFmt, audioFmt *ytdl.Format, err error) {
-	videoFmt, audioFmt = selectBestFormats(video)
-	if videoFmt == nil {
+// formatsForDownload validates the selected format pair. When audioOnly is
+// true, videoFmt is always nil — only audio matters.
+func formatsForDownload(video *ytdl.Video, maxHeight int, audioOnly bool) (vidFmt, audFmt *ytdl.Format, err error) {
+	if audioOnly {
+		audFmt = selectBestAudio(video)
+		if audFmt == nil {
+			return nil, nil, fmt.Errorf("youtube: no audio format found for %s", video.ID)
+		}
+		return nil, audFmt, nil
+	}
+	vidFmt, audFmt = selectFormats(video, maxHeight)
+	if vidFmt == nil {
 		return nil, nil, fmt.Errorf("youtube: no video formats found for %s", video.ID)
 	}
-	if videoFmt.AudioChannels == 0 && audioFmt == nil {
+	if vidFmt.AudioChannels == 0 && audFmt == nil {
 		return nil, nil, fmt.Errorf("youtube: no audio format found for %s", video.ID)
 	}
-	return videoFmt, audioFmt, nil
+	return vidFmt, audFmt, nil
 }
 
 // takeParsedVideo returns the video info Parse already fetched for videoID,
@@ -224,7 +250,7 @@ func (s *Scraper) downloadBest(ctx context.Context, videoID, dest, owner string,
 		title = videoID
 	}
 
-	videoFmt, audioFmt, err := formatsForDownload(video)
+	videoFmt, audioFmt, err := formatsForDownload(video, 0, false)
 	if err != nil {
 		// The video has no downloadable formats (region-locked,
 		// members-only, audio-less, ...) — refetching the same metadata
