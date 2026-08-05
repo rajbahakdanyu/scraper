@@ -91,11 +91,19 @@ func (p *Policy) dialContext(dialer *net.Dialer, readTimeout time.Duration) func
 }
 
 func NewPublicClient(timeout time.Duration, allowedPrivateURLs ...string) *http.Client {
-	return newPublicClient(timeout, timeout, timeout, allowedPrivateURLs...)
+	return newPublicClient(timeout, timeout, timeout, "", allowedPrivateURLs...)
 }
 
 func NewPublicStreamingClient(responseHeaderTimeout time.Duration, allowedPrivateURLs ...string) *http.Client {
-	return newPublicClient(0, responseHeaderTimeout, responseHeaderTimeout, allowedPrivateURLs...)
+	return newPublicClient(0, responseHeaderTimeout, responseHeaderTimeout, "", allowedPrivateURLs...)
+}
+
+func NewPublicClientWithProxy(timeout time.Duration, proxyURL string) *http.Client {
+	return newPublicClient(timeout, timeout, timeout, proxyURL)
+}
+
+func NewPublicStreamingClientWithProxy(responseHeaderTimeout time.Duration, proxyURL string) *http.Client {
+	return newPublicClient(0, responseHeaderTimeout, responseHeaderTimeout, proxyURL)
 }
 
 func WithUserAgent(client *http.Client, userAgent string) *http.Client {
@@ -121,10 +129,17 @@ func (t *userAgentTransport) RoundTrip(req *http.Request) (*http.Response, error
 	return t.base.RoundTrip(clone)
 }
 
-func newPublicClient(timeout, responseHeaderTimeout, readTimeout time.Duration, allowedPrivateURLs ...string) *http.Client {
+func newPublicClient(timeout, responseHeaderTimeout, readTimeout time.Duration, proxyURL string, allowedPrivateURLs ...string) *http.Client {
 	policy := NewPolicy(allowedPrivateURLs...)
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
+	if proxyURL != "" {
+		u, err := url.Parse(proxyURL)
+		if err != nil {
+			return &http.Client{Transport: &errorTransport{err: fmt.Errorf("invalid proxy URL %q: %w", proxyURL, err)}}
+		}
+		transport.Proxy = http.ProxyURL(u)
+	}
 	transport.ResponseHeaderTimeout = responseHeaderTimeout
 	transport.DialContext = policy.dialContext(&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}, readTimeout)
 
@@ -164,4 +179,12 @@ func withReadTimeout(conn net.Conn, timeout time.Duration) net.Conn {
 func isPublicIP(ip net.IP) bool {
 	return ip.IsGlobalUnicast() && !ip.IsPrivate() && !ip.IsLoopback() &&
 		!ip.IsLinkLocalUnicast() && !ip.IsLinkLocalMulticast() && !ip.IsUnspecified()
+}
+
+type errorTransport struct {
+	err error
+}
+
+func (t *errorTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return nil, t.err
 }

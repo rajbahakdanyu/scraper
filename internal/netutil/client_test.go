@@ -94,3 +94,39 @@ func TestStreamingClientTimesOutStalledBodyRead(t *testing.T) {
 		t.Fatalf("idle timeout took %v", elapsed)
 	}
 }
+
+func TestNewPublicClientWithProxySetsTransportProxy(t *testing.T) {
+	proxyURL := "http://proxy.example.com:8080"
+	client := NewPublicClientWithProxy(30*time.Second, proxyURL)
+	transport := client.Transport.(*http.Transport)
+	req, _ := http.NewRequest("GET", "http://example.com", nil)
+	proxy, err := transport.Proxy(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proxy == nil {
+		t.Fatal("expected proxy to be set")
+	}
+	if proxy.Host != "proxy.example.com:8080" {
+		t.Errorf("proxy host = %q, want proxy.example.com:8080", proxy.Host)
+	}
+}
+
+func TestNewPublicClientWithProxyEmptyURL(t *testing.T) {
+	client := NewPublicClientWithProxy(30*time.Second, "")
+	transport := client.Transport.(*http.Transport)
+	if transport.Proxy != nil {
+		t.Error("expected no proxy for empty URL")
+	}
+}
+
+func TestNewPublicClientWithProxyInvalidURLFailsOnRequest(t *testing.T) {
+	client := NewPublicClientWithProxy(30*time.Second, "://invalid proxy url")
+	if _, ok := client.Transport.(*errorTransport); !ok {
+		t.Fatalf("expected errorTransport, got %T", client.Transport)
+	}
+	req, _ := http.NewRequest("GET", "http://example.com", nil)
+	if _, err := client.Transport.RoundTrip(req); err == nil {
+		t.Fatal("expected request to fail with invalid proxy URL")
+	}
+}
