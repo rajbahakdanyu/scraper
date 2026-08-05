@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -370,7 +371,7 @@ func TestDownloadBestNoFormatsIsPermanent(t *testing.T) {
 	scraper := NewYouTubeScraper()
 	scraper.parsed["nofmts"] = &ytdl.Video{ID: "nofmts", Title: "No Formats"}
 
-	err := scraper.downloadBest(t.Context(), "nofmts", t.TempDir(), "owner", fileutil.NewPathAllocator(), nil, true, nil)
+	err := scraper.downloadBest(t.Context(), "nofmts", t.TempDir(), "owner", fileutil.NewPathAllocator(), nil, true, 0, "", nil)
 	if err == nil {
 		t.Fatal("expected an error for a video with no downloadable formats")
 	}
@@ -478,6 +479,82 @@ func TestMuxStreamsTranscodesAudioWhenNotAAC(t *testing.T) {
 	args := readFFmpegArgs(t, argsFile)
 	if !strings.Contains(args, "-c:a aac") {
 		t.Fatalf("non-AAC audio must be transcoded to AAC for the mp4 container, got args: %s", args)
+	}
+}
+
+func TestExtractAudioM4a(t *testing.T) {
+	// When ffmpeg is available, verify m4a extraction copies audio codec
+	// (lossless pass-through: -vn -acodec copy)
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not available")
+	}
+	stubFFmpeg(t, `
+ext="$(echo "$*" | grep -o '[^ ]*\.m4a$' || true)"
+if echo "$*" | grep -q '\-acodec copy'; then
+  touch "$ext"
+  echo "copied" >&2
+fi
+exit 0
+`)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.mp4")
+	if err := os.WriteFile(src, []byte("video+audio"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "out.m4a")
+	if err := extractAudio(t.Context(), src, out, "m4a"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(out); err != nil {
+		t.Fatal("expected output file to exist")
+	}
+}
+
+func TestExtractAudioMp3(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not available")
+	}
+	stubFFmpeg(t, `
+ext="$(echo "$*" | grep -o '[^ ]*\.mp3$' || true)"
+if echo "$*" | grep -q 'libmp3lame'; then
+  touch "$ext"
+  echo "transcoded" >&2
+fi
+exit 0
+`)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.m4a")
+	if err := os.WriteFile(src, []byte("audio"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "out.mp3")
+	if err := extractAudio(t.Context(), src, out, "mp3"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(out); err != nil {
+		t.Fatal("expected mp3 output file to exist")
+	}
+}
+
+func TestExtractAudioMp3FromMuxedStream(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not available")
+	}
+	stubFFmpeg(t, `
+if echo "$*" | grep -q 'libmp3lame' && echo "$*" | grep -q '\-vn'; then
+  ext="$(echo "$*" | grep -o '[^ ]*\.mp3$')"
+  touch "$ext"
+fi
+exit 0
+`)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "muxed.mp4")
+	if err := os.WriteFile(src, []byte("muxed"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "out.mp3")
+	if err := extractAudio(t.Context(), src, out, "mp3"); err != nil {
+		t.Fatal(err)
 	}
 }
 

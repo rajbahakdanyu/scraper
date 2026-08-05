@@ -232,10 +232,11 @@ func (s *Scraper) takeParsedVideo(videoID string) *ytdl.Video {
 	return video
 }
 
-// downloadBest resolves videoID's highest-quality formats and downloads
-// (muxing with ffmpeg if needed) the result to dest. onProgress, if
-// non-nil, is called with cumulative bytes read and the combined total.
-func (s *Scraper) downloadBest(ctx context.Context, videoID, dest, owner string, paths *fileutil.PathAllocator, limiter *rate.Limiter, skipChecksums bool, onProgress func(bytes, total int64)) error {
+// downloadBest resolves videoID's formats and downloads (muxing or
+// extracting audio with ffmpeg if needed) the result to dest. maxHeight caps
+// video resolution (0 = no cap). audioOnly, if non-empty ("m4a" or "mp3"),
+// bypasses video and downloads/extracts only audio.
+func (s *Scraper) downloadBest(ctx context.Context, videoID, dest, owner string, paths *fileutil.PathAllocator, limiter *rate.Limiter, skipChecksums bool, maxHeight int, audioOnly string, onProgress func(bytes, total int64)) error {
 	video := s.takeParsedVideo(videoID)
 	if video == nil {
 		var err error
@@ -250,7 +251,7 @@ func (s *Scraper) downloadBest(ctx context.Context, videoID, dest, owner string,
 		title = videoID
 	}
 
-	videoFmt, audioFmt, err := formatsForDownload(video, 0, false)
+	videoFmt, audioFmt, err := formatsForDownload(video, maxHeight, audioOnly != "")
 	if err != nil {
 		// The video has no downloadable formats (region-locked,
 		// members-only, audio-less, ...) — refetching the same metadata
@@ -258,10 +259,56 @@ func (s *Scraper) downloadBest(ctx context.Context, videoID, dest, owner string,
 		return &nonRetryableError{err}
 	}
 
+	if audioOnly != "" {
+		return s.downloadAudioOnly(ctx, video, videoFmt, audioFmt, title, dest, owner, paths, limiter, skipChecksums, audioOnly, onProgress)
+	}
 	if audioFmt == nil {
 		return s.downloadStreamDirect(ctx, video, videoFmt, title, dest, owner, paths, limiter, skipChecksums, onProgress)
 	}
 	return s.downloadAndMux(ctx, video, videoFmt, audioFmt, title, dest, owner, paths, limiter, skipChecksums, onProgress)
+}
+
+func (s *Scraper) downloadAudioOnly(ctx context.Context, video *ytdl.Video, videoFmt, audioFmt *ytdl.Format, title, dest, owner string, paths *fileutil.PathAllocator, limiter *rate.Limiter, skipChecksums bool, audioFormat string, onProgress func(int64, int64)) error {
+	var srcFormat *ytdl.Format
+	if audioFmt != nil {
+		srcFormat = audioFmt
+	} else {
+		srcFormat = videoFmt
+	}
+
+	ext := "m4a"
+	if audioFormat == "mp3" {
+		ext = "mp3"
+	}
+	finalPath := paths.Claim(filepath.Join(dest, sanitizeFilename(title)+"."+ext), owner)
+	skip, err := prepareOutput(finalPath, skipChecksums)
+	if err != nil {
+		return err
+	}
+	if skip {
+		if onProgress != nil && srcFormat.ContentLength > 0 {
+			onProgress(srcFormat.ContentLength, srcFormat.ContentLength)
+		}
+		return nil
+	}
+	tempPath := finalPath + ".part"
+	defer os.Remove(tempPath)
+
+	streamTemp := tempPath + ".stream"
+	defer os.Remove(streamTemp)
+
+	if err := s.downloadStreamToFileProgress(ctx, video, srcFormat, streamTemp, limiter, func(n, total int64) {
+		if onProgress != nil {
+			onProgress(n, total)
+		}
+	}); err != nil {
+		return err
+	}
+
+	if err := extractAudio(ctx, streamTemp, tempPath, audioFormat); err != nil {
+		return err
+	}
+	return commitOutput(tempPath, finalPath, skipChecksums)
 }
 
 func (s *Scraper) downloadStreamDirect(ctx context.Context, video *ytdl.Video, format *ytdl.Format, title, dest, owner string, paths *fileutil.PathAllocator, limiter *rate.Limiter, skipChecksums bool, onProgress func(int64, int64)) error {
@@ -421,6 +468,36 @@ func muxStreams(ctx context.Context, videoPath, audioPath, outputPath string, au
 			return fmt.Errorf("youtube: ffmpeg mux failed: %w", err)
 		}
 		return fmt.Errorf("youtube: ffmpeg mux failed: %w: %s", err, detail)
+	}
+	return nil
+}
+
+// extractAudio extracts or transcodes audio from srcPath to outputPath.
+// For m4a: stream-copies audio (-vn -acodec copy). For mp3: transcodes to
+// mp3 via libmp3lame (-vn -acodec libmp3lame -q:a 2).
+func extractAudio(ctx context.Context, srcPath, outputPath, format string) error {
+	var stderr bytes.Buffer
+	args := []string{"-y", "-i", srcPath, "-vn"}
+	if format == "mp3" {
+		args = append(args, "-codec:a", "libmp3lame", "-q:a", "2")
+	} else {
+		args = append(args, "-acodec", "copy")
+	}
+	args = append(args, outputPath)
+	// #nosec G204 -- arguments are passed without shell evaluation; paths are internally allocated.
+	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) {
+			return &nonRetryableError{fmt.Errorf("youtube: failed to start ffmpeg: %w", err)}
+		}
+		stderrLines := strings.Split(strings.TrimSpace(stderr.String()), "\n")
+		lastLine := ""
+		if len(stderrLines) > 0 {
+			lastLine = stderrLines[len(stderrLines)-1]
+		}
+		return fmt.Errorf("youtube: ffmpeg exited with code %d: %s", exitErr.ExitCode(), lastLine)
 	}
 	return nil
 }
@@ -701,6 +778,8 @@ type DownloaderConfig struct {
 	SkipChecksum bool
 	ProxyURL     string
 	Cookies      []*http.Cookie
+	Quality      string // "" or "1080p" etc.
+	AudioOnly    string // "" or "m4a"/"mp3"
 }
 
 // Downloader adapts Scraper to the dashboard's Downloader interface (see
@@ -720,6 +799,8 @@ type Downloader struct {
 	paths     *fileutil.PathAllocator
 	limiter   *rate.Limiter
 	skipSum   bool
+	quality   int    // maxHeight; 0 = no cap
+	audioOnly string // "" or "m4a"/"mp3"
 	// wg tracks in-flight Download calls. Shutdown closes the progress
 	// channel only after wg drains, so a sendProgress can never hit a
 	// closed channel. shuttingDown (guarded by mu) makes post-Shutdown
@@ -755,6 +836,10 @@ func NewDownloaderWithConfig(scraper *Scraper, config DownloaderConfig) (*Downlo
 	if config.RateLimit > 0 {
 		limiter = rate.NewLimiter(rate.Limit(config.RateLimit), minRateLimitBurst)
 	}
+	var maxHeight int
+	if config.Quality != "" {
+		maxHeight = parseQualityHeight(config.Quality)
+	}
 	return &Downloader{
 		scraper:   scraper,
 		progress:  make(chan model.ProgressEvent, progressBufSize),
@@ -765,7 +850,23 @@ func NewDownloaderWithConfig(scraper *Scraper, config DownloaderConfig) (*Downlo
 		paths:     fileutil.NewPathAllocator(),
 		limiter:   limiter,
 		skipSum:   config.SkipChecksum,
+		quality:   maxHeight,
+		audioOnly: config.AudioOnly,
 	}, nil
+}
+
+var qualityHeights = map[string]int{
+	"2160p": 2160,
+	"1440p": 1440,
+	"1080p": 1080,
+	"720p":  720,
+	"480p":  480,
+	"360p":  360,
+	"240p":  240,
+}
+
+func parseQualityHeight(q string) int {
+	return qualityHeights[q]
 }
 
 // Compile-time check that Downloader satisfies the dashboard's Downloader
@@ -832,7 +933,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 	}
 
 	err := withRetry(ctx, func() error {
-		return d.scraper.downloadBest(ctx, videoID, dest, item.Key(), d.paths, d.limiter, d.skipSum, func(bytes, total int64) {
+		return d.scraper.downloadBest(ctx, videoID, dest, item.Key(), d.paths, d.limiter, d.skipSum, d.quality, d.audioOnly, func(bytes, total int64) {
 			d.sendProgress(model.ProgressEvent{Item: item, Bytes: bytes, Total: total, Status: model.StatusDownloading})
 		})
 	})
