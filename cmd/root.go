@@ -254,17 +254,18 @@ Bash:  source <(scraper completion bash)
 Zsh:   source <(scraper completion zsh)
 Fish:  scraper completion fish | source`,
 			Args: cobra.ExactArgs(1),
-			Run: func(cmd *cobra.Command, args []string) {
+			RunE: func(cmd *cobra.Command, args []string) error {
 				switch args[0] {
 				case "bash":
-					cmd.Root().GenBashCompletion(os.Stdout)
+					return cmd.Root().GenBashCompletion(os.Stdout)
 				case "zsh":
-					cmd.Root().GenZshCompletion(os.Stdout)
+					return cmd.Root().GenZshCompletion(os.Stdout)
 				case "fish":
-					cmd.Root().GenFishCompletion(os.Stdout, true)
+					return cmd.Root().GenFishCompletion(os.Stdout, true)
 				case "powershell":
-					cmd.Root().GenPowerShellCompletion(os.Stdout)
+					return cmd.Root().GenPowerShellCompletion(os.Stdout)
 				}
+				return nil
 			},
 		},
 	)
@@ -477,13 +478,13 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 
 // batchAlbum holds a scraped album's items and metadata.
 type batchAlbum struct {
-	URL      string
-	Site     string
-	Slug     string
-	Dest     string
-	Items    []model.MediaItem
-	Err      error
-	Scraper  model.Scraper
+	URL     string
+	Site    string
+	Slug    string
+	Dest    string
+	Items   []model.MediaItem
+	Err     error
+	Scraper model.Scraper
 }
 
 // collectBatchURLs gathers URLs from positional arguments, --input-file, and
@@ -521,7 +522,7 @@ func collectBatchURLs(args []string, opts globalOptions) ([]string, error) {
 }
 
 func readURLsFromFile(path string) ([]string, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(filepath.Clean(path))
 	if err != nil {
 		return nil, fmt.Errorf("open input file %q: %w", path, err)
 	}
@@ -635,11 +636,11 @@ func runBatch(opts globalOptions, urls []string) error {
 				return err
 			}
 			dashAlbums = append(dashAlbums, dashboard.DashAlbumURL{
-				Site:     "youtube",
-				URL:      u,
-				Slug:     slug,
-				Dest:     dest,
-				Scraper:  scraper,
+				Site:    "youtube",
+				URL:     u,
+				Slug:    slug,
+				Dest:    dest,
+				Scraper: scraper,
 			})
 		}
 	} else {
@@ -664,11 +665,11 @@ func runBatch(opts globalOptions, urls []string) error {
 			}
 			scraper := reg[site]
 			dashAlbums = append(dashAlbums, dashboard.DashAlbumURL{
-				Site:     site,
-				URL:      u,
-				Slug:     slug,
-				Dest:     dest,
-				Scraper:  scraper,
+				Site:    site,
+				URL:     u,
+				Slug:    slug,
+				Dest:    dest,
+				Scraper: scraper,
 			})
 		}
 	}

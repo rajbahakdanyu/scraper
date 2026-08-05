@@ -292,13 +292,15 @@ func runBatchPlain(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, des
 	return model.NewPartialError("batch", allErrs)
 }
 
-func writeJSONLine(w io.Writer, v interface{}) error {
+func writeJSONLine(w io.Writer, v interface{}) {
 	data, err := json.Marshal(v)
 	if err != nil {
-		return fmt.Errorf("json: encode error: %w", err)
+		fmt.Fprintf(os.Stderr, "json encode error: %v\n", err)
+		return
 	}
-	_, err = fmt.Fprintln(w, string(data))
-	return err
+	if _, err = fmt.Fprintln(w, string(data)); err != nil {
+		fmt.Fprintf(os.Stderr, "json write error: %v\n", err)
+	}
 }
 
 // runJSON downloads items from a single album and prints JSON Lines
