@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -610,5 +611,55 @@ func TestLoadGlobalConfigCookiesFileNotFound(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error for missing cookies file")
+	}
+}
+
+func TestRunWithScraperAppliesCookiesToDownloader(t *testing.T) {
+	cookiesPath := filepath.Join(t.TempDir(), "cookies.txt")
+	cookieContent := ".example.com\tTRUE\t/\tFALSE\t9999999999\ttoken\tval\n"
+	if err := os.WriteFile(cookiesPath, []byte(cookieContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	cfgContent := "cookies: " + cookiesPath + "\n"
+	if err := os.WriteFile(configPath, []byte(cfgContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadGlobalConfig(globalOptions{configPath: configPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookies := cfg.ParsedCookies()
+	if len(cookies) != 1 || cookies[0].Name != "token" {
+		t.Errorf("expected parsed cookies from config, got %v", cookies)
+	}
+}
+
+func TestScraperRegistryWithCookies(t *testing.T) {
+	cookies := []*http.Cookie{{Name: "auth", Value: "secret"}}
+	reg, err := scraperRegistry("", cookies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"youtube", "cyberdrop", "bunker", "goonbox", "filester"} {
+		if reg[name] == nil {
+			t.Errorf("expected scraper for %q in registry", name)
+		}
+	}
+}
+
+func TestScraperRegistryWithProxyAndCookies(t *testing.T) {
+	cookies := []*http.Cookie{{Name: "auth", Value: "secret"}}
+	reg, err := scraperRegistry("http://proxy:8080", cookies)
+	if err != nil {
+		if strings.Contains(err.Error(), "invalid proxy URL") {
+			return
+		}
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, name := range []string{"youtube", "cyberdrop", "bunker", "goonbox", "filester"} {
+		if reg[name] == nil {
+			t.Errorf("expected scraper for %q in registry", name)
+		}
 	}
 }

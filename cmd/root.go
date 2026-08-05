@@ -436,6 +436,12 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 		return err
 	}
 
+	if len(cfg.ParsedCookies()) > 0 {
+		if s, ok := scraper.(interface{ SetCookies([]*http.Cookie) }); ok {
+			s.SetCookies(cfg.ParsedCookies())
+		}
+	}
+
 	if opts.dryRun {
 		if opts.json {
 			return runDryRunJSON(scraper, targetURL, siteName, os.Stdout)
@@ -460,6 +466,7 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 			RateLimit:    rateLimitBytesPerSec,
 			SkipChecksum: cfg.SkipChecksums,
 			ProxyURL:     cfg.Proxy,
+			Cookies:      cfg.ParsedCookies(),
 		})
 		if err != nil {
 			return fmt.Errorf("youtube downloader: %w", err)
@@ -471,6 +478,7 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 			cfg.Timeout,
 			cfg.UserAgent,
 			cfg.Proxy,
+			cfg.ParsedCookies(),
 		)
 		if err != nil {
 			return fmt.Errorf("downloader: %w", err)
@@ -658,6 +666,7 @@ func runBatch(opts globalOptions, urls []string) error {
 			RateLimit:    rateLimitBytesPerSec,
 			SkipChecksum: cfg.SkipChecksums,
 			ProxyURL:     cfg.Proxy,
+			Cookies:      cfg.ParsedCookies(),
 		})
 		if err != nil {
 			return fmt.Errorf("youtube downloader: %w", err)
@@ -683,6 +692,7 @@ func runBatch(opts globalOptions, urls []string) error {
 			cfg.Timeout,
 			cfg.UserAgent,
 			cfg.Proxy,
+			cfg.ParsedCookies(),
 		)
 		if err != nil {
 			return fmt.Errorf("downloader: %w", err)
