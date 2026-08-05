@@ -303,7 +303,10 @@ func TestRootCmdAutoDetectsUnknownDomain(t *testing.T) {
 }
 
 func TestScraperRegistry(t *testing.T) {
-	reg := scraperRegistry()
+	reg, err := scraperRegistry("")
+	if err != nil {
+		t.Fatalf("scraperRegistry failed: %v", err)
+	}
 	for _, name := range []string{"youtube", "cyberdrop", "bunker", "goonbox", "filester"} {
 		if _, ok := reg[name]; !ok {
 			t.Errorf("expected registry to contain %q", name)

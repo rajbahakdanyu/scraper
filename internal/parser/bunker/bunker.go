@@ -38,6 +38,21 @@ func NewBunkerScraper() *Scraper {
 	}
 }
 
+// NewBunkerScraperWithProxy creates a Bunker scraper that routes all
+// HTTP requests through the given proxy URL.
+func NewBunkerScraperWithProxy(proxyURL string) (*Scraper, error) {
+	client, err := netutil.NewPublicClientWithProxy(30*time.Second, proxyURL)
+	if err != nil {
+		return nil, err
+	}
+	return &Scraper{
+		client:    client,
+		userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+		baseURL:   "https://bunkr.cr",
+		signURL:   "https://glb-apisign.cdn.cr/sign",
+	}, nil
+}
+
 func (s *Scraper) Name() string {
 	return "bunker"
 }

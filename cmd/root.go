@@ -207,7 +207,15 @@ func NewRootCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				return runWithScraper(scraperRegistry()[site], targetURL, site, opts)
+				cfg, err := loadGlobalConfig(opts)
+				if err != nil {
+					return err
+				}
+				reg, err := scraperRegistry(cfg.Proxy)
+				if err != nil {
+					return err
+				}
+				return runWithScraper(reg[site], targetURL, site, opts)
 			}
 			return runBatch(opts, urls)
 		},
@@ -266,14 +274,38 @@ Fish:  scraper completion fish | source`,
 
 // scraperRegistry maps a site name to its scraper, used by detectSite's
 // auto-detect path.
-func scraperRegistry() map[string]model.Scraper {
-	return map[string]model.Scraper{
-		"youtube":   youtube.NewYouTubeScraper(),
-		"cyberdrop": cyberdrop.NewCyberDropScraper(),
-		"bunker":    bunker.NewBunkerScraper(),
-		"goonbox":   goonbox.NewGoonBoxScraper(),
-		"filester":  filester.NewFilesterScraper(),
+func scraperRegistry(proxyURL string) (map[string]model.Scraper, error) {
+	reg := map[string]model.Scraper{
+		"youtube": youtube.NewYouTubeScraper(),
 	}
+	if proxyURL != "" {
+		cy, err := cyberdrop.NewCyberDropScraperWithProxy(proxyURL)
+		if err != nil {
+			return nil, err
+		}
+		bu, err := bunker.NewBunkerScraperWithProxy(proxyURL)
+		if err != nil {
+			return nil, err
+		}
+		gb, err := goonbox.NewGoonBoxScraperWithProxy(proxyURL)
+		if err != nil {
+			return nil, err
+		}
+		fs, err := filester.NewFilesterScraperWithProxy(proxyURL)
+		if err != nil {
+			return nil, err
+		}
+		reg["cyberdrop"] = cy
+		reg["bunker"] = bu
+		reg["goonbox"] = gb
+		reg["filester"] = fs
+	} else {
+		reg["cyberdrop"] = cyberdrop.NewCyberDropScraper()
+		reg["bunker"] = bunker.NewBunkerScraper()
+		reg["goonbox"] = goonbox.NewGoonBoxScraper()
+		reg["filester"] = filester.NewFilesterScraper()
+	}
+	return reg, nil
 }
 
 // resolveURL extracts the target URL from positional args or the --url flag.
@@ -518,6 +550,16 @@ func readURLsFromReader(r io.Reader) ([]string, error) {
 // soon as each album finishes — so token-based URLs from early albums don't
 // expire before later albums are scraped.
 func runBatch(opts globalOptions, urls []string) error {
+	cfg, err := loadGlobalConfig(opts)
+	if err != nil {
+		return err
+	}
+
+	reg, err := scraperRegistry(cfg.Proxy)
+	if err != nil {
+		return err
+	}
+
 	if opts.dryRun {
 		if opts.json {
 			var allErrs []error
@@ -527,7 +569,7 @@ func runBatch(opts globalOptions, urls []string) error {
 					allErrs = append(allErrs, sitErr)
 					continue
 				}
-				if jsonErr := runDryRunJSON(scraperRegistry()[site], u, site, os.Stdout); jsonErr != nil {
+				if jsonErr := runDryRunJSON(reg[site], u, site, os.Stdout); jsonErr != nil {
 					allErrs = append(allErrs, jsonErr)
 				}
 			}
@@ -540,7 +582,7 @@ func runBatch(opts globalOptions, urls []string) error {
 				errs = append(errs, sitErr)
 				continue
 			}
-			if dryErr := runDryRun(scraperRegistry()[site], u); dryErr != nil {
+			if dryErr := runDryRun(reg[site], u); dryErr != nil {
 				errs = append(errs, dryErr)
 			}
 		}
@@ -561,11 +603,6 @@ func runBatch(opts globalOptions, urls []string) error {
 	}
 	if hasYouTube && hasOther {
 		return fmt.Errorf("batch mode only supports URLs from the same site type (all YouTube or all non-YouTube)")
-	}
-
-	cfg, err := loadGlobalConfig(opts)
-	if err != nil {
-		return err
 	}
 
 	rateLimitBytesPerSec, err := config.ParseRateLimit(cfg.RateLimit)
@@ -625,7 +662,7 @@ func runBatch(opts globalOptions, urls []string) error {
 			if err != nil {
 				return err
 			}
-			scraper := scraperRegistry()[site]
+			scraper := reg[site]
 			dashAlbums = append(dashAlbums, dashboard.DashAlbumURL{
 				Site:     site,
 				URL:      u,

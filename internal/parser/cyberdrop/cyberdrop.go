@@ -33,6 +33,20 @@ func NewCyberDropScraper() *Scraper {
 	}
 }
 
+// NewCyberDropScraperWithProxy creates a CyberDrop scraper that routes all
+// HTTP requests through the given proxy URL.
+func NewCyberDropScraperWithProxy(proxyURL string) (*Scraper, error) {
+	client, err := netutil.NewPublicClientWithProxy(30*time.Second, proxyURL)
+	if err != nil {
+		return nil, err
+	}
+	return &Scraper{
+		client:    client,
+		userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+		baseURL:   apiBase,
+	}, nil
+}
+
 func (s *Scraper) Name() string {
 	return "cyberdrop"
 }
