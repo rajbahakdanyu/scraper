@@ -928,9 +928,15 @@ func TestFormatsForDownloadAudioOnlyNoAudio(t *testing.T) {
 	video := &ytdl.Video{ID: "mute", Formats: ytdl.FormatList{
 		{Height: 1080, Bitrate: 4000},
 	}}
-	_, _, err := formatsForDownload(video, 0, true)
-	if err == nil || !strings.Contains(err.Error(), "no audio format") {
-		t.Fatalf("expected no-audio error for audio-only, got %v", err)
+	vidFmt, audFmt, err := formatsForDownload(video, 0, true)
+	if err != nil {
+		t.Fatalf("expected fallback to muxed format for audio-only, got error: %v", err)
+	}
+	if vidFmt == nil {
+		t.Fatal("expected vidFmt (muxed fallback) for audio-only")
+	}
+	if audFmt != nil {
+		t.Fatalf("expected nil audFmt for muxed fallback, got %+v", audFmt)
 	}
 }
 

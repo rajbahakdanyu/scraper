@@ -100,13 +100,15 @@ func (e *PartialError) Unwrap() []error {
 
 // ProgressEvent carries progress information for tracking downloads
 type ProgressEvent struct {
-	Item     MediaItem      // The media item being downloaded
-	Bytes    int64          // Bytes downloaded so far
-	Total    int64          // Total size of the media
-	Speed    float64        // Current download speed in bytes/sec
-	Status   DownloadStatus // Current download status
-	Filename string         // Target filename for the download
-	Start    time.Time      // Start time of the download
+	Item      MediaItem      // The media item being downloaded
+	Bytes     int64          // Bytes downloaded so far
+	Total     int64          // Total size of the media
+	Speed     float64        // Current download speed in bytes/sec
+	Status    DownloadStatus // Current download status
+	Filename  string         // Target filename for the download
+	Start     time.Time      // Start time of the download
+	Quality   string         // YouTube quality cap, e.g. "1080p"
+	AudioOnly string         // YouTube audio-only format, e.g. "m4a"
 }
 
 // MediaTypeForName infers the media type from a filename's extension.

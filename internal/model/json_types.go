@@ -39,6 +39,8 @@ type JSONEvent struct {
 	Cancelled  int    `json:"cancelled,omitempty"`
 	Total      int    `json:"total,omitempty"`
 	TotalBytes int64  `json:"totalBytes,omitempty"`
+	Quality    string `json:"quality,omitempty"`
+	AudioOnly  string `json:"audioOnly,omitempty"`
 }
 
 func DownloadStatusString(s DownloadStatus) string {

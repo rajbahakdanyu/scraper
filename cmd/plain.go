@@ -305,7 +305,7 @@ func writeJSONLine(w io.Writer, v interface{}) {
 
 // runJSON downloads items from a single album and prints JSON Lines
 // (one event per line) to out. Errors and warnings go to stderr.
-func runJSON(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error), dest, slug, site, targetURL string, out io.Writer) error {
+func runJSON(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error), dest, slug, site, targetURL string, quality, audioOnly string, out io.Writer) error {
 	items, err := scrapeFn()
 	if err != nil && len(items) == 0 {
 		writeJSONLine(out, model.JSONEvent{Event: "error", URL: targetURL, Error: err.Error()})
@@ -401,35 +401,41 @@ func runJSON(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error)
 		if errs[i] != nil {
 			if isCancelledError(errs[i]) {
 				writeJSONLine(out, model.JSONEvent{
-					Event:  "item",
-					Title:  itemTitle(item),
-					Size:   item.Size,
-					Path:   path,
-					Status: model.DownloadStatusString(model.StatusCancelled),
-					Album:  slug,
+					Event:     "item",
+					Title:     itemTitle(item),
+					Size:      item.Size,
+					Path:      path,
+					Status:    model.DownloadStatusString(model.StatusCancelled),
+					Album:     slug,
+					Quality:   quality,
+					AudioOnly: audioOnly,
 				})
 				cancelled++
 			} else {
 				writeJSONLine(out, model.JSONEvent{
-					Event:  "item",
-					Title:  itemTitle(item),
-					Size:   item.Size,
-					Path:   path,
-					Status: model.DownloadStatusString(model.StatusFailed),
-					Album:  slug,
-					Error:  errs[i].Error(),
+					Event:     "item",
+					Title:     itemTitle(item),
+					Size:      item.Size,
+					Path:      path,
+					Status:    model.DownloadStatusString(model.StatusFailed),
+					Album:     slug,
+					Error:     errs[i].Error(),
+					Quality:   quality,
+					AudioOnly: audioOnly,
 				})
 				failed++
 			}
 			continue
 		}
 		writeJSONLine(out, model.JSONEvent{
-			Event:  "item",
-			Title:  itemTitle(item),
-			Size:   item.Size,
-			Path:   path,
-			Status: model.DownloadStatusString(model.StatusCompleted),
-			Album:  slug,
+			Event:     "item",
+			Title:     itemTitle(item),
+			Size:      item.Size,
+			Path:      path,
+			Status:    model.DownloadStatusString(model.StatusCompleted),
+			Album:     slug,
+			Quality:   quality,
+			AudioOnly: audioOnly,
 		})
 		completed++
 		if item.Size > 0 {
@@ -451,7 +457,7 @@ func runJSON(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error)
 
 // runBatchJSON downloads items from multiple albums serially, printing JSON
 // Lines events to out as each album's items finish.
-func runBatchJSON(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, destRoot string, out io.Writer) error {
+func runBatchJSON(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, destRoot string, quality, audioOnly string, out io.Writer) error {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(signals)
@@ -547,35 +553,41 @@ func runBatchJSON(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, dest
 			if errs[i] != nil {
 				if isCancelledError(errs[i]) {
 					writeJSONLine(out, model.JSONEvent{
-						Event:  "item",
-						Title:  itemTitle(item),
-						Size:   item.Size,
-						Path:   path,
-						Status: model.DownloadStatusString(model.StatusCancelled),
-						Album:  a.Slug,
+						Event:     "item",
+						Title:     itemTitle(item),
+						Size:      item.Size,
+						Path:      path,
+						Status:    model.DownloadStatusString(model.StatusCancelled),
+						Album:     a.Slug,
+						Quality:   quality,
+						AudioOnly: audioOnly,
 					})
 					cancelled++
 				} else {
 					writeJSONLine(out, model.JSONEvent{
-						Event:  "item",
-						Title:  itemTitle(item),
-						Size:   item.Size,
-						Path:   path,
-						Status: model.DownloadStatusString(model.StatusFailed),
-						Album:  a.Slug,
-						Error:  errs[i].Error(),
+						Event:     "item",
+						Title:     itemTitle(item),
+						Size:      item.Size,
+						Path:      path,
+						Status:    model.DownloadStatusString(model.StatusFailed),
+						Album:     a.Slug,
+						Error:     errs[i].Error(),
+						Quality:   quality,
+						AudioOnly: audioOnly,
 					})
 					failed++
 				}
 				continue
 			}
 			writeJSONLine(out, model.JSONEvent{
-				Event:  "item",
-				Title:  itemTitle(item),
-				Size:   item.Size,
-				Path:   path,
-				Status: model.DownloadStatusString(model.StatusCompleted),
-				Album:  a.Slug,
+				Event:     "item",
+				Title:     itemTitle(item),
+				Size:      item.Size,
+				Path:      path,
+				Status:    model.DownloadStatusString(model.StatusCompleted),
+				Album:     a.Slug,
+				Quality:   quality,
+				AudioOnly: audioOnly,
 			})
 			completed++
 		}

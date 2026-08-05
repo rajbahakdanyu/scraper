@@ -398,7 +398,7 @@ func TestRunJSONProducesJSONLines(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	err := runJSON(fd, itemsScraper(items, nil), t.TempDir(), "album", "test", "https://example.com", &buf)
+	err := runJSON(fd, itemsScraper(items, nil), t.TempDir(), "album", "test", "https://example.com", "", "", &buf)
 	if err != nil {
 		t.Fatalf("runJSON failed: %v", err)
 	}
@@ -433,7 +433,7 @@ func TestRunJSONWithFailedItems(t *testing.T) {
 	fd.errs["https://example.com/a.mp4"] = fmt.Errorf("HTTP 404")
 
 	var buf bytes.Buffer
-	_ = runJSON(fd, itemsScraper(items, nil), t.TempDir(), "album", "test", "https://example.com", &buf)
+	_ = runJSON(fd, itemsScraper(items, nil), t.TempDir(), "album", "test", "https://example.com", "", "", &buf)
 
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
 	var itemEvent struct {
@@ -461,7 +461,7 @@ func TestRunJSONWithFailedItems(t *testing.T) {
 func TestRunJSONHandlesNoItems(t *testing.T) {
 	fd := newFakePlainDownloader()
 	var buf bytes.Buffer
-	err := runJSON(fd, itemsScraper(nil, nil), t.TempDir(), "", "test", "https://example.com", &buf)
+	err := runJSON(fd, itemsScraper(nil, nil), t.TempDir(), "", "test", "https://example.com", "", "", &buf)
 	if err != nil {
 		t.Fatalf("expected no error for empty result, got: %v", err)
 	}
@@ -481,7 +481,7 @@ func TestRunJSONShutsDownProgress(t *testing.T) {
 	fd.blockOnDownload = false
 
 	var buf bytes.Buffer
-	err := runJSON(fd, itemsScraper(items, nil), t.TempDir(), "album", "test", "https://example.com", &buf)
+	err := runJSON(fd, itemsScraper(items, nil), t.TempDir(), "album", "test", "https://example.com", "", "", &buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -527,7 +527,7 @@ func TestRunBatchJSONProducesJSONLines(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	err := runBatchJSON(fd, albums, "/tmp", &buf)
+	err := runBatchJSON(fd, albums, "/tmp", "", "", &buf)
 	if err != nil {
 		t.Fatalf("runBatchJSON failed: %v", err)
 	}
@@ -558,7 +558,7 @@ func TestRunBatchJSONWithFailedAlbum(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	_ = runBatchJSON(fd, albums, "/tmp", &buf)
+	_ = runBatchJSON(fd, albums, "/tmp", "", "", &buf)
 
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
 	found := false

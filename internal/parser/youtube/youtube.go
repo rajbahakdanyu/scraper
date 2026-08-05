@@ -204,7 +204,11 @@ func formatsForDownload(video *ytdl.Video, maxHeight int, audioOnly bool) (vidFm
 	if audioOnly {
 		audFmt = selectBestAudio(video)
 		if audFmt == nil {
-			return nil, nil, fmt.Errorf("youtube: no audio format found for %s", video.ID)
+			vidFmt, _ = selectFormats(video, 0)
+			if vidFmt == nil {
+				return nil, nil, fmt.Errorf("youtube: no audio format found for %s", video.ID)
+			}
+			return vidFmt, nil, nil
 		}
 		return nil, audFmt, nil
 	}
@@ -880,6 +884,16 @@ func ValidQuality(q string) (int, bool) {
 	return qualityHeights[q], true
 }
 
+var qualityHeightsReverse = map[int]string{
+	2160: "2160p",
+	1440: "1440p",
+	1080: "1080p",
+	720:  "720p",
+	480:  "480p",
+	360:  "360p",
+	240:  "240p",
+}
+
 func parseQualityHeight(q string) int {
 	return qualityHeights[q]
 }
@@ -917,7 +931,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 		delete(d.cancelled, item.Key())
 		d.mu.Unlock()
 		cancel()
-		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled})
+		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled, Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
 		d.wg.Done()
 		return fmt.Errorf("download cancelled: %s", item.URL)
 	}
@@ -935,33 +949,33 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 	case d.sem <- struct{}{}:
 		defer func() { <-d.sem }()
 	case <-ctx.Done():
-		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled})
+		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled, Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
 		return fmt.Errorf("download cancelled: %s", item.URL)
 	}
 
-	d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusDownloading, Start: time.Now()})
+	d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusDownloading, Start: time.Now(), Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
 
 	videoID := d.scraper.ExtractVideoID(item.URL)
 	if videoID == "" {
-		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed})
+		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed, Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
 		return fmt.Errorf("youtube: could not extract video ID from %s", item.URL)
 	}
 
 	err := withRetry(ctx, func() error {
 		return d.scraper.downloadBest(ctx, videoID, dest, item.Key(), d.paths, d.limiter, d.skipSum, d.quality, d.audioOnly, func(bytes, total int64) {
-			d.sendProgress(model.ProgressEvent{Item: item, Bytes: bytes, Total: total, Status: model.StatusDownloading})
+			d.sendProgress(model.ProgressEvent{Item: item, Bytes: bytes, Total: total, Status: model.StatusDownloading, Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
 		})
 	})
 
 	switch {
 	case err == nil:
-		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCompleted})
+		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCompleted, Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
 		return nil
 	case ctx.Err() != nil:
-		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled})
+		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled, Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
 		return fmt.Errorf("download cancelled: %s", item.URL)
 	default:
-		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed})
+		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed, Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
 		return err
 	}
 }

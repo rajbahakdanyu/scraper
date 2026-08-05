@@ -88,6 +88,9 @@ func loadGlobalConfig(opts globalOptions) (*config.Config, error) {
 	if opts.audioOnlySet {
 		cfg.AudioOnly = opts.audioOnly
 	}
+	if opts.audioOnlySet && cfg.AudioOnly == "" {
+		cfg.AudioOnly = "m4a"
+	}
 	if cfg.Quality != "" && cfg.AudioOnly != "" {
 		return nil, fmt.Errorf("cannot use --quality and --audio-only together")
 	}
@@ -543,7 +546,7 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 	// bubbletea TUI would emit escape-code garbage — fall back to plain
 	// line-based output instead.
 	if opts.json {
-		return runJSON(dl, scraperFn, cfg.OutputDir, slug, siteName, targetURL, os.Stdout)
+		return runJSON(dl, scraperFn, cfg.OutputDir, slug, siteName, targetURL, cfg.Quality, cfg.AudioOnly, os.Stdout)
 	}
 
 	if opts.noTui || !term.IsTerminal(int(os.Stdout.Fd())) {
@@ -765,7 +768,7 @@ func runBatch(opts globalOptions, urls []string) error {
 	}
 
 	if opts.json {
-		return runBatchJSON(dl, dashAlbums, cfg.OutputDir, os.Stdout)
+		return runBatchJSON(dl, dashAlbums, cfg.OutputDir, cfg.Quality, cfg.AudioOnly, os.Stdout)
 	}
 
 	if opts.noTui || !term.IsTerminal(int(os.Stdout.Fd())) {
