@@ -483,3 +483,43 @@ func TestReadURLsFromFileNotFound(t *testing.T) {
 		t.Fatal("expected error for missing file")
 	}
 }
+
+func TestNewRootCmdRegistersNoTuiAndJSONFlags(t *testing.T) {
+	root := NewRootCmd()
+	for _, name := range []string{"no-tui", "json"} {
+		if root.PersistentFlags().Lookup(name) == nil {
+			t.Errorf("expected --%s persistent flag", name)
+		}
+	}
+}
+
+func TestRunDryRunJSONProducesValidJSON(t *testing.T) {
+	scraper := &fakeDryRunScraper{items: []model.MediaItem{
+		{Title: "one.mp4", Size: 1024 * 1024, URL: "https://example.com/one"},
+		{Title: "two.jpg", Size: 2 * 1024 * 1024, URL: "https://example.com/two"},
+	}}
+
+	var err error
+	out := captureStdout(func() {
+		err = runDryRunJSON(scraper, "https://example.com/a", "example", os.Stdout)
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if !strings.Contains(out, `"dryRun"`) || !strings.Contains(out, `"one.mp4"`) || !strings.Contains(out, `"two.jpg"`) {
+		t.Errorf("expected JSON output with items, got: %q", out)
+	}
+	if !strings.Contains(out, `"albums"`) || !strings.Contains(out, `"summary"`) {
+		t.Errorf("expected albums and summary in JSON, got: %q", out)
+	}
+}
+
+func TestRunDryRunJSONEmptyItems(t *testing.T) {
+	scraper := &fakeDryRunScraper{items: nil}
+	out := captureStdout(func() {
+		_ = runDryRunJSON(scraper, "https://example.com/a", "example", os.Stdout)
+	})
+	if !strings.Contains(out, `"dryRun"`) && !strings.Contains(out, `"summary"`) {
+		t.Errorf("expected dry run JSON with summary, got: %q", out)
+	}
+}

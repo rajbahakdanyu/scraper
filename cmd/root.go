@@ -41,6 +41,8 @@ type globalOptions struct {
 	dryRun           bool
 	inputFile        string
 	inputFileSet     bool
+	noTui            bool
+	json             bool
 }
 
 // loadGlobalConfig loads the config file and applies CLI flag overrides.
@@ -127,6 +129,18 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 	if err != nil {
 		return globalOptions{}, err
 	}
+	noTui, err := flags.GetBool("no-tui")
+	if err != nil {
+		return globalOptions{}, err
+	}
+	json, err := flags.GetBool("json")
+	if err != nil {
+		return globalOptions{}, err
+	}
+	// --json implies --no-tui
+	if json {
+		noTui = true
+	}
 	return globalOptions{
 		configPath:       configPath,
 		output:           output,
@@ -140,6 +154,8 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 		dryRun:           dryRun,
 		inputFile:        inputFile,
 		inputFileSet:     flags.Changed("input-file"),
+		noTui:            noTui,
+		json:             json,
 	}, nil
 }
 
@@ -191,6 +207,8 @@ func NewRootCmd() *cobra.Command {
 	root.PersistentFlags().Bool("no-checksums", false, "Don't write/verify .sha256 checksum sidecar files")
 	root.PersistentFlags().BoolP("dry-run", "n", false, "List items and total size without downloading anything")
 	root.PersistentFlags().StringP("input-file", "i", "", "Read URLs from a file (one per line)")
+	root.PersistentFlags().Bool("no-tui", false, "Disable terminal UI; print plain text output")
+	root.PersistentFlags().BoolP("json", "j", false, "Output JSON Lines (one event per line); implies --no-tui")
 
 	root.AddCommand(
 		newYouTubeCmd(),
@@ -309,6 +327,9 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 	}
 
 	if opts.dryRun {
+		if opts.json {
+			return runDryRunJSON(scraper, targetURL, siteName, os.Stdout)
+		}
 		return runDryRun(scraper, targetURL)
 	}
 	rateLimitBytesPerSec, err := config.ParseRateLimit(cfg.RateLimit)
@@ -350,7 +371,11 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 	// When stdout is not a terminal (piped, redirected, cron), the
 	// bubbletea TUI would emit escape-code garbage — fall back to plain
 	// line-based output instead.
-	if !term.IsTerminal(int(os.Stdout.Fd())) {
+	if opts.json {
+		return runJSON(dl, scraperFn, cfg.OutputDir, slug, siteName, targetURL, os.Stdout)
+	}
+
+	if opts.noTui || !term.IsTerminal(int(os.Stdout.Fd())) {
 		return runPlain(dl, scraperFn, cfg.OutputDir, slug, os.Stdout)
 	}
 
@@ -442,6 +467,20 @@ func readURLsFromReader(r io.Reader) ([]string, error) {
 // expire before later albums are scraped.
 func runBatch(opts globalOptions, urls []string) error {
 	if opts.dryRun {
+		if opts.json {
+			var allErrs []error
+			for _, u := range urls {
+				site, sitErr := detectSite(u)
+				if sitErr != nil {
+					allErrs = append(allErrs, sitErr)
+					continue
+				}
+				if jsonErr := runDryRunJSON(scraperRegistry()[site], u, site, os.Stdout); jsonErr != nil {
+					allErrs = append(allErrs, jsonErr)
+				}
+			}
+			return model.NewPartialError("batch dry-run", allErrs)
+		}
 		var errs []error
 		for _, u := range urls {
 			site, sitErr := detectSite(u)
@@ -536,7 +575,11 @@ func runBatch(opts globalOptions, urls []string) error {
 		}
 	}
 
-	if !term.IsTerminal(int(os.Stdout.Fd())) {
+	if opts.json {
+		return runBatchJSON(dl, dashAlbums, cfg.OutputDir, os.Stdout)
+	}
+
+	if opts.noTui || !term.IsTerminal(int(os.Stdout.Fd())) {
 		return runBatchPlain(dl, dashAlbums, cfg.OutputDir, os.Stdout)
 	}
 

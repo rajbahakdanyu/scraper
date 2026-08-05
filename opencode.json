@@ -6,7 +6,7 @@
   ],
 
   "model": "opencode-go/deepseek-v4-pro",
-  "small_model": "opencode-go/deepseek-v4-flash",
+  "small_model": "opencode-go/gpt-5.6-luna",
 
   "agent": {
     "architect": {
@@ -17,7 +17,7 @@
     },
     "explore": {
       "mode": "subagent",
-      "model": "opencode-go/deepseek-v4-flash",
+      "model": "opencode-go/gpt-5.6-luna",
       "description": "USE THIS FOR: Quick read-only codebase search, checking existing file paths, reading specific files, and inspecting pattern context during task preparation.",
       "permissions": [
         { "action": "edit", "resource": "*", "effect": "deny" },
@@ -26,7 +26,7 @@
     },
     "reviewer": {
       "mode": "subagent",
-      "model": "opencode-go/qwen3.7-max",
+      "model": "opencode-go/gpt-5.6-luna",
       "description": "USE THIS FOR: SDD task-gate reviews, inspecting multi-file git diffs against briefs, verifying spec compliance, and security regressions without editing code.",
       "permissions": [
         { "action": "edit", "resource": "*", "effect": "deny" },
@@ -36,31 +36,12 @@
     "free_coder": {
       "mode": "all",
       "model": "opencode/deepseek-v4-flash-free",
-      "description": "USE THIS FOR: Simple documentation edits or low-priority utility tasks using zero-cost models when hitting rate limits."
+      "description": "USE THIS FOR: Simple documentation edits or low-priority utility tasks when hitting rate limits."
     },
     "heavy": {
       "mode": "all",
       "model": "opencode-go/gpt-5.6-luna",
       "description": "USE THIS FOR: Resolving complex framework deadlocks, subtle race conditions, or when standard models hit logic walls during SDD tasks."
-    }
-  },
-
-  "command": {
-    "plan": {
-      "description": "Generate an architectural SDD blueprint before editing files",
-      "agent": "architect",
-      "template": "Create an architectural implementation plan and SDD task breakdown for: $ARGUMENTS.\nInclude impacted files, logic breakdowns, global constraints, and potential edge cases."
-    },
-    "review": {
-      "description": "Review uncommitted git diffs against SDD task briefs",
-      "agent": "reviewer",
-      "subtask": true,
-      "template": "Here are the uncommitted changes:\n!`git diff`\n\nReview these diffs for correctness, spec compliance against task briefs, security vulnerabilities, and missing test coverage."
-    },
-    "free": {
-      "description": "Run a task using zero-cost free models when rate-limited on Go",
-      "agent": "free_coder",
-      "template": "$ARGUMENTS"
     }
   }
 }

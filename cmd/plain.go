@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -289,4 +290,382 @@ func runBatchPlain(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, des
 	<-progressDone
 
 	return model.NewPartialError("batch", allErrs)
+}
+
+func writeJSONLine(w io.Writer, v interface{}) error {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Errorf("json: encode error: %w", err)
+	}
+	_, err = fmt.Fprintln(w, string(data))
+	return err
+}
+
+// runJSON downloads items from a single album and prints JSON Lines
+// (one event per line) to out. Errors and warnings go to stderr.
+func runJSON(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error), dest, slug, site, targetURL string, out io.Writer) error {
+	items, err := scrapeFn()
+	if err != nil && len(items) == 0 {
+		writeJSONLine(out, model.JSONEvent{Event: "error", URL: targetURL, Error: err.Error()})
+		return err
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+	}
+	if len(items) == 0 {
+		writeJSONLine(out, model.JSONEvent{Event: "error", URL: targetURL, Error: "no media items found"})
+		return nil
+	}
+
+	for i := range items {
+		if items[i].ID == "" {
+			items[i].ID = fmt.Sprintf("%d:%s", i, items[i].URL)
+		}
+	}
+
+	if len(items) > 1 && slug != "" {
+		albumDest, dErr := fileutil.SafeJoin(dest, slug)
+		if dErr != nil {
+			writeJSONLine(out, model.JSONEvent{Event: "error", URL: targetURL, Error: dErr.Error()})
+			return dErr
+		}
+		if dErr := os.MkdirAll(albumDest, 0750); dErr != nil {
+			writeJSONLine(out, model.JSONEvent{Event: "error", URL: targetURL, Error: fmt.Sprintf("create album directory: %v", dErr)})
+			return dErr
+		}
+		dest = albumDest
+	}
+
+	writeJSONLine(out, model.JSONEvent{Event: "album_start", Site: site, URL: targetURL, Slug: slug, Total: len(items)})
+
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signals)
+	watcherDone := make(chan struct{})
+	defer close(watcherDone)
+	go func() {
+		select {
+		case <-signals:
+			dl.Shutdown()
+		case <-watcherDone:
+		}
+	}()
+
+	progress := dl.Progress()
+	paths := make(map[string]string)
+	progressDone := make(chan struct{})
+	go func() {
+		for evt := range progress {
+			if evt.Status == model.StatusCompleted && evt.Filename != "" {
+				key := evt.Item.Key()
+				paths[key] = evt.Filename
+			}
+		}
+		close(progressDone)
+	}()
+
+	errs := make([]error, len(items))
+	downloadsDone := make(chan struct{})
+	go func() {
+		var wg sync.WaitGroup
+		for i, item := range items {
+			if item.URL == "" {
+				continue
+			}
+			dl.Prepare(item)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				errs[i] = dl.Download(item, dest)
+			}()
+		}
+		wg.Wait()
+		close(downloadsDone)
+	}()
+
+	<-downloadsDone
+	dl.Shutdown()
+	<-progressDone
+
+	var completed, failed, cancelled int
+	var totalBytes int64
+	realItems := 0
+	for i, item := range items {
+		if item.URL == "" {
+			continue
+		}
+		realItems++
+		path := paths[item.Key()]
+		if errs[i] != nil {
+			if isCancelledError(errs[i]) {
+				writeJSONLine(out, model.JSONEvent{
+					Event:  "item",
+					Title:  itemTitle(item),
+					Size:   item.Size,
+					Path:   path,
+					Status: model.DownloadStatusString(model.StatusCancelled),
+					Album:  slug,
+				})
+				cancelled++
+			} else {
+				writeJSONLine(out, model.JSONEvent{
+					Event:  "item",
+					Title:  itemTitle(item),
+					Size:   item.Size,
+					Path:   path,
+					Status: model.DownloadStatusString(model.StatusFailed),
+					Album:  slug,
+					Error:  errs[i].Error(),
+				})
+				failed++
+			}
+			continue
+		}
+		writeJSONLine(out, model.JSONEvent{
+			Event:  "item",
+			Title:  itemTitle(item),
+			Size:   item.Size,
+			Path:   path,
+			Status: model.DownloadStatusString(model.StatusCompleted),
+			Album:  slug,
+		})
+		completed++
+		if item.Size > 0 {
+			totalBytes += item.Size
+		}
+	}
+
+	writeJSONLine(out, model.JSONEvent{
+		Event:      "summary",
+		Total:      realItems,
+		Completed:  completed,
+		Failed:     failed,
+		Cancelled:  cancelled,
+		TotalBytes: totalBytes,
+	})
+
+	return model.NewPartialError("download", errs)
+}
+
+// runBatchJSON downloads items from multiple albums serially, printing JSON
+// Lines events to out as each album's items finish.
+func runBatchJSON(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, destRoot string, out io.Writer) error {
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signals)
+	watcherDone := make(chan struct{})
+	defer close(watcherDone)
+	go func() {
+		select {
+		case <-signals:
+			dl.Shutdown()
+		case <-watcherDone:
+		}
+	}()
+
+	progress := dl.Progress()
+	paths := make(map[string]string)
+	var pathsMu sync.Mutex
+	progressDone := make(chan struct{})
+	go func() {
+		for evt := range progress {
+			if evt.Status == model.StatusCompleted && evt.Filename != "" {
+				pathsMu.Lock()
+				paths[evt.Item.Key()] = evt.Filename
+				pathsMu.Unlock()
+			}
+		}
+		close(progressDone)
+	}()
+
+	var allErrs []error
+	var grandCompleted, grandFailed, grandCancelled int
+	var grandTotalItems int
+	for albumIdx, a := range albums {
+		fmt.Fprintf(os.Stderr, "Scraping %s...\n", a.URL)
+		items, err := a.Scraper.Parse(a.URL)
+		if err != nil && len(items) == 0 {
+			writeJSONLine(out, model.JSONEvent{Event: "album_error", Site: a.Site, URL: a.URL, Slug: a.Slug, Error: err.Error()})
+			allErrs = append(allErrs, err)
+			continue
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+		}
+		if len(items) == 0 {
+			writeJSONLine(out, model.JSONEvent{Event: "album_error", Site: a.Site, URL: a.URL, Slug: a.Slug, Error: "no media items found"})
+			continue
+		}
+
+		for i := range items {
+			if items[i].ID == "" {
+				items[i].ID = fmt.Sprintf("%d:%d:%s", albumIdx, i, items[i].URL)
+			}
+		}
+
+		if err := os.MkdirAll(a.Dest, 0750); err != nil {
+			writeJSONLine(out, model.JSONEvent{Event: "album_error", Site: a.Site, URL: a.URL, Slug: a.Slug, Error: fmt.Sprintf("create album directory: %v", err)})
+			allErrs = append(allErrs, err)
+			continue
+		}
+
+		writeJSONLine(out, model.JSONEvent{Event: "album_start", Site: a.Site, URL: a.URL, Slug: a.Slug, Total: len(items)})
+
+		downloadsDone := make(chan struct{})
+		errs := make([]error, len(items))
+		go func() {
+			var wg sync.WaitGroup
+			for i, item := range items {
+				if item.URL == "" {
+					continue
+				}
+				dl.Prepare(item)
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					errs[i] = dl.Download(item, a.Dest)
+				}()
+			}
+			wg.Wait()
+			close(downloadsDone)
+		}()
+
+		<-downloadsDone
+
+		var completed, failed, cancelled int
+		albumReal := 0
+		for i, item := range items {
+			if item.URL == "" {
+				continue
+			}
+			albumReal++
+			pathsMu.Lock()
+			path := paths[item.Key()]
+			pathsMu.Unlock()
+			if errs[i] != nil {
+				if isCancelledError(errs[i]) {
+					writeJSONLine(out, model.JSONEvent{
+						Event:  "item",
+						Title:  itemTitle(item),
+						Size:   item.Size,
+						Path:   path,
+						Status: model.DownloadStatusString(model.StatusCancelled),
+						Album:  a.Slug,
+					})
+					cancelled++
+				} else {
+					writeJSONLine(out, model.JSONEvent{
+						Event:  "item",
+						Title:  itemTitle(item),
+						Size:   item.Size,
+						Path:   path,
+						Status: model.DownloadStatusString(model.StatusFailed),
+						Album:  a.Slug,
+						Error:  errs[i].Error(),
+					})
+					failed++
+				}
+				continue
+			}
+			writeJSONLine(out, model.JSONEvent{
+				Event:  "item",
+				Title:  itemTitle(item),
+				Size:   item.Size,
+				Path:   path,
+				Status: model.DownloadStatusString(model.StatusCompleted),
+				Album:  a.Slug,
+			})
+			completed++
+		}
+
+		grandCompleted += completed
+		grandFailed += failed
+		grandCancelled += cancelled
+		grandTotalItems += albumReal
+
+		if partialErr := model.NewPartialError("album", errs); partialErr != nil {
+			allErrs = append(allErrs, partialErr)
+		}
+	}
+
+	dl.Shutdown()
+	<-progressDone
+
+	writeJSONLine(out, model.JSONEvent{
+		Event:     "summary",
+		Total:     grandTotalItems,
+		Completed: grandCompleted,
+		Failed:    grandFailed,
+		Cancelled: grandCancelled,
+	})
+
+	return model.NewPartialError("batch", allErrs)
+}
+
+// runDryRunJSON scrapes targetURL and prints a single JSON document with
+// item metadata — no downloading.
+func runDryRunJSON(scraper model.Scraper, targetURL, siteName string, out io.Writer) error {
+	items, err := scraper.Parse(targetURL)
+	if err != nil && len(items) == 0 {
+		data, _ := json.Marshal(map[string]interface{}{
+			"dryRun": true,
+			"error":  err.Error(),
+			"url":    targetURL,
+			"site":   siteName,
+		})
+		fmt.Fprintln(out, string(data))
+		return err
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+	}
+
+	var jsonItems []model.JSONItem
+	var totalBytes int64
+	var unknownSize int
+	for _, item := range items {
+		ji := model.ItemToJSONItem(item)
+		jsonItems = append(jsonItems, ji)
+		if item.Size > 0 {
+			totalBytes += item.Size
+		} else {
+			unknownSize++
+		}
+	}
+
+	slug := albumSlugFor(siteName, targetURL)
+	album := model.JSONAlbum{
+		Site:  siteName,
+		URL:   targetURL,
+		Slug:  slug,
+		Items: jsonItems,
+	}
+
+	result := map[string]interface{}{
+		"dryRun": true,
+		"albums": []model.JSONAlbum{album},
+		"summary": model.JSONSummary{
+			Total:       len(items),
+			TotalBytes:  totalBytes,
+			UnknownSize: unknownSize,
+		},
+	}
+
+	data, err := json.Marshal(result)
+	if err != nil {
+		return fmt.Errorf("json: encode error: %w", err)
+	}
+	fmt.Fprintln(out, string(data))
+	return nil
+}
+
+func itemTitle(item model.MediaItem) string {
+	if item.Title != "" {
+		return item.Title
+	}
+	return item.URL
+}
+
+func isCancelledError(err error) bool {
+	return strings.Contains(err.Error(), "cancelled") || strings.Contains(err.Error(), "canceled")
 }

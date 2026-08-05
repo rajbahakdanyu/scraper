@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -13,6 +15,7 @@ import (
 	"time"
 
 	"github.com/rajbahakdanyu/scraper/internal/model"
+	"github.com/rajbahakdanyu/scraper/internal/ui/dashboard"
 )
 
 // fakePlainDownloader is a dashboard.Downloader fake for exercising runPlain
@@ -68,6 +71,7 @@ func (f *fakePlainDownloader) Shutdown() {
 	select {
 	case <-f.shutdownCh:
 	default:
+		close(f.progress)
 		close(f.shutdownCh)
 	}
 }
@@ -377,5 +381,195 @@ func TestRunPlainAssignsIDsLikeTheDashboard(t *testing.T) {
 			t.Errorf("expected distinct keys for duplicate URLs, saw %q twice", item.Key())
 		}
 		seen[item.Key()] = true
+	}
+}
+
+func TestRunJSONProducesJSONLines(t *testing.T) {
+	fd := newFakePlainDownloader()
+	items := []model.MediaItem{
+		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100},
+		{URL: "https://example.com/b.mp4", Title: "b.mp4", Size: 200},
+	}
+	fd.scripted["https://example.com/a.mp4"] = []model.ProgressEvent{
+		{Status: model.StatusCompleted, Filename: "/tmp/a.mp4"},
+	}
+	fd.scripted["https://example.com/b.mp4"] = []model.ProgressEvent{
+		{Status: model.StatusCompleted, Filename: "/tmp/b.mp4"},
+	}
+
+	var buf bytes.Buffer
+	err := runJSON(fd, itemsScraper(items, nil), t.TempDir(), "album", "test", "https://example.com", &buf)
+	if err != nil {
+		t.Fatalf("runJSON failed: %v", err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) < 4 {
+		t.Fatalf("expected at least 4 JSON lines (album_start, 2 items, summary), got %d:\n%s", len(lines), buf.String())
+	}
+
+	var firstEvent struct{ Event string }
+	if err := json.Unmarshal([]byte(lines[0]), &firstEvent); err != nil || firstEvent.Event != "album_start" {
+		t.Errorf("expected album_start as first line, got: %s", lines[0])
+	}
+
+	var lastEvent struct{ Event string }
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &lastEvent); err != nil || lastEvent.Event != "summary" {
+		t.Errorf("expected summary as last line, got: %s", lines[len(lines)-1])
+	}
+
+	for _, line := range lines {
+		if !json.Valid([]byte(line)) {
+			t.Errorf("invalid JSON line: %s", line)
+		}
+	}
+}
+
+func TestRunJSONWithFailedItems(t *testing.T) {
+	fd := newFakePlainDownloader()
+	items := []model.MediaItem{
+		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100},
+	}
+	fd.errs["https://example.com/a.mp4"] = fmt.Errorf("HTTP 404")
+
+	var buf bytes.Buffer
+	_ = runJSON(fd, itemsScraper(items, nil), t.TempDir(), "album", "test", "https://example.com", &buf)
+
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	var itemEvent struct {
+		Event  string
+		Status string
+		Error  string
+	}
+	found := false
+	for _, line := range lines {
+		if err := json.Unmarshal([]byte(line), &itemEvent); err == nil && itemEvent.Event == "item" {
+			found = true
+			if itemEvent.Status != "failed" {
+				t.Errorf("expected failed status, got %s", itemEvent.Status)
+			}
+			if !strings.Contains(itemEvent.Error, "HTTP 404") {
+				t.Errorf("expected HTTP 404 error, got %s", itemEvent.Error)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected an item event, lines:\n%s", buf.String())
+	}
+}
+
+func TestRunJSONHandlesNoItems(t *testing.T) {
+	fd := newFakePlainDownloader()
+	var buf bytes.Buffer
+	err := runJSON(fd, itemsScraper(nil, nil), t.TempDir(), "", "test", "https://example.com", &buf)
+	if err != nil {
+		t.Fatalf("expected no error for empty result, got: %v", err)
+	}
+	if !strings.Contains(buf.String(), "no media items found") {
+		t.Errorf("expected no-items error event, got: %s", buf.String())
+	}
+}
+
+func TestRunJSONShutsDownProgress(t *testing.T) {
+	fd := newFakePlainDownloader()
+	items := []model.MediaItem{
+		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100, ID: "1"},
+	}
+	fd.scripted["https://example.com/a.mp4"] = []model.ProgressEvent{
+		{Status: model.StatusCompleted, Filename: "/tmp/a.mp4"},
+	}
+	fd.blockOnDownload = false
+
+	var buf bytes.Buffer
+	err := runJSON(fd, itemsScraper(items, nil), t.TempDir(), "album", "test", "https://example.com", &buf)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Shutdown should have been called after downloads finished.
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+	select {
+	case <-fd.shutdownCh:
+		// Shutdown was called — progress channel would close after this
+	default:
+		t.Fatal("Shutdown was NOT called after runJSON completed")
+	}
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) < 3 {
+		t.Fatalf("expected at least 3 lines (album_start, item, summary), got %d:\n%s", len(lines), buf.String())
+	}
+}
+
+type fakeBatchJSONScraper struct {
+	items []model.MediaItem
+	err   error
+}
+
+func (f *fakeBatchJSONScraper) Name() string                             { return "fake" }
+func (f *fakeBatchJSONScraper) Parse(url string) ([]model.MediaItem, error) { return f.items, f.err }
+
+func TestRunBatchJSONProducesJSONLines(t *testing.T) {
+	fd := newFakePlainDownloader()
+	scraper := &fakeBatchJSONScraper{items: []model.MediaItem{
+		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100},
+		{URL: "https://example.com/b.mp4", Title: "b.mp4", Size: 200},
+	}}
+	fd.scripted["https://example.com/a.mp4"] = []model.ProgressEvent{
+		{Status: model.StatusCompleted, Filename: "/tmp/a.mp4"},
+	}
+	fd.scripted["https://example.com/b.mp4"] = []model.ProgressEvent{
+		{Status: model.StatusCompleted, Filename: "/tmp/b.mp4"},
+	}
+
+	albums := []dashboard.DashAlbumURL{
+		{Site: "test", URL: "https://example.com", Slug: "album1", Dest: t.TempDir(), Scraper: scraper},
+		{Site: "test", URL: "https://example.com", Slug: "album2", Dest: t.TempDir(), Scraper: scraper},
+	}
+
+	var buf bytes.Buffer
+	err := runBatchJSON(fd, albums, "/tmp", &buf)
+	if err != nil {
+		t.Fatalf("runBatchJSON failed: %v", err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) < 6 {
+		t.Fatalf("expected at least 6 JSON lines (2x album_start, 4 items, summary), got %d:\n%s", len(lines), buf.String())
+	}
+
+	for _, line := range lines {
+		if !json.Valid([]byte(line)) {
+			t.Errorf("invalid JSON line: %s", line)
+		}
+	}
+
+	var lastEvent struct{ Event string }
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &lastEvent); err != nil || lastEvent.Event != "summary" {
+		t.Errorf("expected summary as last line, got: %s", lines[len(lines)-1])
+	}
+}
+
+func TestRunBatchJSONWithFailedAlbum(t *testing.T) {
+	fd := newFakePlainDownloader()
+	scraper := &fakeBatchJSONScraper{items: nil, err: errors.New("parse error")}
+
+	albums := []dashboard.DashAlbumURL{
+		{Site: "test", URL: "https://example.com", Slug: "fail", Dest: t.TempDir(), Scraper: scraper},
+	}
+
+	var buf bytes.Buffer
+	_ = runBatchJSON(fd, albums, "/tmp", &buf)
+
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	found := false
+	for _, line := range lines {
+		var evt struct{ Event string }
+		if err := json.Unmarshal([]byte(line), &evt); err == nil && evt.Event == "album_error" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected album_error event, got:\n%s", buf.String())
 	}
 }
