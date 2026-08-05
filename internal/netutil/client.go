@@ -134,6 +134,12 @@ func newPublicClient(timeout, responseHeaderTimeout, readTimeout time.Duration, 
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
 	if proxyURL != "" {
+		// Note: when a proxy is configured, the custom DialContext's SSRF
+		// guard only sees the proxy host, not the ultimate target.  The
+		// target URL passes through the proxy unvalidated.  This is an
+		// accepted tradeoff — the proxy is assumed trusted — and should
+		// be revisited if the threat model changes to include untrusted
+		// proxies.
 		u, err := url.Parse(proxyURL)
 		if err != nil {
 			return nil, fmt.Errorf("invalid proxy URL %q: %w", proxyURL, err)
