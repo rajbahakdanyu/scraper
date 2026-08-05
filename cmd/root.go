@@ -231,7 +231,7 @@ func NewRootCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				reg, err := scraperRegistry(cfg.Proxy, cfg.ParsedCookies())
+				reg, err := scraperRegistry(cfg.Proxy, nil)
 				if err != nil {
 					return err
 				}

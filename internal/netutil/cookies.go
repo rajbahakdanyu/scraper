@@ -74,6 +74,7 @@ func WithCookies(client *http.Client, cookies []*http.Cookie) *http.Client {
 	}
 	jar, err := cookiejar.New(nil)
 	if err != nil {
+		// unreachable: cookiejar.New(nil) never returns an error
 		panic(fmt.Sprintf("cookiejar.New: %v", err))
 	}
 	for _, c := range cookies {
