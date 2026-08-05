@@ -43,6 +43,8 @@ type globalOptions struct {
 	inputFileSet     bool
 	noTui            bool
 	json             bool
+	proxy            string
+	proxySet         bool
 }
 
 // loadGlobalConfig loads the config file and applies CLI flag overrides.
@@ -63,6 +65,9 @@ func loadGlobalConfig(opts globalOptions) (*config.Config, error) {
 	}
 	if opts.skipChecksumsSet {
 		cfg.SkipChecksums = opts.skipChecksums
+	}
+	if opts.proxySet {
+		cfg.Proxy = opts.proxy
 	}
 
 	// Single choke point covering both the --output flag and the config
@@ -137,6 +142,10 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 	if err != nil {
 		return globalOptions{}, err
 	}
+	proxy, err := flags.GetString("proxy")
+	if err != nil {
+		return globalOptions{}, err
+	}
 	// --json implies --no-tui
 	if json {
 		noTui = true
@@ -156,6 +165,8 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 		inputFileSet:     flags.Changed("input-file"),
 		noTui:            noTui,
 		json:             json,
+		proxy:            proxy,
+		proxySet:         flags.Changed("proxy"),
 	}, nil
 }
 
@@ -209,6 +220,7 @@ func NewRootCmd() *cobra.Command {
 	root.PersistentFlags().StringP("input-file", "i", "", "Read URLs from a file (one per line)")
 	root.PersistentFlags().Bool("no-tui", false, "Disable terminal UI; print plain text output")
 	root.PersistentFlags().BoolP("json", "j", false, "Output JSON Lines (one event per line); implies --no-tui")
+	root.PersistentFlags().String("proxy", "", "HTTP/S proxy URL for all requests (e.g. http://proxy:8080)")
 
 	root.AddCommand(
 		newYouTubeCmd(),

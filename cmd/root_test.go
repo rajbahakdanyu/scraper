@@ -523,3 +523,30 @@ func TestRunDryRunJSONEmptyItems(t *testing.T) {
 		t.Errorf("expected dry run JSON with summary, got: %q", out)
 	}
 }
+
+func TestNewRootCmdHasProxyFlag(t *testing.T) {
+	root := NewRootCmd()
+	flag := root.PersistentFlags().Lookup("proxy")
+	if flag == nil {
+		t.Error("expected --proxy persistent flag")
+	}
+}
+
+func TestLoadGlobalConfigProxyOverride(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	content := "proxy: http://config-proxy:3128\n"
+	if err := os.WriteFile(configPath, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadGlobalConfig(globalOptions{
+		configPath: configPath,
+		proxy:      "http://cli-proxy:8080",
+		proxySet:   true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Proxy != "http://cli-proxy:8080" {
+		t.Errorf("expected CLI flag to override config, got %q", cfg.Proxy)
+	}
+}
