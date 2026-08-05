@@ -58,7 +58,7 @@ type Downloader struct {
 }
 
 // NewDownloaderWithConfig creates a Downloader using settings from a config.
-func NewDownloaderWithConfig(concurrency int, timeout time.Duration, userAgent, proxyURL string) (*Downloader, error) {
+func NewDownloaderWithConfig(concurrency int, timeout time.Duration, userAgent, proxyURL string, cookies []*http.Cookie) (*Downloader, error) {
 	if concurrency < 1 {
 		concurrency = 1
 	}
@@ -78,6 +78,7 @@ func NewDownloaderWithConfig(concurrency int, timeout time.Duration, userAgent, 
 	if err != nil {
 		return nil, err
 	}
+	client = netutil.WithCookies(client, cookies)
 	return &Downloader{
 		client:    client,
 		userAgent: userAgent,

@@ -22,7 +22,7 @@ import (
 )
 
 func newTestDownloader(concurrency int, timeout time.Duration, userAgent string) *Downloader {
-	dl, _ := NewDownloaderWithConfig(concurrency, timeout, userAgent, "")
+	dl, _ := NewDownloaderWithConfig(concurrency, timeout, userAgent, "", nil)
 	dl.client = &http.Client{}
 	return dl
 }
@@ -203,7 +203,7 @@ func TestDownloadOnceTimesOutWaitingForResponseHeaders(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	dl, err := NewDownloaderWithConfig(1, 50*time.Millisecond, "", "")
+	dl, err := NewDownloaderWithConfig(1, 50*time.Millisecond, "", "", nil)
 	if err != nil {
 		t.Fatalf("NewDownloaderWithConfig failed: %v", err)
 	}
@@ -232,6 +232,19 @@ func TestNewDownloaderWithConfig(t *testing.T) {
 	}
 	if cap(dl.sem) != 3 {
 		t.Errorf("expected concurrency 3, got %d", cap(dl.sem))
+	}
+}
+
+func TestNewDownloaderWithConfigAppliesCookies(t *testing.T) {
+	cookies := []*http.Cookie{
+		{Name: "session", Value: "test123"},
+	}
+	dl, err := NewDownloaderWithConfig(1, 30*time.Second, "", "", cookies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dl.client.Jar == nil {
+		t.Fatal("expected client.Jar to be set")
 	}
 }
 

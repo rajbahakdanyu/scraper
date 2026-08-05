@@ -673,6 +673,7 @@ type DownloaderConfig struct {
 	RateLimit    int64
 	SkipChecksum bool
 	ProxyURL     string
+	Cookies      []*http.Cookie
 }
 
 // Downloader adapts Scraper to the dashboard's Downloader interface (see
@@ -716,9 +717,11 @@ func NewDownloaderWithConfig(scraper *Scraper, config DownloaderConfig) (*Downlo
 			return nil, err
 		}
 		scraper.video.HTTPClient = netutil.WithUserAgent(httpClient, config.UserAgent)
+		scraper.video.HTTPClient = netutil.WithCookies(scraper.video.HTTPClient, config.Cookies)
 	} else {
 		httpClient, _ := netutil.NewPublicStreamingClient(config.Timeout)
 		scraper.video.HTTPClient = netutil.WithUserAgent(httpClient, config.UserAgent)
+		scraper.video.HTTPClient = netutil.WithCookies(scraper.video.HTTPClient, config.Cookies)
 	}
 
 	var limiter *rate.Limiter
