@@ -22,7 +22,7 @@ import (
 )
 
 func newTestDownloader(concurrency int, timeout time.Duration, userAgent string) *Downloader {
-	dl := NewDownloaderWithConfig(concurrency, timeout, userAgent)
+	dl := NewDownloaderWithConfig(concurrency, timeout, userAgent, "")
 	dl.client = &http.Client{}
 	return dl
 }
@@ -203,7 +203,7 @@ func TestDownloadOnceTimesOutWaitingForResponseHeaders(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	dl := NewDownloaderWithConfig(1, 50*time.Millisecond, "")
+	dl := NewDownloaderWithConfig(1, 50*time.Millisecond, "", "")
 	dl.client = netutil.NewPublicStreamingClient(50*time.Millisecond, ts.URL)
 	item := model.MediaItem{URL: ts.URL, Title: "headers.bin"}
 

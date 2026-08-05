@@ -349,12 +349,14 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 			UserAgent:    cfg.UserAgent,
 			RateLimit:    rateLimitBytesPerSec,
 			SkipChecksum: cfg.SkipChecksums,
+			ProxyURL:     cfg.Proxy,
 		})
 	} else {
 		genericDl := downloader.NewDownloaderWithConfig(
 			cfg.ConcurrentDownloads,
 			cfg.Timeout,
 			cfg.UserAgent,
+			cfg.Proxy,
 		)
 		genericDl.SetRateLimit(rateLimitBytesPerSec)
 		genericDl.SetSkipChecksums(cfg.SkipChecksums)
@@ -533,6 +535,7 @@ func runBatch(opts globalOptions, urls []string) error {
 			UserAgent:    cfg.UserAgent,
 			RateLimit:    rateLimitBytesPerSec,
 			SkipChecksum: cfg.SkipChecksums,
+			ProxyURL:     cfg.Proxy,
 		})
 		for _, u := range urls {
 			slug := albumSlugFor("youtube", u)
@@ -553,6 +556,7 @@ func runBatch(opts globalOptions, urls []string) error {
 			cfg.ConcurrentDownloads,
 			cfg.Timeout,
 			cfg.UserAgent,
+			cfg.Proxy,
 		)
 		genericDl.SetRateLimit(rateLimitBytesPerSec)
 		genericDl.SetSkipChecksums(cfg.SkipChecksums)

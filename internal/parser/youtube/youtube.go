@@ -671,6 +671,7 @@ type DownloaderConfig struct {
 	UserAgent    string
 	RateLimit    int64
 	SkipChecksum bool
+	ProxyURL     string
 }
 
 // Downloader adapts Scraper to the dashboard's Downloader interface (see
@@ -708,7 +709,11 @@ func NewDownloaderWithConfig(scraper *Scraper, config DownloaderConfig) *Downloa
 	if config.UserAgent == "" {
 		config.UserAgent = defaultYouTubeAgent
 	}
-	scraper.video.HTTPClient = netutil.WithUserAgent(netutil.NewPublicStreamingClient(config.Timeout), config.UserAgent)
+	if config.ProxyURL != "" {
+		scraper.video.HTTPClient = netutil.WithUserAgent(netutil.NewPublicStreamingClientWithProxy(config.Timeout, config.ProxyURL), config.UserAgent)
+	} else {
+		scraper.video.HTTPClient = netutil.WithUserAgent(netutil.NewPublicStreamingClient(config.Timeout), config.UserAgent)
+	}
 
 	var limiter *rate.Limiter
 	if config.RateLimit > 0 {
