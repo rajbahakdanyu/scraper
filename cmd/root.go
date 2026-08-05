@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"bufio"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"os"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/rajbahakdanyu/scraper/internal/config"
 	"github.com/rajbahakdanyu/scraper/internal/downloader"
+	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 	"github.com/rajbahakdanyu/scraper/internal/model"
 	"github.com/rajbahakdanyu/scraper/internal/parser/bunker"
 	"github.com/rajbahakdanyu/scraper/internal/parser/cyberdrop"
@@ -36,6 +39,8 @@ type globalOptions struct {
 	skipChecksums    bool
 	skipChecksumsSet bool
 	dryRun           bool
+	inputFile        string
+	inputFileSet     bool
 }
 
 // loadGlobalConfig loads the config file and applies CLI flag overrides.
@@ -118,6 +123,10 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 	if err != nil {
 		return globalOptions{}, err
 	}
+	inputFile, err := flags.GetString("input-file")
+	if err != nil {
+		return globalOptions{}, err
+	}
 	return globalOptions{
 		configPath:       configPath,
 		output:           output,
@@ -129,6 +138,8 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 		skipChecksums:    skipChecksums,
 		skipChecksumsSet: flags.Changed("no-checksums"),
 		dryRun:           dryRun,
+		inputFile:        inputFile,
+		inputFileSet:     flags.Changed("input-file"),
 	}, nil
 }
 
@@ -140,27 +151,36 @@ func Execute() {
 
 func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:   "scraper [url]",
+		Use:   "scraper [url...]",
 		Short: "Media scraper CLI tool",
 		Long:  `Download media from various sites with a beautiful terminal UI.`,
 		// Runtime errors (bad URL, network failure, etc.) shouldn't dump the
 		// full usage/help text — just cobra's own clean "Error: ..." line.
 		SilenceUsage: true,
-		Args:         cobra.MaximumNArgs(1),
+		Args:         cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return cmd.Help()
-			}
-			targetURL := args[0]
-			site, err := detectSite(targetURL)
-			if err != nil {
-				return err
 			}
 			opts, err := globalOptionsFromCommand(cmd)
 			if err != nil {
 				return err
 			}
-			return runWithScraper(scraperRegistry()[site], targetURL, site, opts)
+
+			urls, err := collectBatchURLs(args, opts)
+			if err != nil {
+				return err
+			}
+
+			if len(urls) == 1 && !opts.inputFileSet {
+				targetURL := urls[0]
+				site, err := detectSite(targetURL)
+				if err != nil {
+					return err
+				}
+				return runWithScraper(scraperRegistry()[site], targetURL, site, opts)
+			}
+			return runBatch(opts, urls)
 		},
 	}
 
@@ -170,6 +190,7 @@ func NewRootCmd() *cobra.Command {
 	root.PersistentFlags().String("limit-rate", "", "Cap total download speed (e.g. 500K, 2M, 1G; default: unlimited)")
 	root.PersistentFlags().Bool("no-checksums", false, "Don't write/verify .sha256 checksum sidecar files")
 	root.PersistentFlags().BoolP("dry-run", "n", false, "List items and total size without downloading anything")
+	root.PersistentFlags().StringP("input-file", "i", "", "Read URLs from a file (one per line)")
 
 	root.AddCommand(
 		newYouTubeCmd(),
@@ -337,6 +358,189 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 
 	// Pass the URL slug so the dashboard can create a subfolder for albums.
 	d.SetAlbumSlug(slug)
+
+	p := tea.NewProgram(d, tea.WithAltScreen())
+	d.SetSendFunc(func(msg tea.Msg) { p.Send(msg) })
+
+	_, err = p.Run()
+	return err
+}
+
+// batchAlbum holds a scraped album's items and metadata.
+type batchAlbum struct {
+	URL      string
+	Site     string
+	Slug     string
+	Dest     string
+	Items    []model.MediaItem
+	Err      error
+	Scraper  model.Scraper
+}
+
+// collectBatchURLs gathers URLs from positional arguments, --input-file, and
+// stdin (when not a TTY and no other sources). Lines starting with "#" are
+// treated as comments and blank lines are skipped.
+func collectBatchURLs(args []string, opts globalOptions) ([]string, error) {
+	var urls []string
+	for _, arg := range args {
+		arg = strings.TrimSpace(arg)
+		if arg != "" {
+			urls = append(urls, arg)
+		}
+	}
+
+	if opts.inputFileSet {
+		fileURLs, err := readURLsFromFile(opts.inputFile)
+		if err != nil {
+			return nil, err
+		}
+		urls = append(urls, fileURLs...)
+	}
+
+	if len(urls) == 0 && !term.IsTerminal(int(os.Stdin.Fd())) {
+		stdinURLs, err := readURLsFromReader(os.Stdin)
+		if err != nil {
+			return nil, err
+		}
+		urls = append(urls, stdinURLs...)
+	}
+
+	if len(urls) == 0 {
+		return nil, fmt.Errorf("no URLs provided (use positional args, --input-file, or stdin)")
+	}
+	return urls, nil
+}
+
+func readURLsFromFile(path string) ([]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open input file %q: %w", path, err)
+	}
+	defer f.Close()
+	return readURLsFromReader(f)
+}
+
+func readURLsFromReader(r io.Reader) ([]string, error) {
+	var urls []string
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		urls = append(urls, line)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read URLs: %w", err)
+	}
+	return urls, nil
+}
+
+// runBatch orchestrates scraping multiple album URLs with a shared download
+// queue. It scrapes albums sequentially — feeding items to the downloader as
+// soon as each album finishes — so token-based URLs from early albums don't
+// expire before later albums are scraped.
+func runBatch(opts globalOptions, urls []string) error {
+	if opts.dryRun {
+		var errs []error
+		for _, u := range urls {
+			site, sitErr := detectSite(u)
+			if sitErr != nil {
+				errs = append(errs, sitErr)
+				continue
+			}
+			if dryErr := runDryRun(scraperRegistry()[site], u); dryErr != nil {
+				errs = append(errs, dryErr)
+			}
+		}
+		return model.NewPartialError("batch dry-run", errs)
+	}
+
+	hasYouTube, hasOther := false, false
+	for _, u := range urls {
+		site, err := detectSite(u)
+		if err != nil {
+			return err
+		}
+		if site == "youtube" {
+			hasYouTube = true
+		} else {
+			hasOther = true
+		}
+	}
+	if hasYouTube && hasOther {
+		return fmt.Errorf("batch mode only supports URLs from the same site type (all YouTube or all non-YouTube)")
+	}
+
+	cfg, err := loadGlobalConfig(opts)
+	if err != nil {
+		return err
+	}
+
+	rateLimitBytesPerSec, err := config.ParseRateLimit(cfg.RateLimit)
+	if err != nil {
+		return err
+	}
+
+	var dl dashboard.Downloader
+	// Build dashAlbumURL entries for the dashboard: one scraper per URL so
+	// the incremental scrape chain can call the right parser.
+	dashAlbums := make([]dashboard.DashAlbumURL, 0, len(urls))
+	if hasYouTube {
+		scraper := youtube.NewYouTubeScraper()
+		dl = youtube.NewDownloaderWithConfig(scraper, youtube.DownloaderConfig{
+			Concurrency:  cfg.ConcurrentDownloads,
+			Timeout:      cfg.Timeout,
+			UserAgent:    cfg.UserAgent,
+			RateLimit:    rateLimitBytesPerSec,
+			SkipChecksum: cfg.SkipChecksums,
+		})
+		for _, u := range urls {
+			slug := albumSlugFor("youtube", u)
+			dest, err := fileutil.SafeJoin(cfg.OutputDir, slug)
+			if err != nil {
+				return err
+			}
+			dashAlbums = append(dashAlbums, dashboard.DashAlbumURL{
+				Site:     "youtube",
+				URL:      u,
+				Slug:     slug,
+				Dest:     dest,
+				Scraper:  scraper,
+			})
+		}
+	} else {
+		genericDl := downloader.NewDownloaderWithConfig(
+			cfg.ConcurrentDownloads,
+			cfg.Timeout,
+			cfg.UserAgent,
+		)
+		genericDl.SetRateLimit(rateLimitBytesPerSec)
+		genericDl.SetSkipChecksums(cfg.SkipChecksums)
+		dl = genericDl
+		for _, u := range urls {
+			site, _ := detectSite(u)
+			slug := albumSlugFor(site, u)
+			dest, err := fileutil.SafeJoin(cfg.OutputDir, slug)
+			if err != nil {
+				return err
+			}
+			scraper := scraperRegistry()[site]
+			dashAlbums = append(dashAlbums, dashboard.DashAlbumURL{
+				Site:     site,
+				URL:      u,
+				Slug:     slug,
+				Dest:     dest,
+				Scraper:  scraper,
+			})
+		}
+	}
+
+	if !term.IsTerminal(int(os.Stdout.Fd())) {
+		return runBatchPlain(dl, dashAlbums, cfg.OutputDir, os.Stdout)
+	}
+
+	d := dashboard.NewBatch(dl, cfg.OutputDir, dashAlbums)
 
 	p := tea.NewProgram(d, tea.WithAltScreen())
 	d.SetSendFunc(func(msg tea.Msg) { p.Send(msg) })

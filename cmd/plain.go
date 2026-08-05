@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -182,4 +183,110 @@ drain:
 		fmt.Fprintf(out, "failed %s: %v\n", title, errs[i])
 	}
 	return model.NewPartialError("download", errs)
+}
+
+// runBatchPlain is the non-TTY fallback for runBatch: it scrapes each album
+// serially, prints a section header, and downloads every item while
+// reporting progress via a shared download queue.
+func runBatchPlain(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, destRoot string, out io.Writer) error {
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signals)
+	watcherDone := make(chan struct{})
+	defer close(watcherDone)
+	go func() {
+		select {
+		case <-signals:
+			dl.Shutdown()
+		case <-watcherDone:
+		}
+	}()
+
+	printer := newPlainPrinter(out)
+	progress := dl.Progress()
+	progressDone := make(chan struct{})
+	go func() {
+		for evt := range progress {
+			printer.event(evt)
+		}
+		close(progressDone)
+	}()
+
+	var allErrs []error
+	for albumIdx, a := range albums {
+		header := fmt.Sprintf("[%s]", a.Slug)
+		fmt.Fprintln(out, "")
+		fmt.Fprintln(out, strings.Repeat("─", len(header)))
+		fmt.Fprintln(out, header)
+		fmt.Fprintln(out, strings.Repeat("─", len(header)))
+
+		fmt.Fprintf(out, "Scraping %s...\n", a.URL)
+		items, err := a.Scraper.Parse(a.URL)
+		if err != nil && len(items) == 0 {
+			fmt.Fprintf(out, "failed: %v\n", err)
+			allErrs = append(allErrs, err)
+			continue
+		}
+		if err != nil {
+			fmt.Fprintf(out, "Warning: %v\n", err)
+		}
+		if len(items) == 0 {
+			fmt.Fprintln(out, "No items found.")
+			continue
+		}
+
+		fmt.Fprintf(out, "%d items, downloading to %s\n", len(items), a.Dest)
+
+		for i := range items {
+			if items[i].ID == "" {
+				items[i].ID = fmt.Sprintf("%d:%d:%s", albumIdx, i, items[i].URL)
+			}
+		}
+
+		if err := os.MkdirAll(a.Dest, 0750); err != nil {
+			fmt.Fprintf(out, "failed: create album directory: %v\n", err)
+			allErrs = append(allErrs, err)
+			continue
+		}
+
+		downloadsDone := make(chan struct{})
+		errs := make([]error, len(items))
+		go func() {
+			var wg sync.WaitGroup
+			for i, item := range items {
+				if item.URL == "" {
+					continue
+				}
+				dl.Prepare(item)
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					errs[i] = dl.Download(item, a.Dest)
+				}()
+			}
+			wg.Wait()
+			close(downloadsDone)
+		}()
+
+		<-downloadsDone
+
+		for i, item := range items {
+			if errs[i] == nil {
+				continue
+			}
+			title := item.Title
+			if title == "" {
+				title = item.URL
+			}
+			fmt.Fprintf(out, "failed %s: %v\n", title, errs[i])
+		}
+		if partialErr := model.NewPartialError("album", errs); partialErr != nil {
+			allErrs = append(allErrs, partialErr)
+		}
+	}
+
+	dl.Shutdown()
+	<-progressDone
+
+	return model.NewPartialError("batch", allErrs)
 }

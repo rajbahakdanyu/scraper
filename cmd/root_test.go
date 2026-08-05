@@ -425,3 +425,61 @@ func TestAlbumSlugForYouTubePlaylistUsesPlaylistID(t *testing.T) {
 		t.Errorf("expected different playlists to get different slugs, both got %q", slugA)
 	}
 }
+
+func TestNewRootCmdRegistersInputFileFlag(t *testing.T) {
+	root := NewRootCmd()
+	flag := root.PersistentFlags().Lookup("input-file")
+	if flag == nil {
+		t.Error("expected --input-file persistent flag")
+	}
+	if flag.Shorthand != "i" {
+		t.Errorf("expected --input-file shorthand -i, got %q", flag.Shorthand)
+	}
+}
+
+func TestCollectBatchURLsFromArgs(t *testing.T) {
+	urls, err := collectBatchURLs([]string{"https://youtube.com/watch?v=abc", "https://cyberdrop.cr/a/xyz"}, globalOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(urls) != 2 {
+		t.Fatalf("expected 2 URLs, got %d: %v", len(urls), urls)
+	}
+}
+
+func TestCollectBatchURLsFromInputFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "urls.txt")
+	content := "# comment\nhttps://youtube.com/watch?v=abc\n\nhttps://cyberdrop.cr/a/xyz\n"
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	urls, err := collectBatchURLs(nil, globalOptions{inputFile: path, inputFileSet: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(urls) != 2 {
+		t.Fatalf("expected 2 URLs (blanks and comments skipped), got %d: %v", len(urls), urls)
+	}
+}
+
+func TestCollectBatchURLsTrimsWhitespace(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "urls.txt")
+	content := "  https://youtube.com/watch?v=abc  \n"
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	urls, err := collectBatchURLs(nil, globalOptions{inputFile: path, inputFileSet: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(urls) != 1 || urls[0] != "https://youtube.com/watch?v=abc" {
+		t.Fatalf("expected trimmed URL, got %v", urls)
+	}
+}
+
+func TestReadURLsFromFileNotFound(t *testing.T) {
+	_, err := readURLsFromFile(filepath.Join(t.TempDir(), "missing.txt"))
+	if err == nil {
+		t.Fatal("expected error for missing file")
+	}
+}

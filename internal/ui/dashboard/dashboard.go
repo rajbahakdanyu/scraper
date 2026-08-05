@@ -37,12 +37,27 @@ const (
 )
 
 type itemState struct {
-	item    model.MediaItem
-	status  model.DownloadStatus
-	bytes   int64
-	total   int64
-	speed   float64
-	started time.Time
+	item      model.MediaItem
+	status    model.DownloadStatus
+	bytes     int64
+	total     int64
+	speed     float64
+	started   time.Time
+	dest      string
+	isHeader  bool
+	albumName string
+	albumSite string
+}
+
+// DashAlbumURL carries the metadata cmd/root.go passes to the dashboard for
+// each URL in a batch: the orchestrator scrapes them incrementally and the
+// dashboard appends items as each album arrives.
+type DashAlbumURL struct {
+	Site    string
+	URL     string
+	Slug    string
+	Dest    string
+	Scraper model.Scraper
 }
 
 type Dashboard struct {
@@ -69,6 +84,11 @@ type Dashboard struct {
 
 	sendFunc  func(tea.Msg)
 	albumSlug string
+
+	batchMode      bool
+	batchURLs      []DashAlbumURL
+	batchIdx       int
+	batchRemaining int
 }
 
 // Futuristic logo — clean, minimal
@@ -115,7 +135,51 @@ func (d *Dashboard) SetAlbumSlug(slug string) {
 	d.albumSlug = slug
 }
 
+// NewBatch creates a dashboard for batch mode. Items are appended
+// incrementally as each album is scraped via the scrape-chain in Init.
+func NewBatch(dl Downloader, destRoot string, urls []DashAlbumURL) *Dashboard {
+	columns := []table.Column{
+		{Title: "", Width: 2},
+		{Title: "FILE", Width: 42},
+		{Title: "STATUS", Width: 12},
+		{Title: "PROGRESS", Width: 16},
+	}
+
+	t := table.New(
+		table.WithColumns(columns),
+		table.WithFocused(true),
+		table.WithHeight(4),
+	)
+
+	sp := spinner.New()
+	sp.Spinner = spinner.MiniDot
+	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(styles.ColorCyan))
+
+	siteLabel := fmt.Sprintf("%d albums", len(urls))
+	if len(urls) == 1 {
+		siteLabel = urls[0].Site
+	}
+
+	d := &Dashboard{
+		table:          t,
+		progress:       progress.New(progress.WithSolidFill(styles.ColorAccent)),
+		spinner:        sp,
+		theme:          styles.DefaultTheme(),
+		downloader:     dl,
+		dest:           destRoot,
+		site:           siteLabel,
+		phase:          phaseLoading,
+		batchMode:      true,
+		batchURLs:      urls,
+		batchRemaining: len(urls),
+	}
+	return d
+}
+
 func (d *Dashboard) Init() tea.Cmd {
+	if d.batchMode {
+		return tea.Batch(tea.EnterAltScreen, d.spinner.Tick, d.startNextScrape())
+	}
 	return tea.Batch(tea.EnterAltScreen, d.spinner.Tick, d.startScrape(),
 		tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg { return tickMsg(t) }))
 }
@@ -132,11 +196,28 @@ type scrapeResultMsg struct {
 	items []model.MediaItem
 	err   error
 }
+type batchScrapeMsg struct {
+	album DashAlbumURL
+	idx   int
+	items []model.MediaItem
+	err   error
+}
 
 func (d *Dashboard) startScrape() tea.Cmd {
 	return func() tea.Msg {
 		items, err := d.scraperFn()
 		return scrapeResultMsg{items: items, err: err}
+	}
+}
+
+func (d *Dashboard) startNextScrape() tea.Cmd {
+	return func() tea.Msg {
+		if d.batchIdx >= len(d.batchURLs) {
+			return batchScrapeMsg{idx: -1}
+		}
+		album := d.batchURLs[d.batchIdx]
+		items, err := album.Scraper.Parse(album.URL)
+		return batchScrapeMsg{album: album, idx: d.batchIdx, items: items, err: err}
 	}
 }
 
@@ -187,6 +268,9 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case scrapeResultMsg:
 		return d.handleScrapeResult(msg)
 
+	case batchScrapeMsg:
+		return d.handleBatchScrape(msg)
+
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "ctrl+c", "esc":
@@ -198,10 +282,10 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return d, tea.Quit
 		case "up", "k":
-			d.table.MoveUp(1)
+			d.moveUpSkippingHeaders()
 			return d, nil
 		case "down", "j":
-			d.table.MoveDown(1)
+			d.moveDownSkippingHeaders()
 			return d, nil
 		case "c":
 			d.cancelSelected()
@@ -301,6 +385,124 @@ func (d *Dashboard) drainProgress() {
 	}
 }
 
+func (d *Dashboard) handleBatchScrape(msg batchScrapeMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil && len(msg.items) == 0 {
+		d.loadingErr = fmt.Sprintf("%s: %v", msg.album.URL, msg.err)
+		d.batchRemaining--
+		d.batchIdx++
+		if d.batchRemaining == 0 && len(d.states) == 0 {
+			d.phase = phaseDone
+			return d, nil
+		}
+		return d, d.startNextScrape()
+	}
+
+	d.batchRemaining--
+	d.batchIdx++
+
+	wasFirstAlbum := d.phase == phaseLoading
+
+	if err := os.MkdirAll(msg.album.Dest, 0750); err != nil {
+		d.loadingErr = fmt.Sprintf("create album directory: %v", err)
+		d.phase = phaseDone
+		return d, nil
+	}
+
+	baseIdx := len(d.states)
+	headerState := itemState{
+		isHeader:  true,
+		albumName: msg.album.Slug,
+		albumSite: msg.album.Site,
+	}
+	d.states = append(d.states, headerState)
+
+	for i, it := range msg.items {
+		if it.ID == "" {
+			it.ID = fmt.Sprintf("%d:%d:%s", d.batchIdx-1, i, it.URL)
+		}
+		st := itemState{
+			item:  it,
+			total: it.Size,
+			dest:  msg.album.Dest,
+		}
+		if it.URL == "" {
+			st.status = model.StatusCompleted
+		} else {
+			st.status = model.StatusPending
+		}
+		d.states = append(d.states, st)
+	}
+
+	if wasFirstAlbum {
+		h := len(d.states)
+		if h > 15 {
+			h = 15
+		}
+		if h < 4 {
+			h = 4
+		}
+		d.table.SetHeight(h)
+		d.phase = phaseDownload
+		d.refreshRows()
+
+		var cmds []tea.Cmd
+		if d.downloader != nil {
+			go d.drainProgress()
+			cmds = append(cmds, d.startAllDownloads())
+		}
+		if d.batchRemaining > 0 {
+			cmds = append(cmds, d.startNextScrape())
+		}
+		return d, tea.Batch(cmds...)
+	}
+
+	// Subsequent album: items were appended. Start downloads only for the
+	// new items, and kick off the next scrape if applicable.
+	totalRows := len(d.states)
+	h := totalRows
+	if h > 15 {
+		h = 15
+	}
+	d.table.SetHeight(h)
+	d.refreshRows()
+
+	var cmds []tea.Cmd
+	if d.downloader != nil {
+		for i := baseIdx + 1; i < totalRows; i++ {
+			if d.states[i].item.URL == "" {
+				continue
+			}
+			d.downloader.Prepare(d.states[i].item)
+			cmds = append(cmds, startDownload(d.downloader, d.states[i].item, d.states[i].dest))
+		}
+	}
+	if d.batchRemaining > 0 {
+		cmds = append(cmds, d.startNextScrape())
+	} else if msg.err != nil {
+		d.status = "warning: " + msg.err.Error()
+	}
+	return d, tea.Batch(cmds...)
+}
+
+func (d *Dashboard) moveUpSkippingHeaders() {
+	d.table.MoveUp(1)
+	idx := d.table.Cursor()
+	// Clamp to the first non-header row, scanning upward.
+	for idx > 0 && idx < len(d.states) && d.states[idx].isHeader {
+		d.table.MoveUp(1)
+		idx = d.table.Cursor()
+	}
+}
+
+func (d *Dashboard) moveDownSkippingHeaders() {
+	d.table.MoveDown(1)
+	idx := d.table.Cursor()
+	for idx >= 0 && idx < len(d.states) && d.states[idx].isHeader {
+		d.table.MoveDown(1)
+		idx = d.table.Cursor()
+	}
+}
+
 // --- Batch ---
 
 // cancelSelected cancels the currently-highlighted item's download, if
@@ -311,6 +513,9 @@ func (d *Dashboard) cancelSelected() {
 	}
 	idx := d.table.Cursor()
 	if idx < 0 || idx >= len(d.states) {
+		return
+	}
+	if d.states[idx].isHeader {
 		return
 	}
 	if d.states[idx].status != model.StatusPending && d.states[idx].status != model.StatusDownloading {
@@ -327,11 +532,18 @@ func (d *Dashboard) startAllDownloads() tea.Cmd {
 	}
 	var cmds []tea.Cmd
 	for i := range d.states {
+		if d.states[i].isHeader {
+			continue
+		}
 		if d.states[i].item.URL == "" {
 			continue
 		}
 		d.downloader.Prepare(d.states[i].item)
-		cmds = append(cmds, startDownload(d.downloader, d.states[i].item, d.dest))
+		dest := d.states[i].dest
+		if dest == "" {
+			dest = d.dest
+		}
+		cmds = append(cmds, startDownload(d.downloader, d.states[i].item, dest))
 	}
 	d.refreshRows()
 	return tea.Batch(cmds...)
@@ -339,6 +551,9 @@ func (d *Dashboard) startAllDownloads() tea.Cmd {
 
 func (d *Dashboard) applyProgress(evt model.ProgressEvent) {
 	for i := range d.states {
+		if d.states[i].isHeader {
+			continue
+		}
 		if d.states[i].item.Key() != evt.Item.Key() {
 			continue
 		}
@@ -367,6 +582,9 @@ func (d *Dashboard) applyProgress(evt model.ProgressEvent) {
 
 func (d *Dashboard) applyDone(msg downloadDoneMsg) {
 	for i := range d.states {
+		if d.states[i].isHeader {
+			continue
+		}
 		if d.states[i].item.Key() != msg.key {
 			continue
 		}
@@ -392,6 +610,39 @@ func (d *Dashboard) applyDone(msg downloadDoneMsg) {
 func (d *Dashboard) refreshRows() {
 	rows := make([]table.Row, len(d.states))
 	for i, st := range d.states {
+		if st.isHeader {
+			var done, active int
+			for j := i + 1; j < len(d.states); j++ {
+				if d.states[j].isHeader {
+					break
+				}
+				switch d.states[j].status {
+				case model.StatusCompleted:
+					done++
+				case model.StatusDownloading:
+					active++
+				}
+			}
+			total := 0
+			for j := i + 1; j < len(d.states); j++ {
+				if d.states[j].isHeader {
+					break
+				}
+				total++
+			}
+			headerText := fmt.Sprintf("▾ %s  (%s)  —  %d items", st.albumName, st.albumSite, total)
+			if total > 0 {
+				if done == total {
+					headerText += fmt.Sprintf(", %d done", done)
+				} else {
+					headerText += fmt.Sprintf(", %d done, %d active", done, active)
+				}
+			}
+			styled := d.theme.Cyan.Bold(true).Render(headerText)
+			rows[i] = table.Row{styled, "", "", ""}
+			continue
+		}
+
 		mark := " "
 		switch st.status {
 		case model.StatusDownloading:
@@ -433,6 +684,10 @@ func (d *Dashboard) View() string {
 
 func (d *Dashboard) viewLoading(header string) string {
 	msg := d.spinner.View() + " " + d.theme.Dim.Render("fetching media items...")
+	if d.batchMode && d.batchIdx < len(d.batchURLs) {
+		album := d.batchURLs[d.batchIdx]
+		msg = d.spinner.View() + " " + d.theme.Dim.Render(fmt.Sprintf("scraping %s (%s)...", album.Slug, album.Site))
+	}
 	return lipgloss.JoinVertical(lipgloss.Left,
 		"", header, "",
 		d.theme.PanelSlim.Render(msg), "",
@@ -466,6 +721,9 @@ func (d *Dashboard) renderStats() string {
 	var totalSpeed float64
 
 	for _, st := range d.states {
+		if st.isHeader {
+			continue
+		}
 		switch st.status {
 		case model.StatusDownloading:
 			downloading++
@@ -479,7 +737,12 @@ func (d *Dashboard) renderStats() string {
 		}
 	}
 
-	total := len(d.states)
+	total := 0
+	for _, st := range d.states {
+		if !st.isHeader {
+			total++
+		}
+	}
 	parts := []string{
 		fmt.Sprintf("%s/%s", d.theme.Value.Render(fmt.Sprintf("%d", completed)), d.theme.Dim.Render(fmt.Sprintf("%d", total))),
 		d.theme.Dim.Render("active ") + d.theme.Cyan.Render(fmt.Sprintf("%d", downloading)),
@@ -488,6 +751,13 @@ func (d *Dashboard) renderStats() string {
 
 	if totalSpeed > 0 {
 		parts = append(parts, d.theme.Dim.Render("speed ")+d.theme.Cyan.Render(fmt.Sprintf("%s/s", HumanizeBytes(int64(totalSpeed)))))
+	}
+
+	if d.batchMode && d.batchRemaining > 0 {
+		albumTotal := len(d.batchURLs)
+		parts = append(parts, d.theme.Dim.Render(fmt.Sprintf("scraping %d/%d", albumTotal-d.batchRemaining, albumTotal)))
+	} else if d.batchMode && len(d.batchURLs) > 1 {
+		parts = append(parts, d.theme.Dim.Render(fmt.Sprintf("%d albums", len(d.batchURLs))))
 	}
 
 	icon := d.spinner.View()
@@ -507,6 +777,9 @@ func (d *Dashboard) renderStats() string {
 // everything's done, ticking stops instead of animating forever.
 func (d *Dashboard) spinnerActive() bool {
 	if d.phase == phaseLoading {
+		return true
+	}
+	if d.batchRemaining > 0 {
 		return true
 	}
 	for _, st := range d.states {

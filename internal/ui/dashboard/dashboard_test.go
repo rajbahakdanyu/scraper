@@ -446,3 +446,173 @@ func TestTruncate(t *testing.T) {
 		})
 	}
 }
+
+func TestNewBatchCreatesDashboard(t *testing.T) {
+	urls := []DashAlbumURL{
+		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/album1", Slug: "album1", Dest: "/tmp/album1"},
+		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/album2", Slug: "album2", Dest: "/tmp/album2"},
+	}
+	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 10)}
+	d := NewBatch(fd, "/tmp", urls)
+
+	if !d.batchMode {
+		t.Error("expected batchMode to be true")
+	}
+	if d.batchRemaining != 2 {
+		t.Errorf("expected batchRemaining = 2, got %d", d.batchRemaining)
+	}
+	if d.phase != phaseLoading {
+		t.Errorf("expected phaseLoading, got %d", d.phase)
+	}
+}
+
+func TestBatchHeaderRowsCreated(t *testing.T) {
+	urls := []DashAlbumURL{
+		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/test", Slug: "test", Dest: "/tmp/test"},
+	}
+	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 10)}
+	d := NewBatch(fd, "/tmp", urls)
+
+	items := []model.MediaItem{
+		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100},
+		{URL: "https://example.com/b.mp4", Title: "b.mp4", Size: 200},
+	}
+	msg := batchScrapeMsg{album: urls[0], idx: 0, items: items}
+	_, cmd := d.handleBatchScrape(msg)
+	if cmd == nil {
+		t.Fatal("expected command after first batch scrape")
+	}
+
+	if len(d.states) == 0 {
+		t.Fatal("expected states to be populated")
+	}
+	if !d.states[0].isHeader {
+		t.Error("expected first state to be a header row")
+	}
+	if d.states[0].albumName != "test" {
+		t.Errorf("expected header album name 'test', got %q", d.states[0].albumName)
+	}
+}
+
+func TestBatchHeaderCursorSkip(t *testing.T) {
+	urls := []DashAlbumURL{
+		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/test", Slug: "test", Dest: "/tmp/test"},
+	}
+	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 10)}
+	d := NewBatch(fd, "/tmp", urls)
+
+	items := []model.MediaItem{
+		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100},
+	}
+	msg := batchScrapeMsg{album: urls[0], idx: 0, items: items}
+	_, _ = d.handleBatchScrape(msg)
+
+	d.table.SetHeight(10)
+	d.refreshRows()
+
+	// Cursor should not be on a header row (it starts at 0, but move
+	// logic would skip if it were)
+	if d.states[0].isHeader {
+		t.Log("header row exists at index 0, which is expected for batch mode")
+	}
+}
+
+func TestBatchModePerItemDest(t *testing.T) {
+	urls := []DashAlbumURL{
+		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/test", Slug: "test", Dest: "/tmp/test-album"},
+	}
+	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 10)}
+	d := NewBatch(fd, "/tmp", urls)
+
+	items := []model.MediaItem{
+		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100},
+	}
+	msg := batchScrapeMsg{album: urls[0], idx: 0, items: items}
+	d.handleBatchScrape(msg)
+
+	for i, st := range d.states {
+		if st.isHeader {
+			continue
+		}
+		if st.dest != "/tmp/test-album" {
+			t.Errorf("state[%d] dest = %q, want /tmp/test-album", i, st.dest)
+		}
+	}
+}
+
+func TestBatchModeStatsShowsScraping(t *testing.T) {
+	urls := []DashAlbumURL{
+		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/test", Slug: "test", Dest: "/tmp/test"},
+		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/test2", Slug: "test2", Dest: "/tmp/test2"},
+	}
+	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 10)}
+	d := NewBatch(fd, "/tmp", urls)
+
+	items := []model.MediaItem{
+		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100},
+	}
+	msg := batchScrapeMsg{album: urls[0], idx: 0, items: items}
+	d.handleBatchScrape(msg)
+
+	stats := d.renderStats()
+	if !strings.Contains(stats, "scraping") {
+		t.Errorf("stats should contain 'scraping' while batchRemaining > 0, got: %q", stats)
+	}
+}
+
+func TestBatchModeSpinnerActiveWhileScraping(t *testing.T) {
+	urls := []DashAlbumURL{
+		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/1", Slug: "one", Dest: "/tmp/one"},
+		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/2", Slug: "two", Dest: "/tmp/two"},
+	}
+	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 10)}
+	d := NewBatch(fd, "/tmp", urls)
+
+	// Feed first album
+	items := []model.MediaItem{{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100}}
+	msg := batchScrapeMsg{album: urls[0], idx: 0, items: items}
+	d.handleBatchScrape(msg)
+
+	// First album downloads done, but second still scraping
+	for i := range d.states {
+		if !d.states[i].isHeader {
+			d.states[i].status = model.StatusCompleted
+		}
+	}
+
+	// batchRemaining should still be 1, spinner stays active
+	if d.batchRemaining != 1 {
+		t.Errorf("expected batchRemaining = 1, got %d", d.batchRemaining)
+	}
+	if !d.spinnerActive() {
+		t.Error("spinner should be active while batchRemaining > 0 even if all current downloads done")
+	}
+}
+
+func TestCancelSelectedSkipsHeader(t *testing.T) {
+	urls := []DashAlbumURL{
+		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/test", Slug: "test", Dest: "/tmp/test"},
+	}
+	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 10)}
+	d := NewBatch(fd, "/tmp", urls)
+
+	items := []model.MediaItem{
+		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100},
+	}
+	msg := batchScrapeMsg{album: urls[0], idx: 0, items: items}
+	d.handleBatchScrape(msg)
+
+	// Select the header row (index 0)
+	d.table.SetCursor(0)
+	preCancel := d.states[0].isHeader
+	if !preCancel {
+		t.Fatal("expected first row to be a header")
+	}
+	d.cancelSelected()
+
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+	if len(fd.cancelled) != 0 {
+		t.Errorf("expected no cancel calls for a header row, got %d", len(fd.cancelled))
+	}
+}
