@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -95,7 +96,7 @@ func TestParseNetscapeCookiesExpiredSkipped(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "expired.txt")
 	expired := time.Now().Unix() - 3600
 	content := ".example.com\tTRUE\t/\tFALSE\t" +
-		time.Unix(expired, 0).Format(time.RFC3339) + "\texpired_cookie\toldval\n" +
+		strconv.FormatInt(expired, 10) + "\texpired_cookie\toldval\n" +
 		".example.com\tTRUE\t/\tFALSE\t9999999999\tvalid_cookie\tgoodval\n"
 	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 		t.Fatal(err)
@@ -181,7 +182,7 @@ func TestParseNetscapeCookiesExpiryAsInt(t *testing.T) {
 
 func TestWithCookiesSetsJar(t *testing.T) {
 	cookies := []*http.Cookie{
-		{Name: "session", Value: "abc"},
+		{Name: "session", Value: "abc", Domain: "example.com"},
 	}
 	client := WithCookies(&http.Client{}, cookies)
 	if client.Jar == nil {

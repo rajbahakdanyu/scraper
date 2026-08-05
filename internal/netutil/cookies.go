@@ -76,7 +76,10 @@ func WithCookies(client *http.Client, cookies []*http.Cookie) *http.Client {
 	if err != nil {
 		panic(fmt.Sprintf("cookiejar.New: %v", err))
 	}
-	jar.SetCookies(&url.URL{Scheme: "http", Host: "example.com"}, cookies)
+	for _, c := range cookies {
+		host := strings.TrimPrefix(c.Domain, ".")
+		jar.SetCookies(&url.URL{Scheme: "https", Host: host}, []*http.Cookie{c})
+	}
 	clone := *client
 	clone.Jar = jar
 	return &clone
