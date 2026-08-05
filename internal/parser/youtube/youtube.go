@@ -865,6 +865,21 @@ var qualityHeights = map[string]int{
 	"240p":  240,
 }
 
+var validQualities = map[string]bool{
+	"": true, "2160p": true, "1440p": true, "1080p": true,
+	"720p": true, "480p": true, "360p": true, "240p": true,
+}
+
+func ValidQuality(q string) (int, bool) {
+	if !validQualities[q] {
+		return 0, false
+	}
+	if q == "" {
+		return 0, true
+	}
+	return qualityHeights[q], true
+}
+
 func parseQualityHeight(q string) int {
 	return qualityHeights[q]
 }

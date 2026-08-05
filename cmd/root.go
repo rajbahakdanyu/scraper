@@ -51,6 +51,10 @@ type globalOptions struct {
 	proxySet         bool
 	cookies          string
 	cookiesSet       bool
+	quality          string
+	qualitySet       bool
+	audioOnly        string
+	audioOnlySet     bool
 }
 
 // loadGlobalConfig loads the config file and applies CLI flag overrides.
@@ -77,6 +81,25 @@ func loadGlobalConfig(opts globalOptions) (*config.Config, error) {
 	}
 	if opts.cookiesSet {
 		cfg.Cookies = opts.cookies
+	}
+	if opts.qualitySet {
+		cfg.Quality = opts.quality
+	}
+	if opts.audioOnlySet {
+		cfg.AudioOnly = opts.audioOnly
+	}
+	if cfg.Quality != "" && cfg.AudioOnly != "" {
+		return nil, fmt.Errorf("cannot use --quality and --audio-only together")
+	}
+	if cfg.Quality != "" {
+		if _, ok := youtube.ValidQuality(cfg.Quality); !ok {
+			return nil, fmt.Errorf("invalid --quality value %q (valid: 2160p, 1440p, 1080p, 720p, 480p, 360p, 240p)", cfg.Quality)
+		}
+	}
+	if cfg.AudioOnly != "" {
+		if cfg.AudioOnly != "m4a" && cfg.AudioOnly != "mp3" {
+			return nil, fmt.Errorf("invalid --audio-only value %q (valid: m4a, mp3)", cfg.AudioOnly)
+		}
 	}
 	if cfg.Cookies != "" {
 		expandedCookies, err := expandHomePath(cfg.Cookies)
@@ -171,6 +194,14 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 	if err != nil {
 		return globalOptions{}, err
 	}
+	quality, err := flags.GetString("quality")
+	if err != nil {
+		return globalOptions{}, err
+	}
+	audioOnly, err := flags.GetString("audio-only")
+	if err != nil {
+		return globalOptions{}, err
+	}
 	// --json implies --no-tui
 	if json {
 		noTui = true
@@ -194,6 +225,10 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 		proxySet:         flags.Changed("proxy"),
 		cookies:          cookies,
 		cookiesSet:       flags.Changed("cookies"),
+		quality:          quality,
+		qualitySet:       flags.Changed("quality"),
+		audioOnly:        audioOnly,
+		audioOnlySet:     flags.Changed("audio-only"),
 	}, nil
 }
 
@@ -257,6 +292,8 @@ func NewRootCmd() *cobra.Command {
 	root.PersistentFlags().BoolP("json", "j", false, "Output JSON Lines (one event per line); implies --no-tui")
 	root.PersistentFlags().String("proxy", "", "HTTP/S proxy URL for all requests (e.g. http://proxy:8080)")
 	root.PersistentFlags().String("cookies", "", "Netscape-format cookies file (e.g. ~/cookies.txt)")
+	root.PersistentFlags().String("quality", "", "Max YouTube resolution (2160p, 1440p, 1080p, 720p, 480p, 360p, 240p)")
+	root.PersistentFlags().String("audio-only", "", "YouTube audio only; optional format: m4a (default) or mp3")
 
 	root.AddCommand(
 		newYouTubeCmd(),
@@ -472,6 +509,8 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 			SkipChecksum: cfg.SkipChecksums,
 			ProxyURL:     cfg.Proxy,
 			Cookies:      cfg.ParsedCookies(),
+			Quality:      cfg.Quality,
+			AudioOnly:    cfg.AudioOnly,
 		})
 		if err != nil {
 			return fmt.Errorf("youtube downloader: %w", err)
@@ -672,6 +711,8 @@ func runBatch(opts globalOptions, urls []string) error {
 			SkipChecksum: cfg.SkipChecksums,
 			ProxyURL:     cfg.Proxy,
 			Cookies:      cfg.ParsedCookies(),
+			Quality:      cfg.Quality,
+			AudioOnly:    cfg.AudioOnly,
 		})
 		if err != nil {
 			return fmt.Errorf("youtube downloader: %w", err)

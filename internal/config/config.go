@@ -30,6 +30,12 @@ type Config struct {
 	// Proxy is the HTTP/S proxy URL for all outbound requests.
 	// Empty means no proxy (default).
 	Proxy string `yaml:"proxy"`
+	// Quality caps YouTube video resolution (2160p, 1440p, 1080p, 720p,
+	// 480p, 360p, 240p). Empty means best available (default).
+	Quality string `yaml:"quality"`
+	// AudioOnly downloads only the audio track from YouTube videos.
+	// Accepted values: empty (off), "m4a", "mp3".
+	AudioOnly string `yaml:"audio_only"`
 	// Cookies is the path to a Netscape-format cookies file.
 	// Empty means no cookies file (default).
 	Cookies string `yaml:"cookies"`
