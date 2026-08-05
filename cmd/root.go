@@ -49,8 +49,8 @@ type globalOptions struct {
 	json             bool
 	proxy            string
 	proxySet         bool
-	cookies    string
-	cookiesSet bool
+	cookies          string
+	cookiesSet       bool
 }
 
 // loadGlobalConfig loads the config file and applies CLI flag overrides.
@@ -192,8 +192,8 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 		json:             json,
 		proxy:            proxy,
 		proxySet:         flags.Changed("proxy"),
-		cookies:         cookies,
-		cookiesSet:      flags.Changed("cookies"),
+		cookies:          cookies,
+		cookiesSet:       flags.Changed("cookies"),
 	}, nil
 }
 

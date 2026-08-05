@@ -13,6 +13,7 @@ import (
 )
 
 func ParseNetscapeCookies(path string) ([]*http.Cookie, error) {
+	// #nosec G304 -- reading an explicitly user-selected local cookies file is intended behavior.
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -52,13 +53,16 @@ func ParseNetscapeCookies(path string) ([]*http.Cookie, error) {
 			continue
 		}
 
+		// #nosec G124 -- cookies are parsed from a user-provided file to be
+		// sent in outbound requests; HttpOnly does not affect jar sending.
 		cookie := &http.Cookie{
-			Name:    name,
-			Value:   value,
-			Domain:  domain,
-			Path:    path,
-			Secure:  secure,
-			Expires: time.Unix(expiry, 0),
+			Name:     name,
+			Value:    value,
+			Domain:   domain,
+			Path:     path,
+			Secure:   secure,
+			HttpOnly: true,
+			Expires:  time.Unix(expiry, 0),
 		}
 		cookies = append(cookies, cookie)
 	}
