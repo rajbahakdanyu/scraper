@@ -18,6 +18,7 @@ import (
 	"github.com/rajbahakdanyu/scraper/internal/downloader"
 	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 	"github.com/rajbahakdanyu/scraper/internal/model"
+	"github.com/rajbahakdanyu/scraper/internal/netutil"
 	"github.com/rajbahakdanyu/scraper/internal/parser/bunker"
 	"github.com/rajbahakdanyu/scraper/internal/parser/cyberdrop"
 	"github.com/rajbahakdanyu/scraper/internal/parser/filester"
@@ -47,6 +48,8 @@ type globalOptions struct {
 	json             bool
 	proxy            string
 	proxySet         bool
+	cookies    string
+	cookiesSet bool
 }
 
 // loadGlobalConfig loads the config file and applies CLI flag overrides.
@@ -70,6 +73,16 @@ func loadGlobalConfig(opts globalOptions) (*config.Config, error) {
 	}
 	if opts.proxySet {
 		cfg.Proxy = opts.proxy
+	}
+	if opts.cookiesSet {
+		cfg.Cookies = opts.cookies
+	}
+	if cfg.Cookies != "" {
+		parsed, err := netutil.ParseNetscapeCookies(cfg.Cookies)
+		if err != nil {
+			return nil, fmt.Errorf("cookies: %w", err)
+		}
+		cfg.SetParsedCookies(parsed)
 	}
 
 	// Single choke point covering both the --output flag and the config
@@ -148,6 +161,10 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 	if err != nil {
 		return globalOptions{}, err
 	}
+	cookies, err := flags.GetString("cookies")
+	if err != nil {
+		return globalOptions{}, err
+	}
 	// --json implies --no-tui
 	if json {
 		noTui = true
@@ -169,6 +186,8 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 		json:             json,
 		proxy:            proxy,
 		proxySet:         flags.Changed("proxy"),
+		cookies:         cookies,
+		cookiesSet:      flags.Changed("cookies"),
 	}, nil
 }
 
@@ -231,6 +250,7 @@ func NewRootCmd() *cobra.Command {
 	root.PersistentFlags().Bool("no-tui", false, "Disable terminal UI; print plain text output")
 	root.PersistentFlags().BoolP("json", "j", false, "Output JSON Lines (one event per line); implies --no-tui")
 	root.PersistentFlags().String("proxy", "", "HTTP/S proxy URL for all requests (e.g. http://proxy:8080)")
+	root.PersistentFlags().String("cookies", "", "Netscape-format cookies file (e.g. ~/cookies.txt)")
 
 	root.AddCommand(
 		newYouTubeCmd(),

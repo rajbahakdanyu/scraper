@@ -566,3 +566,49 @@ func TestLoadGlobalConfigProxyOverride(t *testing.T) {
 		t.Errorf("expected CLI flag to override config, got %q", cfg.Proxy)
 	}
 }
+
+func TestNewRootCmdHasCookiesFlag(t *testing.T) {
+	root := NewRootCmd()
+	flag := root.PersistentFlags().Lookup("cookies")
+	if flag == nil {
+		t.Error("expected --cookies persistent flag")
+	}
+}
+
+func TestLoadGlobalConfigCookiesOverride(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	content := "cookies: " + filepath.Join(t.TempDir(), "config-cookies.txt") + "\n"
+	if err := os.WriteFile(configPath, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cliCookiesPath := filepath.Join(t.TempDir(), "cli-cookies.txt")
+	cookieContent := ".example.com\tTRUE\t/\tFALSE\t9999999999\tsid\tcli_val\n"
+	if err := os.WriteFile(cliCookiesPath, []byte(cookieContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadGlobalConfig(globalOptions{
+		configPath: configPath,
+		cookies:    cliCookiesPath,
+		cookiesSet: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Cookies != cliCookiesPath {
+		t.Errorf("expected CLI to override cookies path, got %q", cfg.Cookies)
+	}
+	cookies := cfg.ParsedCookies()
+	if len(cookies) != 1 || cookies[0].Name != "sid" {
+		t.Errorf("expected parsed cookies from CLI path, got %v", cookies)
+	}
+}
+
+func TestLoadGlobalConfigCookiesFileNotFound(t *testing.T) {
+	_, err := loadGlobalConfig(globalOptions{
+		cookies:    filepath.Join(t.TempDir(), "missing.txt"),
+		cookiesSet: true,
+	})
+	if err == nil {
+		t.Fatal("expected error for missing cookies file")
+	}
+}

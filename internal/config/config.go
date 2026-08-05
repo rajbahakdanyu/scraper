@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -29,6 +30,20 @@ type Config struct {
 	// Proxy is the HTTP/S proxy URL for all outbound requests.
 	// Empty means no proxy (default).
 	Proxy string `yaml:"proxy"`
+	// Cookies is the path to a Netscape-format cookies file.
+	// Empty means no cookies file (default).
+	Cookies string `yaml:"cookies"`
+	// cookies holds the parsed cookies at runtime. Set by loadGlobalConfig
+	// in cmd/root.go after parsing the file. Not serialized to YAML.
+	cookies []*http.Cookie `yaml:"-"`
+}
+
+func (c *Config) ParsedCookies() []*http.Cookie {
+	return c.cookies
+}
+
+func (c *Config) SetParsedCookies(cookies []*http.Cookie) {
+	c.cookies = cookies
 }
 
 func Load(path string) (*Config, error) {
