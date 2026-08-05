@@ -43,5 +43,24 @@
       "model": "opencode-go/gpt-5.6-luna",
       "description": "USE THIS FOR: Resolving complex framework deadlocks, subtle race conditions, or when standard models hit logic walls during SDD tasks."
     }
+  },
+   
+  "command": {
+    "plan": {
+      "description": "Generate an architectural SDD blueprint before editing files",
+      "agent": "architect",
+      "template": "Create an architectural implementation plan and SDD task breakdown for: $ARGUMENTS.\nInclude impacted files, logic breakdowns, global constraints, and potential edge cases."
+    },
+    "review": {
+      "description": "Review uncommitted git diffs against SDD task briefs",
+      "agent": "reviewer",
+      "subtask": true,
+      "template": "Here are the uncommitted changes:\n!`git diff`\n\nReview these diffs for correctness, spec compliance against task briefs, security vulnerabilities, and missing test coverage."
+    },
+    "free": {
+      "description": "Run a task using zero-cost free models when rate-limited on Go",
+      "agent": "free_coder",
+      "template": "$ARGUMENTS"
+    }
   }
 }

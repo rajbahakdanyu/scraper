@@ -47,6 +47,7 @@ type itemState struct {
 	isHeader  bool
 	albumName string
 	albumSite string
+	lastErr   error
 }
 
 // DashAlbumURL carries the metadata cmd/root.go passes to the dashboard for
@@ -89,6 +90,8 @@ type Dashboard struct {
 	batchURLs      []DashAlbumURL
 	batchIdx       int
 	batchRemaining int
+
+	inspectMsg string
 }
 
 // Futuristic logo — clean, minimal
@@ -282,14 +285,23 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return d, tea.Quit
 		case "up", "k":
+			d.inspectMsg = ""
 			d.moveUpSkippingHeaders()
 			return d, nil
 		case "down", "j":
+			d.inspectMsg = ""
 			d.moveDownSkippingHeaders()
 			return d, nil
 		case "c":
+			d.inspectMsg = ""
 			d.cancelSelected()
 			return d, nil
+		case "enter":
+			d.inspectSelected()
+			return d, nil
+		case "r":
+			d.inspectMsg = ""
+			return d, d.retrySelected()
 		}
 
 	case progressMsg:
@@ -526,6 +538,54 @@ func (d *Dashboard) cancelSelected() {
 	d.refreshRows()
 }
 
+func (d *Dashboard) inspectSelected() {
+	d.inspectMsg = ""
+	idx := d.table.Cursor()
+	if idx < 0 || idx >= len(d.states) {
+		return
+	}
+	if d.states[idx].isHeader {
+		return
+	}
+	if d.states[idx].status != model.StatusFailed {
+		return
+	}
+	if d.states[idx].lastErr != nil {
+		d.inspectMsg = d.states[idx].lastErr.Error()
+	}
+}
+
+// retrySelected resets the selected failed item back to pending and
+// kicks off a fresh download attempt.
+func (d *Dashboard) retrySelected() tea.Cmd {
+	if d.downloader == nil {
+		return nil
+	}
+	idx := d.table.Cursor()
+	if idx < 0 || idx >= len(d.states) {
+		return nil
+	}
+	if d.states[idx].isHeader {
+		return nil
+	}
+	if d.states[idx].status != model.StatusFailed {
+		return nil
+	}
+	dest := d.states[idx].dest
+	if dest == "" {
+		dest = d.dest
+	}
+	d.states[idx].status = model.StatusPending
+	d.states[idx].bytes = 0
+	d.states[idx].total = d.states[idx].item.Size
+	d.states[idx].speed = 0
+	d.states[idx].started = time.Time{}
+	d.states[idx].lastErr = nil
+	d.downloader.Prepare(d.states[idx].item)
+	d.refreshRows()
+	return startDownload(d.downloader, d.states[idx].item, dest)
+}
+
 func (d *Dashboard) startAllDownloads() tea.Cmd {
 	if d.downloader == nil {
 		return nil
@@ -564,6 +624,13 @@ func (d *Dashboard) applyProgress(evt model.ProgressEvent) {
 		case model.StatusCompleted, model.StatusFailed, model.StatusCancelled:
 			return
 		}
+		// Terminal status values (Failed, Cancelled) must only come from
+		// applyDone, not from buffered progress events — a stale
+		// StatusFailed event queued before a retry would otherwise
+		// corrupt the retried item.
+		if evt.Status == model.StatusFailed || evt.Status == model.StatusCancelled {
+			return
+		}
 		if d.states[i].started.IsZero() {
 			d.states[i].started = time.Now()
 		}
@@ -591,6 +658,7 @@ func (d *Dashboard) applyDone(msg downloadDoneMsg) {
 		switch {
 		case msg.err == nil:
 			d.states[i].status = model.StatusCompleted
+			d.states[i].lastErr = nil
 			if d.states[i].total > 0 {
 				d.states[i].bytes = d.states[i].total
 			}
@@ -600,6 +668,7 @@ func (d *Dashboard) applyDone(msg downloadDoneMsg) {
 			// not a failure worth downgrading the status for.
 		default:
 			d.states[i].status = model.StatusFailed
+			d.states[i].lastErr = msg.err
 		}
 		break
 	}
@@ -706,11 +775,14 @@ func (d *Dashboard) viewError(header string) string {
 func (d *Dashboard) viewBatch(header string) string {
 	tablePanel := d.theme.PanelSlim.Render(d.table.View())
 	stats := d.renderStats()
-	footer := d.theme.Footer.Render("  ↑↓ select  •  c cancel  •  q quit")
+	footer := d.theme.Footer.Render("  ↑↓ select  •  c cancel  •  r retry  •  enter inspect  •  q quit")
 
 	sections := []string{"", header, "", stats, "", tablePanel}
 	if d.status != "" {
 		sections = append(sections, "", d.theme.Dim.Render("  "+d.status))
+	}
+	if d.inspectMsg != "" {
+		sections = append(sections, "", d.theme.Error.Render("  "+d.inspectMsg))
 	}
 	sections = append(sections, "", footer)
 	return lipgloss.JoinVertical(lipgloss.Left, sections...)

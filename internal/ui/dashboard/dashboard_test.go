@@ -616,3 +616,184 @@ func TestCancelSelectedSkipsHeader(t *testing.T) {
 		t.Errorf("expected no cancel calls for a header row, got %d", len(fd.cancelled))
 	}
 }
+
+func TestApplyDoneStoresError(t *testing.T) {
+	items := []model.MediaItem{
+		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100},
+	}
+	d := New(instantItems(items), nil, t.TempDir(), "test")
+	d.Update(scrapeResultMsg{items: items})
+
+	wantErr := errors.New("HTTP 404")
+	d.applyDone(downloadDoneMsg{key: d.states[0].item.Key(), err: wantErr})
+
+	if d.states[0].status != model.StatusFailed {
+		t.Errorf("expected StatusFailed, got %v", d.states[0].status)
+	}
+	if d.states[0].lastErr == nil || d.states[0].lastErr.Error() != "HTTP 404" {
+		t.Errorf("expected lastErr to be stored, got %v", d.states[0].lastErr)
+	}
+}
+
+func TestApplyDoneClearsErrorOnRetrySuccess(t *testing.T) {
+	items := []model.MediaItem{
+		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100},
+	}
+	d := New(instantItems(items), nil, t.TempDir(), "test")
+	d.Update(scrapeResultMsg{items: items})
+
+	wantErr := errors.New("transient")
+	d.applyDone(downloadDoneMsg{key: d.states[0].item.Key(), err: wantErr})
+	if d.states[0].lastErr == nil {
+		t.Fatal("expected error to be stored")
+	}
+	d.applyDone(downloadDoneMsg{key: d.states[0].item.Key()})
+	if d.states[0].lastErr != nil {
+		t.Errorf("expected lastErr to be cleared on successful retry, got %v", d.states[0].lastErr)
+	}
+}
+
+func TestInspectSelectedSetsInspectMsg(t *testing.T) {
+	items := []model.MediaItem{
+		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100},
+	}
+	d := New(instantItems(items), nil, t.TempDir(), "test")
+	d.Update(scrapeResultMsg{items: items})
+
+	d.states[0].status = model.StatusFailed
+	d.states[0].lastErr = errors.New("connection refused")
+
+	d.inspectSelected()
+
+	if !strings.Contains(d.inspectMsg, "connection refused") {
+		t.Errorf("expected inspectMsg to contain error, got %q", d.inspectMsg)
+	}
+}
+
+func TestInspectSelectedOnlyShowsFailedItems(t *testing.T) {
+	items := []model.MediaItem{
+		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100},
+	}
+	d := New(instantItems(items), nil, t.TempDir(), "test")
+	d.Update(scrapeResultMsg{items: items})
+
+	d.states[0].status = model.StatusCompleted
+
+	d.inspectSelected()
+
+	if d.inspectMsg != "" {
+		t.Errorf("expected empty inspectMsg for completed item, got %q", d.inspectMsg)
+	}
+}
+
+func TestRetrySelectedResetsState(t *testing.T) {
+	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 10)}
+	items := []model.MediaItem{
+		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100},
+	}
+	d := New(instantItems(items), fd, t.TempDir(), "test")
+	d.Update(scrapeResultMsg{items: items})
+
+	wantErr := errors.New("transient error")
+	d.applyDone(downloadDoneMsg{key: d.states[0].item.Key(), err: wantErr})
+	if d.states[0].status != model.StatusFailed {
+		t.Fatal("expected StatusFailed before retry")
+	}
+
+	cmd := d.retrySelected()
+	if cmd == nil {
+		t.Fatal("expected retry to return a download command")
+	}
+	cmd() // execute the download
+
+	if d.states[0].status != model.StatusPending {
+		t.Errorf("expected StatusPending after retry, got %v", d.states[0].status)
+	}
+	if d.states[0].lastErr != nil {
+		t.Errorf("expected lastErr to be cleared on retry, got %v", d.states[0].lastErr)
+	}
+	if d.states[0].bytes != 0 {
+		t.Errorf("expected bytes reset to 0, got %d", d.states[0].bytes)
+	}
+}
+
+func TestRetrySelectedReturnsNilForNonFailed(t *testing.T) {
+	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 10)}
+	items := []model.MediaItem{
+		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100},
+	}
+	d := New(instantItems(items), fd, t.TempDir(), "test")
+	d.Update(scrapeResultMsg{items: items})
+
+	d.states[0].status = model.StatusCompleted
+
+	if cmd := d.retrySelected(); cmd != nil {
+		t.Errorf("expected nil command for completed item")
+	}
+}
+
+func TestRetrySelectedReturnsNilForHeader(t *testing.T) {
+	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 10)}
+	d := New(instantItems(nil), fd, t.TempDir(), "test")
+	d.states = []itemState{{isHeader: true}}
+
+	if cmd := d.retrySelected(); cmd != nil {
+		t.Errorf("expected nil command for header row")
+	}
+}
+
+func TestEnterKeyInspectClearsOnNavigation(t *testing.T) {
+	items := []model.MediaItem{
+		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100},
+	}
+	d := New(instantItems(items), nil, t.TempDir(), "test")
+	d.Update(scrapeResultMsg{items: items})
+
+	d.states[0].status = model.StatusFailed
+	d.states[0].lastErr = errors.New("boom")
+	d.inspectSelected()
+	if d.inspectMsg == "" {
+		t.Fatal("expected inspectMsg to be set")
+	}
+
+	d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+
+	if d.inspectMsg != "" {
+		t.Errorf("expected inspectMsg to be cleared on navigation, got %q", d.inspectMsg)
+	}
+}
+
+func TestStaleFailedProgressDoesNotCorruptRetry(t *testing.T) {
+	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 10)}
+	items := []model.MediaItem{
+		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100},
+	}
+	d := New(instantItems(items), fd, t.TempDir(), "test")
+	d.Update(scrapeResultMsg{items: items})
+
+	// First attempt fails — applyDone stores the error.
+	wantErr := errors.New("transient")
+	d.applyDone(downloadDoneMsg{key: d.states[0].item.Key(), err: wantErr})
+	if d.states[0].status != model.StatusFailed {
+		t.Fatal("expected StatusFailed after applyDone")
+	}
+
+	// User retries — state resets to Pending.
+	_ = d.retrySelected()
+	if d.states[0].status != model.StatusPending {
+		t.Fatalf("expected StatusPending after retry, got %v", d.states[0].status)
+	}
+
+	// A stale StatusFailed progress event from the first attempt arrives.
+	d.applyProgress(model.ProgressEvent{
+		Item:   d.states[0].item,
+		Status: model.StatusFailed,
+		Bytes:  0,
+		Total:  100,
+	})
+
+	// The retried item must not be corrupted back to Failed.
+	if d.states[0].status == model.StatusFailed {
+		t.Fatal("stale StatusFailed progress event corrupted a retried item")
+	}
+}
