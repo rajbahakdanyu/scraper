@@ -26,6 +26,8 @@ import (
 	"github.com/rajbahakdanyu/scraper/internal/ui/dashboard"
 )
 
+var version = "dev"
+
 // globalOptions holds flags defined on the root command that are inherited
 // by all subcommands via PersistentFlags.
 type globalOptions struct {
@@ -228,6 +230,35 @@ func NewRootCmd() *cobra.Command {
 		newBunkerCmd(),
 		newGoonBoxCmd(),
 		newFilesterCmd(),
+		&cobra.Command{
+			Use:   "version",
+			Short: "Print the version",
+			Run: func(cmd *cobra.Command, args []string) {
+				fmt.Println("scraper", version)
+			},
+		},
+		&cobra.Command{
+			Use:   "completion [bash|zsh|fish|powershell]",
+			Short: "Generate shell completion script",
+			Long: `To load completions:
+
+Bash:  source <(scraper completion bash)
+Zsh:   source <(scraper completion zsh)
+Fish:  scraper completion fish | source`,
+			Args: cobra.ExactArgs(1),
+			Run: func(cmd *cobra.Command, args []string) {
+				switch args[0] {
+				case "bash":
+					cmd.Root().GenBashCompletion(os.Stdout)
+				case "zsh":
+					cmd.Root().GenZshCompletion(os.Stdout)
+				case "fish":
+					cmd.Root().GenFishCompletion(os.Stdout, true)
+				case "powershell":
+					cmd.Root().GenPowerShellCompletion(os.Stdout)
+				}
+			},
+		},
 	)
 
 	return root

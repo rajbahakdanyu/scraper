@@ -532,6 +532,19 @@ func TestNewRootCmdHasProxyFlag(t *testing.T) {
 	}
 }
 
+func TestNewRootCmdRegistersVersionAndCompletion(t *testing.T) {
+	root := NewRootCmd()
+	names := map[string]bool{}
+	for _, c := range root.Commands() {
+		names[c.Name()] = true
+	}
+	for _, name := range []string{"version", "completion"} {
+		if !names[name] {
+			t.Errorf("expected %q subcommand", name)
+		}
+	}
+}
+
 func TestLoadGlobalConfigProxyOverride(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	content := "proxy: http://config-proxy:3128\n"
