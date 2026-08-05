@@ -25,8 +25,9 @@ type Scraper struct {
 }
 
 func NewGoonBoxScraper() *Scraper {
+	client, _ := netutil.NewPublicClient(30 * time.Second)
 	return &Scraper{
-		client:    netutil.NewPublicClient(30 * time.Second),
+		client:    client,
 		userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
 		baseURL:   apiBase,
 	}

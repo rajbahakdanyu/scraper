@@ -29,7 +29,10 @@ func TestPolicyAllowsExplicitTestHost(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client := NewPublicClient(time.Second, ts.URL)
+	client, err := NewPublicClient(time.Second, ts.URL)
+	if err != nil {
+		t.Fatalf("NewPublicClient failed: %v", err)
+	}
 	resp, err := client.Get(ts.URL)
 	if err != nil {
 		t.Fatalf("explicitly allowed test host failed: %v", err)
@@ -45,7 +48,10 @@ func TestPublicClientBlocksPrivateRedirect(t *testing.T) {
 	}))
 	defer redirector.Close()
 
-	client := NewPublicClient(time.Second, redirector.URL)
+	client, err := NewPublicClient(time.Second, redirector.URL)
+	if err != nil {
+		t.Fatalf("NewPublicClient failed: %v", err)
+	}
 	if _, err := client.Get(redirector.URL); err == nil {
 		t.Fatal("private redirect was not blocked")
 	}
@@ -58,7 +64,11 @@ func TestWithUserAgentAddsConfiguredHeader(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client := WithUserAgent(NewPublicClient(time.Second, ts.URL), "Custom/1.0")
+	client, err := NewPublicClient(time.Second, ts.URL)
+	if err != nil {
+		t.Fatalf("NewPublicClient failed: %v", err)
+	}
+	client = WithUserAgent(client, "Custom/1.0")
 	resp, err := client.Get(ts.URL)
 	if err != nil {
 		t.Fatal(err)
@@ -80,7 +90,10 @@ func TestStreamingClientTimesOutStalledBodyRead(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client := NewPublicStreamingClient(50*time.Millisecond, ts.URL)
+	client, err := NewPublicStreamingClient(50*time.Millisecond, ts.URL)
+	if err != nil {
+		t.Fatalf("NewPublicStreamingClient failed: %v", err)
+	}
 	resp, err := client.Get(ts.URL)
 	if err != nil {
 		t.Fatal(err)
@@ -97,7 +110,10 @@ func TestStreamingClientTimesOutStalledBodyRead(t *testing.T) {
 
 func TestNewPublicClientWithProxySetsTransportProxy(t *testing.T) {
 	proxyURL := "http://proxy.example.com:8080"
-	client := NewPublicClientWithProxy(30*time.Second, proxyURL)
+	client, err := NewPublicClientWithProxy(30*time.Second, proxyURL)
+	if err != nil {
+		t.Fatalf("NewPublicClientWithProxy failed: %v", err)
+	}
 	transport := client.Transport.(*http.Transport)
 	req, _ := http.NewRequest("GET", "http://example.com", nil)
 	proxy, err := transport.Proxy(req)
@@ -113,20 +129,19 @@ func TestNewPublicClientWithProxySetsTransportProxy(t *testing.T) {
 }
 
 func TestNewPublicClientWithProxyEmptyURL(t *testing.T) {
-	client := NewPublicClientWithProxy(30*time.Second, "")
+	client, err := NewPublicClientWithProxy(30*time.Second, "")
+	if err != nil {
+		t.Fatalf("NewPublicClientWithProxy failed: %v", err)
+	}
 	transport := client.Transport.(*http.Transport)
 	if transport.Proxy != nil {
 		t.Error("expected no proxy for empty URL")
 	}
 }
 
-func TestNewPublicClientWithProxyInvalidURLFailsOnRequest(t *testing.T) {
-	client := NewPublicClientWithProxy(30*time.Second, "://invalid proxy url")
-	if _, ok := client.Transport.(*errorTransport); !ok {
-		t.Fatalf("expected errorTransport, got %T", client.Transport)
-	}
-	req, _ := http.NewRequest("GET", "http://example.com", nil)
-	if _, err := client.Transport.RoundTrip(req); err == nil {
-		t.Fatal("expected request to fail with invalid proxy URL")
+func TestNewPublicClientWithProxyInvalidURLFailsFast(t *testing.T) {
+	_, err := NewPublicClientWithProxy(30*time.Second, "://invalid proxy url")
+	if err == nil {
+		t.Fatal("expected error for invalid proxy URL")
 	}
 }

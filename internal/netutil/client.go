@@ -90,19 +90,19 @@ func (p *Policy) dialContext(dialer *net.Dialer, readTimeout time.Duration) func
 	}
 }
 
-func NewPublicClient(timeout time.Duration, allowedPrivateURLs ...string) *http.Client {
+func NewPublicClient(timeout time.Duration, allowedPrivateURLs ...string) (*http.Client, error) {
 	return newPublicClient(timeout, timeout, timeout, "", allowedPrivateURLs...)
 }
 
-func NewPublicStreamingClient(responseHeaderTimeout time.Duration, allowedPrivateURLs ...string) *http.Client {
+func NewPublicStreamingClient(responseHeaderTimeout time.Duration, allowedPrivateURLs ...string) (*http.Client, error) {
 	return newPublicClient(0, responseHeaderTimeout, responseHeaderTimeout, "", allowedPrivateURLs...)
 }
 
-func NewPublicClientWithProxy(timeout time.Duration, proxyURL string) *http.Client {
+func NewPublicClientWithProxy(timeout time.Duration, proxyURL string) (*http.Client, error) {
 	return newPublicClient(timeout, timeout, timeout, proxyURL)
 }
 
-func NewPublicStreamingClientWithProxy(responseHeaderTimeout time.Duration, proxyURL string) *http.Client {
+func NewPublicStreamingClientWithProxy(responseHeaderTimeout time.Duration, proxyURL string) (*http.Client, error) {
 	return newPublicClient(0, responseHeaderTimeout, responseHeaderTimeout, proxyURL)
 }
 
@@ -129,14 +129,14 @@ func (t *userAgentTransport) RoundTrip(req *http.Request) (*http.Response, error
 	return t.base.RoundTrip(clone)
 }
 
-func newPublicClient(timeout, responseHeaderTimeout, readTimeout time.Duration, proxyURL string, allowedPrivateURLs ...string) *http.Client {
+func newPublicClient(timeout, responseHeaderTimeout, readTimeout time.Duration, proxyURL string, allowedPrivateURLs ...string) (*http.Client, error) {
 	policy := NewPolicy(allowedPrivateURLs...)
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
 	if proxyURL != "" {
 		u, err := url.Parse(proxyURL)
 		if err != nil {
-			return &http.Client{Transport: &errorTransport{err: fmt.Errorf("invalid proxy URL %q: %w", proxyURL, err)}}
+			return nil, fmt.Errorf("invalid proxy URL %q: %w", proxyURL, err)
 		}
 		transport.Proxy = http.ProxyURL(u)
 	}
@@ -152,7 +152,7 @@ func newPublicClient(timeout, responseHeaderTimeout, readTimeout time.Duration, 
 			}
 			return policy.ValidateURL(req.URL.String())
 		},
-	}
+	}, nil
 }
 
 type readTimeoutConn struct {
@@ -181,10 +181,3 @@ func isPublicIP(ip net.IP) bool {
 		!ip.IsLinkLocalUnicast() && !ip.IsLinkLocalMulticast() && !ip.IsUnspecified()
 }
 
-type errorTransport struct {
-	err error
-}
-
-func (t *errorTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	return nil, t.err
-}

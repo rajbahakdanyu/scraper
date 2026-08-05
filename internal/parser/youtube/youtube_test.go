@@ -212,14 +212,14 @@ func TestEstimatedSizeSumsVideoAndAudio(t *testing.T) {
 }
 
 func TestNewDownloaderEnforcesMinConcurrency(t *testing.T) {
-	d := NewDownloaderWithConfig(NewYouTubeScraper(), DownloaderConfig{})
+	d, _ := NewDownloaderWithConfig(NewYouTubeScraper(), DownloaderConfig{})
 	if cap(d.sem) != 1 {
 		t.Errorf("expected a concurrency floor of 1, got %d", cap(d.sem))
 	}
 }
 
 func TestNewDownloaderWithConfigAppliesTransferPolicy(t *testing.T) {
-	d := NewDownloaderWithConfig(NewYouTubeScraper(), DownloaderConfig{
+	d, _ := NewDownloaderWithConfig(NewYouTubeScraper(), DownloaderConfig{
 		Concurrency:  3,
 		Timeout:      5 * time.Second,
 		UserAgent:    "Custom/1.0",
@@ -251,7 +251,7 @@ func TestCommitOutputIsAtomicAndWritesChecksum(t *testing.T) {
 }
 
 func TestDownloaderReturnsErrorForUnresolvableURL(t *testing.T) {
-	d := NewDownloaderWithConfig(NewYouTubeScraper(), DownloaderConfig{Concurrency: 1})
+	d, _ := NewDownloaderWithConfig(NewYouTubeScraper(), DownloaderConfig{Concurrency: 1})
 	item := model.MediaItem{URL: "not-a-youtube-url"}
 
 	if err := d.Download(item, t.TempDir()); err == nil {
@@ -260,7 +260,7 @@ func TestDownloaderReturnsErrorForUnresolvableURL(t *testing.T) {
 }
 
 func TestDownloaderCancelIsSafeForUnknownItem(t *testing.T) {
-	d := NewDownloaderWithConfig(NewYouTubeScraper(), DownloaderConfig{Concurrency: 1})
+	d, _ := NewDownloaderWithConfig(NewYouTubeScraper(), DownloaderConfig{Concurrency: 1})
 	// Must not panic even though nothing is downloading for this item.
 	d.Cancel(model.MediaItem{URL: "https://www.youtube.com/watch?v=xyz"})
 }
@@ -602,7 +602,7 @@ func TestParseThenDownloadFetchesVideoInfoOnce(t *testing.T) {
 	fake := startFakeYouTube(t, videoID, "Test Video", content)
 
 	scraper := NewYouTubeScraper()
-	d := NewDownloaderWithConfig(scraper, DownloaderConfig{Concurrency: 1})
+	d, _ := NewDownloaderWithConfig(scraper, DownloaderConfig{Concurrency: 1})
 	fake.wire(scraper)
 
 	items, err := scraper.Parse("https://www.youtube.com/watch?v=" + videoID)
@@ -632,7 +632,7 @@ func TestDownloadWithoutParseFetchesVideoInfoOnce(t *testing.T) {
 	fake := startFakeYouTube(t, videoID, "Test Video", content)
 
 	scraper := NewYouTubeScraper()
-	d := NewDownloaderWithConfig(scraper, DownloaderConfig{Concurrency: 1})
+	d, _ := NewDownloaderWithConfig(scraper, DownloaderConfig{Concurrency: 1})
 	fake.wire(scraper)
 
 	dest := t.TempDir()
@@ -654,7 +654,7 @@ func TestDownloadNoFormatsFailsAfterOneAttempt(t *testing.T) {
 	fake := startFakeYouTube(t, videoID, "No Formats", "fake content")
 
 	scraper := NewYouTubeScraper()
-	d := NewDownloaderWithConfig(scraper, DownloaderConfig{Concurrency: 1})
+	d, _ := NewDownloaderWithConfig(scraper, DownloaderConfig{Concurrency: 1})
 	fake.wire(scraper)
 	// Seed a format-less video as if Parse had fetched it. Any retry
 	// attempt after the first would re-fetch the metadata and show up
@@ -693,7 +693,7 @@ func TestDownloaderShutdownCancelsInFlightDownload(t *testing.T) {
 	fake.blockStream = true
 
 	scraper := NewYouTubeScraper()
-	d := NewDownloaderWithConfig(scraper, DownloaderConfig{Concurrency: 1})
+	d, _ := NewDownloaderWithConfig(scraper, DownloaderConfig{Concurrency: 1})
 	fake.wire(scraper)
 
 	item := model.MediaItem{URL: videoWatchURL(videoID), Title: "Slow Video", Type: model.MediaTypeVideo}
@@ -730,7 +730,7 @@ func TestDownloaderShutdownCancelsInFlightDownload(t *testing.T) {
 }
 
 func TestDownloaderFailsFastAfterShutdown(t *testing.T) {
-	d := NewDownloaderWithConfig(NewYouTubeScraper(), DownloaderConfig{Concurrency: 1})
+	d, _ := NewDownloaderWithConfig(NewYouTubeScraper(), DownloaderConfig{Concurrency: 1})
 	d.Shutdown()
 
 	// The channel closes asynchronously; the fail-fast path must never

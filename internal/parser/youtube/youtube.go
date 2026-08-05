@@ -36,8 +36,9 @@ type Scraper struct {
 // NewYouTubeScraper creates a YouTube scraper using the kkdai/youtube library
 // for real stream URL extraction and downloads.
 func NewYouTubeScraper() *Scraper {
+	client, _ := netutil.NewPublicClient(defaultReadTimeout)
 	return &Scraper{
-		video:  &ytdl.Client{HTTPClient: netutil.NewPublicClient(defaultReadTimeout)},
+		video:  &ytdl.Client{HTTPClient: client},
 		parsed: make(map[string]*ytdl.Video),
 	}
 }
@@ -699,7 +700,7 @@ type Downloader struct {
 	shuttingDown bool
 }
 
-func NewDownloaderWithConfig(scraper *Scraper, config DownloaderConfig) *Downloader {
+func NewDownloaderWithConfig(scraper *Scraper, config DownloaderConfig) (*Downloader, error) {
 	if config.Concurrency < 1 {
 		config.Concurrency = 1
 	}
@@ -710,9 +711,14 @@ func NewDownloaderWithConfig(scraper *Scraper, config DownloaderConfig) *Downloa
 		config.UserAgent = defaultYouTubeAgent
 	}
 	if config.ProxyURL != "" {
-		scraper.video.HTTPClient = netutil.WithUserAgent(netutil.NewPublicStreamingClientWithProxy(config.Timeout, config.ProxyURL), config.UserAgent)
+		httpClient, err := netutil.NewPublicStreamingClientWithProxy(config.Timeout, config.ProxyURL)
+		if err != nil {
+			return nil, err
+		}
+		scraper.video.HTTPClient = netutil.WithUserAgent(httpClient, config.UserAgent)
 	} else {
-		scraper.video.HTTPClient = netutil.WithUserAgent(netutil.NewPublicStreamingClient(config.Timeout), config.UserAgent)
+		httpClient, _ := netutil.NewPublicStreamingClient(config.Timeout)
+		scraper.video.HTTPClient = netutil.WithUserAgent(httpClient, config.UserAgent)
 	}
 
 	var limiter *rate.Limiter
@@ -729,7 +735,7 @@ func NewDownloaderWithConfig(scraper *Scraper, config DownloaderConfig) *Downloa
 		paths:     fileutil.NewPathAllocator(),
 		limiter:   limiter,
 		skipSum:   config.SkipChecksum,
-	}
+	}, nil
 }
 
 // Compile-time check that Downloader satisfies the dashboard's Downloader

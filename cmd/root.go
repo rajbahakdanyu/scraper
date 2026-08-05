@@ -386,7 +386,7 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 		if !ok {
 			return fmt.Errorf("youtube: unexpected scraper type %T", scraper)
 		}
-		dl = youtube.NewDownloaderWithConfig(ytScraper, youtube.DownloaderConfig{
+		ytDl, err := youtube.NewDownloaderWithConfig(ytScraper, youtube.DownloaderConfig{
 			Concurrency:  cfg.ConcurrentDownloads,
 			Timeout:      cfg.Timeout,
 			UserAgent:    cfg.UserAgent,
@@ -394,13 +394,20 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 			SkipChecksum: cfg.SkipChecksums,
 			ProxyURL:     cfg.Proxy,
 		})
+		if err != nil {
+			return fmt.Errorf("youtube downloader: %w", err)
+		}
+		dl = ytDl
 	} else {
-		genericDl := downloader.NewDownloaderWithConfig(
+		genericDl, err := downloader.NewDownloaderWithConfig(
 			cfg.ConcurrentDownloads,
 			cfg.Timeout,
 			cfg.UserAgent,
 			cfg.Proxy,
 		)
+		if err != nil {
+			return fmt.Errorf("downloader: %w", err)
+		}
 		genericDl.SetRateLimit(rateLimitBytesPerSec)
 		genericDl.SetSkipChecksums(cfg.SkipChecksums)
 		dl = genericDl
@@ -572,7 +579,7 @@ func runBatch(opts globalOptions, urls []string) error {
 	dashAlbums := make([]dashboard.DashAlbumURL, 0, len(urls))
 	if hasYouTube {
 		scraper := youtube.NewYouTubeScraper()
-		dl = youtube.NewDownloaderWithConfig(scraper, youtube.DownloaderConfig{
+		ytDl, err := youtube.NewDownloaderWithConfig(scraper, youtube.DownloaderConfig{
 			Concurrency:  cfg.ConcurrentDownloads,
 			Timeout:      cfg.Timeout,
 			UserAgent:    cfg.UserAgent,
@@ -580,6 +587,10 @@ func runBatch(opts globalOptions, urls []string) error {
 			SkipChecksum: cfg.SkipChecksums,
 			ProxyURL:     cfg.Proxy,
 		})
+		if err != nil {
+			return fmt.Errorf("youtube downloader: %w", err)
+		}
+		dl = ytDl
 		for _, u := range urls {
 			slug := albumSlugFor("youtube", u)
 			dest, err := fileutil.SafeJoin(cfg.OutputDir, slug)
@@ -595,12 +606,15 @@ func runBatch(opts globalOptions, urls []string) error {
 			})
 		}
 	} else {
-		genericDl := downloader.NewDownloaderWithConfig(
+		genericDl, err := downloader.NewDownloaderWithConfig(
 			cfg.ConcurrentDownloads,
 			cfg.Timeout,
 			cfg.UserAgent,
 			cfg.Proxy,
 		)
+		if err != nil {
+			return fmt.Errorf("downloader: %w", err)
+		}
 		genericDl.SetRateLimit(rateLimitBytesPerSec)
 		genericDl.SetSkipChecksums(cfg.SkipChecksums)
 		dl = genericDl

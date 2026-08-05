@@ -58,7 +58,7 @@ type Downloader struct {
 }
 
 // NewDownloaderWithConfig creates a Downloader using settings from a config.
-func NewDownloaderWithConfig(concurrency int, timeout time.Duration, userAgent, proxyURL string) *Downloader {
+func NewDownloaderWithConfig(concurrency int, timeout time.Duration, userAgent, proxyURL string) (*Downloader, error) {
 	if concurrency < 1 {
 		concurrency = 1
 	}
@@ -69,10 +69,14 @@ func NewDownloaderWithConfig(concurrency int, timeout time.Duration, userAgent, 
 		userAgent = "Scraper/1.0"
 	}
 	var client *http.Client
+	var err error
 	if proxyURL != "" {
-		client = netutil.NewPublicStreamingClientWithProxy(timeout, proxyURL)
+		client, err = netutil.NewPublicStreamingClientWithProxy(timeout, proxyURL)
 	} else {
-		client = netutil.NewPublicStreamingClient(timeout)
+		client, err = netutil.NewPublicStreamingClient(timeout)
+	}
+	if err != nil {
+		return nil, err
 	}
 	return &Downloader{
 		client:    client,
@@ -83,7 +87,7 @@ func NewDownloaderWithConfig(concurrency int, timeout time.Duration, userAgent, 
 		cancelled: make(map[string]struct{}),
 		sem:       make(chan struct{}, concurrency),
 		paths:     fileutil.NewPathAllocator(),
-	}
+	}, nil
 }
 
 func (d *Downloader) Prepare(item model.MediaItem) {
