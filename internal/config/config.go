@@ -26,6 +26,9 @@ type Config struct {
 	// SkipChecksums disables writing/verifying the .sha256 sidecar file
 	// that normally accompanies each completed download.
 	SkipChecksums bool `yaml:"skip_checksums"`
+	// Proxy is the HTTP/S proxy URL for all outbound requests.
+	// Empty means no proxy (default).
+	Proxy string `yaml:"proxy"`
 }
 
 func Load(path string) (*Config, error) {

@@ -157,3 +157,28 @@ func TestLoadDefaultsNonpositiveConcurrency(t *testing.T) {
 		t.Fatalf("ConcurrentDownloads = %d", cfg.ConcurrentDownloads)
 	}
 }
+
+func TestConfigProxyRoundTrip(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	content := "proxy: http://proxy.example.com:8080\n"
+	if err := os.WriteFile(configPath, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Proxy != "http://proxy.example.com:8080" {
+		t.Errorf("Proxy = %q, want http://proxy.example.com:8080", cfg.Proxy)
+	}
+}
+
+func TestConfigProxyEmptyDefault(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Proxy != "" {
+		t.Errorf("Proxy default should be empty, got %q", cfg.Proxy)
+	}
+}
