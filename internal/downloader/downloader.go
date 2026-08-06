@@ -37,11 +37,21 @@ const (
 // Sleeper is a test-injectable alternative to time.Sleep.
 type Sleeper interface {
 	Sleep(d time.Duration)
+	SleepCtx(ctx context.Context, d time.Duration) error
 }
 
 type realSleeper struct{}
 
 func (realSleeper) Sleep(d time.Duration) { time.Sleep(d) }
+
+func (realSleeper) SleepCtx(ctx context.Context, d time.Duration) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(d):
+		return nil
+	}
+}
 
 // Downloader manages concurrent media downloads with progress tracking,
 // cancellation, retry, and atomic file writes.
@@ -253,7 +263,9 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 				return fmt.Errorf("download cancelled: %s", item.URL)
 			default:
 			}
-			d.sleeper.Sleep(netutil.BackoffWithJitter(retryBaseDelay, attempt))
+			if err := d.sleeper.SleepCtx(ctx, netutil.BackoffWithJitter(retryBaseDelay, attempt)); err != nil {
+				return lastErr
+			}
 		}
 
 		if item.Resolve != nil && resolvedURL == "" {

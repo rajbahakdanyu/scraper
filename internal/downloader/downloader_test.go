@@ -23,7 +23,33 @@ import (
 
 type noopSleeper struct{}
 
-func (noopSleeper) Sleep(time.Duration) {}
+func (noopSleeper) Sleep(time.Duration)                           {}
+func (noopSleeper) SleepCtx(context.Context, time.Duration) error { return nil }
+
+type blockingSleeper struct {
+	started chan struct{}
+}
+
+func (s blockingSleeper) Sleep(time.Duration) {
+	select {
+	case s.started <- struct{}{}:
+	default:
+	}
+	select {}
+}
+
+func (s blockingSleeper) SleepCtx(ctx context.Context, _ time.Duration) error {
+	select {
+	case s.started <- struct{}{}:
+	default:
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(time.Hour):
+		return nil
+	}
+}
 
 func newTestDownloader(concurrency int, timeout time.Duration, userAgent string) *Downloader {
 	dl, _ := NewDownloaderWithConfig(concurrency, timeout, userAgent, "", nil)
@@ -87,6 +113,38 @@ func TestDownloadRetry(t *testing.T) {
 	}
 	if atomic.LoadInt32(&attempts) != 3 {
 		t.Errorf("expected 3 attempts, got %d", atomic.LoadInt32(&attempts))
+	}
+}
+
+func TestDownloadCancelDuringRetryBackoff(t *testing.T) {
+	requestStarted := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case requestStarted <- struct{}{}:
+		default:
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer ts.Close()
+
+	dl := newTestDownloader(1, 0, "")
+	sleeper := blockingSleeper{started: make(chan struct{})}
+	dl.SetSleeper(sleeper)
+	item := model.MediaItem{URL: ts.URL, Title: "cancel_backoff"}
+	done := make(chan error, 1)
+	go func() { done <- dl.Download(item, t.TempDir()) }()
+
+	<-requestStarted
+	<-sleeper.started
+	dl.Cancel(item)
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatalf("expected cancellation error, got %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancellation did not interrupt retry backoff")
 	}
 }
 
