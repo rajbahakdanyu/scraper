@@ -390,6 +390,10 @@ func (s *Scraper) resolveFileOnce(ctx context.Context, slug, knownName string) (
 			}
 			return model.MediaItem{}, statusMessage
 		}
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			return model.MediaItem{}, fmt.Errorf("filester: download token request for %s: %w", slug, err)
+		}
 		return model.MediaItem{}, model.NewNonRetryable(err)
 	}
 	if tok.File == "" || tok.Token == "" {
