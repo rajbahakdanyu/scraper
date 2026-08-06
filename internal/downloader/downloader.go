@@ -17,7 +17,6 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/sys/unix"
 	"golang.org/x/time/rate"
 
 	"github.com/rajbahakdanyu/scraper/internal/config"
@@ -362,14 +361,13 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, res
 		flags |= os.O_TRUNC
 	}
 	// #nosec G304 -- tempPath is allocated beneath the configured output directory from a sanitized title.
-	fd, err := unix.Open(tempPath, flags|unix.O_NOFOLLOW, 0644)
+	out, err := fileutil.OpenFileNoFollow(tempPath, flags, 0644)
 	if err != nil {
-		if errors.Is(err, unix.ELOOP) {
+		if fileutil.IsSymlinkError(err) {
 			return "", fmt.Errorf("refusing to follow symlink for .part file %s: %w", tempPath, err)
 		}
 		return "", err
 	}
-	out := os.NewFile(uintptr(fd), tempPath)
 	if existing == 0 {
 		resume = metadataFromResponse(resolvedURL, resp, item.Resolve == nil)
 		if resume.validator() == "" {
