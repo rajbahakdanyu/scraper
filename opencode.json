@@ -1,14 +1,27 @@
 {
   "$schema": "https://opencode.ai/config.json",
+
   "plugin": [
     "superpowers@git+https://github.com/obra/superpowers.git"
   ],
+
   "model": "opencode-go/deepseek-v4-pro",
   "small_model": "opencode-go/deepseek-v4-flash",
+
+  "autoupdate": true,
+
+  "permission": {
+    "bash": {
+      "*": "allow",
+      "rm -rf *": "deny",
+      "git push --force*": "deny",
+      "git reset --hard*": "deny"
+    }
+  },
+
   "agent": {
     "build": {
       "mode": "primary",
-      "model": "opencode-go/deepseek-v4-pro",
       "description": "Default primary agent for full development, file editing, and task execution."
     },
     "plan": {
@@ -18,7 +31,7 @@
     },
     "general": {
       "mode": "subagent",
-      "model": "opencode-go/gpt-5.6-luna",
+      "model": "opencode-go/glm-5.2",
       "description": "General-purpose subagent for background execution passes, multi-step subtasks, and SDD task reviews."
     },
     "explore": {
@@ -27,7 +40,8 @@
       "description": "Fast, read-only codebase search, file path inspection, and string matching.",
       "permission": {
         "edit": "deny",
-        "bash": "deny"
+        "bash": "deny",
+        "webfetch": "deny"
       }
     }
   }
