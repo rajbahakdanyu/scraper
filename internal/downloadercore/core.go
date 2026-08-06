@@ -11,6 +11,11 @@ import (
 	"github.com/rajbahakdanyu/scraper/internal/model"
 )
 
+const (
+	ProgressBufSize   = 4096
+	MinRateLimitBurst = 32 * 1024
+)
+
 type downloaderCore struct {
 	mu           sync.Mutex
 	wg           sync.WaitGroup

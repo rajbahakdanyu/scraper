@@ -14,6 +14,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const DefaultUserAgent = "Scraper/1.0"
+
 type Config struct {
 	OutputDir           string        `yaml:"output_dir"`
 	ConcurrentDownloads int           `yaml:"concurrent_downloads"`
@@ -138,7 +140,7 @@ func defaultConfig() *Config {
 		OutputDir:           defaultOutputDir(),
 		ConcurrentDownloads: 5,
 		Timeout:             30 * time.Second,
-		UserAgent:           "Scraper/1.0",
+		UserAgent:           DefaultUserAgent,
 		RateLimit:           "",
 		SkipChecksums:       false,
 		DiskCheck:           true,

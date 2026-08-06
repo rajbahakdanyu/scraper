@@ -2,6 +2,7 @@ package netutil
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -87,6 +88,76 @@ func TestGetJSONRejectsInvalidJSON(t *testing.T) {
 	var result struct{}
 	if err := GetJSON(context.Background(), ts.Client(), ts.URL, "", &result); err == nil {
 		t.Fatal("GetJSON accepted invalid JSON")
+	}
+}
+
+func TestPostJSONSendsHeadersAndDecodesResponse(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %s, want POST", r.Method)
+		}
+		if got := r.Header.Get("Content-Type"); got != "application/json" {
+			t.Errorf("Content-Type = %q, want application/json", got)
+		}
+		body, _ := io.ReadAll(r.Body)
+		if got := string(body); got != `{"id":"test"}` {
+			t.Errorf("body = %q, want JSON body", got)
+		}
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	defer ts.Close()
+
+	var result struct {
+		OK bool `json:"ok"`
+	}
+	err := PostJSON(context.Background(), ts.Client(), ts.URL,
+		map[string]string{"Content-Type": "application/json"},
+		[]byte(`{"id":"test"}`), &result)
+	if err != nil {
+		t.Fatalf("PostJSON failed: %v", err)
+	}
+	if !result.OK {
+		t.Fatal("response was not decoded")
+	}
+}
+
+func TestPostJSONRejectsUnexpectedStatus(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	var result struct{}
+	err := PostJSON(context.Background(), ts.Client(), ts.URL, nil, nil, &result)
+	if err == nil {
+		t.Fatal("PostJSON accepted non-2xx response")
+	}
+	var statusErr *HTTPStatusError
+	if !errors.As(err, &statusErr) || statusErr.StatusCode != http.StatusNotFound {
+		t.Fatalf("error = %v, want HTTPStatusError 404", err)
+	}
+}
+
+func TestGetDocSetsUserAgentAndLimitsBody(t *testing.T) {
+	const userAgent = "doc-test/1.0"
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("User-Agent"); got != userAgent {
+			t.Errorf("User-Agent = %q, want %q", got, userAgent)
+		}
+		_, _ = io.Copy(w, strings.NewReader(strings.Repeat("x", 32<<20+1)))
+	}))
+	defer ts.Close()
+
+	reader, err := GetDoc(context.Background(), ts.Client(), ts.URL, userAgent)
+	if err != nil {
+		t.Fatalf("GetDoc failed: %v", err)
+	}
+	body, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("read document: %v", err)
+	}
+	if len(body) != 32<<20 {
+		t.Fatalf("body length = %d, want %d", len(body), 32<<20)
 	}
 }
 

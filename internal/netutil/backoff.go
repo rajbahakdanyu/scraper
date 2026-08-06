@@ -1,9 +1,65 @@
 package netutil
 
 import (
+	"context"
+	"errors"
 	"math/rand"
 	"time"
+
+	"github.com/rajbahakdanyu/scraper/internal/model"
 )
+
+const (
+	MaxRetries     = 3
+	RetryBaseDelay = 500 * time.Millisecond
+)
+
+type Sleeper interface {
+	SleepCtx(context.Context, time.Duration) error
+}
+
+type RealSleeper struct{}
+
+func (RealSleeper) SleepCtx(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func Retry(ctx context.Context, attempts int, baseDelay time.Duration, sleeper Sleeper, fn func() error) error {
+	if attempts <= 0 {
+		return nil
+	}
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		if attempt > 0 {
+			if err := sleeper.SleepCtx(ctx, BackoffWithJitter(baseDelay, attempt-1)); err != nil {
+				return err
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		lastErr = fn()
+		if lastErr == nil || model.IsNonRetryable(lastErr) {
+			return lastErr
+		}
+		if errors.Is(lastErr, context.Canceled) || errors.Is(lastErr, context.DeadlineExceeded) {
+			return lastErr
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return lastErr
+}
 
 func BackoffWithJitter(base time.Duration, attempt int) time.Duration {
 	d := base << uint(attempt)

@@ -2,12 +2,10 @@
 package filester
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math/rand"
 	"net/http"
 	"net/url"
@@ -314,25 +312,22 @@ func (s *Scraper) fetchFolderPage(ctx context.Context, id string, page int) (ent
 		return entries, pageTotal, nil
 	}
 
-	for attempt := 1; attempt < maxPageRetries; attempt++ {
-		if err := s.sleeper.SleepCtx(ctx, netutil.BackoffWithJitter(pageRetryBaseDelay, attempt-1)); err != nil {
-			return nil, pageTotal, err
-		}
-
+	err = netutil.Retry(ctx, maxPageRetries-1, pageRetryBaseDelay, s.sleeper, func() error {
 		doc, ferr := s.fetchDoc(ctx, pageURL)
 		if ferr != nil {
-			var nre *model.NonRetryableError
-			if errors.As(ferr, &nre) {
-				// A permanent error (e.g. the folder 404ing mid-scan)
-				// can never recover — stop retrying this page now
-				// instead of sleeping through the remaining attempts.
-				return nil, pageTotal, ferr
-			}
-			continue
+			return ferr
 		}
 		if entries = extractFileItems(doc); len(entries) > 0 {
-			return entries, pageTotal, nil
+			return nil
 		}
+		return fmt.Errorf("filester: page %d of folder %s returned no items", page, id)
+	})
+	if err == nil {
+		return entries, pageTotal, nil
+	}
+	var nre *model.NonRetryableError
+	if errors.As(err, &nre) {
+		return nil, pageTotal, err
 	}
 
 	return nil, pageTotal, fmt.Errorf("filester: page %d of folder %s returned no items after %d attempts", page, id, maxPageRetries)
@@ -377,32 +372,16 @@ func extractFileItems(doc *goquery.Document) []folderEntry {
 // invalid token response), which no amount of retrying can fix and so are
 // returned immediately.
 func (s *Scraper) resolveFile(ctx context.Context, slug, knownName string) (model.MediaItem, error) {
-	var lastErr error
-	for attempt := 1; attempt <= maxResolveRetries; attempt++ {
-		if attempt > 1 {
-			select {
-			case <-ctx.Done():
-				return model.MediaItem{}, ctx.Err()
-			default:
-			}
-			if err := s.sleeper.SleepCtx(ctx, netutil.BackoffWithJitter(resolveRetryBaseDelay, attempt-1)); err != nil {
-				return model.MediaItem{}, err
-			}
-		}
-		item, err := s.resolveFileOnce(ctx, slug, knownName)
-		if err == nil {
-			return item, nil
-		}
-		var nre *model.NonRetryableError
-		if errors.As(err, &nre) {
-			// Client errors (404, 403, ...) and token responses that
-			// fail to decode or validate will never succeed no matter
-			// how many times we retry — stop immediately.
-			return model.MediaItem{}, err
-		}
-		lastErr = err
+	var item model.MediaItem
+	err := netutil.Retry(ctx, maxResolveRetries, resolveRetryBaseDelay, s.sleeper, func() error {
+		var err error
+		item, err = s.resolveFileOnce(ctx, slug, knownName)
+		return err
+	})
+	if err != nil {
+		return model.MediaItem{}, err
 	}
-	return model.MediaItem{}, lastErr
+	return item, nil
 }
 
 // resolveFileOnce is a single attempt at the token exchange described on
@@ -413,34 +392,25 @@ func (s *Scraper) resolveFileOnce(ctx context.Context, slug, knownName string) (
 		return model.MediaItem{}, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", s.baseURL+"/v2/api/public/download", bytes.NewReader(body))
-	if err != nil {
-		return model.MediaItem{}, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", s.userAgent)
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return model.MediaItem{}, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		err := fmt.Errorf("filester: download token request failed (HTTP %d) for %s", resp.StatusCode, slug)
-		if !model.IsRetryableStatus(resp.StatusCode) {
-			return model.MediaItem{}, model.NewNonRetryable(err)
-		}
-		return model.MediaItem{}, err
-	}
-
 	var tok struct {
 		File   string `json:"file"`
 		Token  string `json:"token"`
 		Server string `json:"server"`
 		Name   string `json:"name"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&tok); err != nil {
+	err = netutil.PostJSON(ctx, s.client, s.baseURL+"/v2/api/public/download", map[string]string{
+		"Content-Type": "application/json",
+		"User-Agent":   s.userAgent,
+	}, body, &tok)
+	if err != nil {
+		var statusErr *netutil.HTTPStatusError
+		if errors.As(err, &statusErr) {
+			statusMessage := fmt.Errorf("filester: download token request failed (HTTP %d) for %s", statusErr.StatusCode, slug)
+			if !model.IsRetryableStatus(statusErr.StatusCode) {
+				return model.MediaItem{}, model.NewNonRetryable(statusMessage)
+			}
+			return model.MediaItem{}, statusMessage
+		}
 		return model.MediaItem{}, model.NewNonRetryable(err)
 	}
 	if tok.File == "" || tok.Token == "" {
@@ -501,25 +471,17 @@ func (s *Scraper) resolveFileOnce(ctx context.Context, slug, knownName string) (
 }
 
 func (s *Scraper) fetchDoc(ctx context.Context, pageURL string) (*goquery.Document, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", pageURL, nil)
+	reader, err := netutil.GetDoc(ctx, s.client, pageURL, s.userAgent)
 	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", s.userAgent)
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		err := fmt.Errorf("filester: HTTP %d for %s", resp.StatusCode, pageURL)
-		if !model.IsRetryableStatus(resp.StatusCode) {
-			return nil, model.NewNonRetryable(err)
+		var statusErr *netutil.HTTPStatusError
+		if errors.As(err, &statusErr) {
+			statusMessage := fmt.Errorf("filester: HTTP %d for %s", statusErr.StatusCode, pageURL)
+			if !model.IsRetryableStatus(statusErr.StatusCode) {
+				return nil, model.NewNonRetryable(statusMessage)
+			}
+			return nil, statusMessage
 		}
 		return nil, err
 	}
-
-	return goquery.NewDocumentFromReader(io.LimitReader(resp.Body, 32<<20))
+	return goquery.NewDocumentFromReader(reader)
 }

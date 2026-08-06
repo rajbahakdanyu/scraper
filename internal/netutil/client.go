@@ -1,6 +1,7 @@
 package netutil
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -43,6 +44,54 @@ func GetJSON(ctx context.Context, client *http.Client, url, userAgent string, ta
 		return fmt.Errorf("decode response: %w", err)
 	}
 	return nil
+}
+
+// PostJSON performs a POST request with the given headers, checks for a 2xx
+// response, and decodes the JSON body into target.
+func PostJSON(ctx context.Context, client *http.Client, url string, headers map[string]string, body []byte, target any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return &HTTPStatusError{StatusCode: resp.StatusCode, URL: url}
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 10<<20)).Decode(target); err != nil {
+		return fmt.Errorf("decode response: %w", err)
+	}
+	return nil
+}
+
+// GetDoc fetches a document and returns its body limited to 32 MiB.
+func GetDoc(ctx context.Context, client *http.Client, url, userAgent string) (io.Reader, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	if userAgent != "" {
+		req.Header.Set("User-Agent", userAgent)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil, &HTTPStatusError{StatusCode: resp.StatusCode, URL: url}
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+	return bytes.NewReader(body), nil
 }
 
 type Policy struct {

@@ -2,12 +2,10 @@
 package bunker
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"path"
@@ -237,33 +235,24 @@ func (s *Scraper) getSignedMediaURL(ctx context.Context, dlURL *url.URL, fileID,
 	if err != nil {
 		return "", err
 	}
-	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Referer", dlURL.String())
-	req.Header.Set("User-Agent", s.userAgent)
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		err := fmt.Errorf("bunker API returned HTTP %d", resp.StatusCode)
-		if !model.IsRetryableStatus(resp.StatusCode) {
-			return "", model.NewNonRetryable(err)
-		}
-		return "", err
-	}
-
 	var meta struct {
 		MediaFiles string `json:"mediafiles"`
 		Path       string `json:"path"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&meta); err != nil {
+	err = netutil.PostJSON(ctx, s.client, apiURL, map[string]string{
+		"Content-Type": "application/json",
+		"Referer":      dlURL.String(),
+		"User-Agent":   s.userAgent,
+	}, body, &meta)
+	if err != nil {
+		var statusErr *netutil.HTTPStatusError
+		if errors.As(err, &statusErr) {
+			statusErrMessage := fmt.Errorf("bunker API returned HTTP %d", statusErr.StatusCode)
+			if !model.IsRetryableStatus(statusErr.StatusCode) {
+				return "", model.NewNonRetryable(statusErrMessage)
+			}
+			return "", statusErrMessage
+		}
 		return "", err
 	}
 
@@ -319,23 +308,15 @@ func (s *Scraper) getSignedMediaURL(ctx context.Context, dlURL *url.URL, fileID,
 }
 
 func (s *Scraper) fetchDoc(ctx context.Context, pageURL string) (*goquery.Document, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", pageURL, nil)
+	reader, err := netutil.GetDoc(ctx, s.client, pageURL, s.userAgent)
 	if err != nil {
+		var statusErr *netutil.HTTPStatusError
+		if errors.As(err, &statusErr) {
+			return nil, fmt.Errorf("bunker: HTTP %d for %s", statusErr.StatusCode, pageURL)
+		}
 		return nil, err
 	}
-	req.Header.Set("User-Agent", s.userAgent)
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("bunker: HTTP %d for %s", resp.StatusCode, pageURL)
-	}
-
-	return goquery.NewDocumentFromReader(io.LimitReader(resp.Body, 32<<20))
+	return goquery.NewDocumentFromReader(reader)
 }
 
 // resolveURL resolves an href against the page URL it was found on.

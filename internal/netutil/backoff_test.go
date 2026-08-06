@@ -1,9 +1,67 @@
 package netutil
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
+
+	"github.com/rajbahakdanyu/scraper/internal/model"
 )
+
+type recordingSleeper struct {
+	delays []time.Duration
+	err    error
+}
+
+func (s *recordingSleeper) SleepCtx(_ context.Context, delay time.Duration) error {
+	s.delays = append(s.delays, delay)
+	return s.err
+}
+
+func TestRetryRetriesUntilSuccess(t *testing.T) {
+	sleeper := &recordingSleeper{}
+	attempts := 0
+	err := Retry(context.Background(), 3, time.Millisecond, sleeper, func() error {
+		attempts++
+		if attempts < 3 {
+			return errors.New("temporary")
+		}
+		return nil
+	})
+	if err != nil || attempts != 3 {
+		t.Fatalf("Retry() error = %v, attempts = %d", err, attempts)
+	}
+	if len(sleeper.delays) != 2 {
+		t.Fatalf("sleep count = %d, want 2", len(sleeper.delays))
+	}
+}
+
+func TestRetryStopsOnNonRetryableError(t *testing.T) {
+	sleeper := &recordingSleeper{}
+	attempts := 0
+	want := errors.New("permanent")
+	err := Retry(context.Background(), 3, time.Millisecond, sleeper, func() error {
+		attempts++
+		return model.NewNonRetryable(want)
+	})
+	if !errors.Is(err, want) || attempts != 1 || len(sleeper.delays) != 0 {
+		t.Fatalf("Retry() error = %v, attempts = %d, sleeps = %d", err, attempts, len(sleeper.delays))
+	}
+}
+
+func TestRetryReturnsSleeperCancellation(t *testing.T) {
+	want := context.Canceled
+	sleeper := &recordingSleeper{err: want}
+	attempts := 0
+	err := Retry(context.Background(), 2, time.Millisecond, sleeper, func() error {
+		attempts++
+		return errors.New("temporary")
+	})
+	if !errors.Is(err, want) || attempts != 1 {
+		t.Fatalf("Retry() error = %v, attempts = %d", err, attempts)
+	}
+}
 
 func TestBackoffWithJitterStaysWithinBounds(t *testing.T) {
 	tests := []struct {

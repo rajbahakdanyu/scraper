@@ -17,6 +17,7 @@ import (
 	"time"
 
 	ytdl "github.com/kkdai/youtube/v2"
+	configpkg "github.com/rajbahakdanyu/scraper/internal/config"
 	"github.com/rajbahakdanyu/scraper/internal/downloadercore"
 	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 	"github.com/rajbahakdanyu/scraper/internal/model"
@@ -716,12 +717,8 @@ func safeOutputPath(dest, title string) string {
 // --- Downloader ---
 
 const (
-	progressBufSize     = 4096
-	minRateLimitBurst   = 32 * 1024
-	defaultReadTimeout  = 30 * time.Second
-	defaultYouTubeAgent = "Scraper/1.0"
-	maxRetries          = 3
-	retryBaseDelay      = 500 * time.Millisecond
+	defaultReadTimeout = 30 * time.Second
+	maxRetries         = netutil.MaxRetries
 )
 
 // withRetry runs fn up to maxRetries times with exponential backoff +
@@ -731,30 +728,7 @@ const (
 // and a model.NonRetryableError (a permanent failure retrying can't fix) stops
 // it after the first attempt.
 func withRetry(ctx context.Context, fn func() error) error {
-	var lastErr error
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		if attempt > 0 {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(netutil.BackoffWithJitter(retryBaseDelay, attempt)):
-			}
-		}
-		if lastErr = fn(); lastErr == nil {
-			return nil
-		}
-		if ctx.Err() != nil {
-			break
-		}
-		var nre *model.NonRetryableError
-		if errors.As(lastErr, &nre) {
-			// Permanent failure (no formats, missing ffmpeg, local
-			// filesystem): another attempt would just re-download the
-			// same bytes to fail the same way.
-			break
-		}
-	}
-	return lastErr
+	return netutil.Retry(ctx, maxRetries, netutil.RetryBaseDelay, netutil.RealSleeper{}, fn)
 }
 
 type DownloaderConfig struct {
@@ -802,7 +776,7 @@ func NewDownloaderWithConfig(scraper *Scraper, config DownloaderConfig) (*Downlo
 		config.Timeout = defaultReadTimeout
 	}
 	if config.UserAgent == "" {
-		config.UserAgent = defaultYouTubeAgent
+		config.UserAgent = configpkg.DefaultUserAgent
 	}
 	if config.ProxyURL != "" {
 		httpClient, err := netutil.NewPublicStreamingClientWithProxy(config.Timeout, config.ProxyURL)
@@ -822,13 +796,13 @@ func NewDownloaderWithConfig(scraper *Scraper, config DownloaderConfig) (*Downlo
 
 	var limiter *rate.Limiter
 	if config.RateLimit > 0 {
-		limiter = rate.NewLimiter(rate.Limit(config.RateLimit), minRateLimitBurst)
+		limiter = rate.NewLimiter(rate.Limit(config.RateLimit), downloadercore.MinRateLimitBurst)
 	}
 	var maxHeight int
 	if config.Quality != "" {
 		maxHeight = parseQualityHeight(config.Quality)
 	}
-	core := downloadercore.New(config.Concurrency, progressBufSize, limiter, config.SkipChecksum)
+	core := downloadercore.New(config.Concurrency, downloadercore.ProgressBufSize, limiter, config.SkipChecksum)
 	return &Downloader{
 		Core:      core,
 		scraper:   scraper,

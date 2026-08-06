@@ -19,21 +19,11 @@ import (
 	"golang.org/x/sys/unix"
 	"golang.org/x/time/rate"
 
+	"github.com/rajbahakdanyu/scraper/internal/config"
 	"github.com/rajbahakdanyu/scraper/internal/downloadercore"
 	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 	"github.com/rajbahakdanyu/scraper/internal/model"
 	"github.com/rajbahakdanyu/scraper/internal/netutil"
-)
-
-const (
-	maxRetries      = 3
-	retryBaseDelay  = 500 * time.Millisecond
-	progressBufSize = 4096
-	// minRateLimitBurst is the smallest token-bucket burst SetRateLimit will
-	// configure, regardless of how low the requested rate is. It just needs
-	// to comfortably cover a single io.Copy read chunk so WaitN never
-	// rejects a read outright for exceeding the burst size.
-	minRateLimitBurst = 32 * 1024
 )
 
 // MaxUnknownFileSize bounds downloads whose response does not provide a
@@ -84,7 +74,7 @@ func NewDownloaderWithConfig(concurrency int, timeout time.Duration, userAgent, 
 		timeout = 30 * time.Second
 	}
 	if userAgent == "" {
-		userAgent = "Scraper/1.0"
+		userAgent = config.DefaultUserAgent
 	}
 	var client *http.Client
 	var err error
@@ -97,7 +87,7 @@ func NewDownloaderWithConfig(concurrency int, timeout time.Duration, userAgent, 
 		return nil, err
 	}
 	client = netutil.WithCookies(client, cookies)
-	core := downloadercore.New(concurrency, progressBufSize, nil, false)
+	core := downloadercore.New(concurrency, downloadercore.ProgressBufSize, nil, false)
 	return &Downloader{
 		Core:      core,
 		client:    client,
@@ -126,7 +116,7 @@ func (d *Downloader) SetRateLimit(bytesPerSec int64) {
 		d.Core.SetLimiter(nil)
 		return
 	}
-	d.Core.SetLimiter(rate.NewLimiter(rate.Limit(bytesPerSec), minRateLimitBurst))
+	d.Core.SetLimiter(rate.NewLimiter(rate.Limit(bytesPerSec), downloadercore.MinRateLimitBurst))
 }
 
 // SetSkipChecksums disables writing and verifying the .sha256 sidecar file
@@ -221,81 +211,43 @@ func (d *Downloader) Download(item model.MediaItem, dest string) (string, error)
 	reResolved := false
 
 	var lastErr error
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		if attempt > 0 {
-			select {
-			case <-ctx.Done():
-				d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled})
-				return "", &model.CancelledError{URL: item.URL}
-			default:
-			}
-			if err := d.sleeper.SleepCtx(ctx, netutil.BackoffWithJitter(retryBaseDelay, attempt)); err != nil {
-				return "", lastErr
-			}
-		}
-
+	lastErr = netutil.Retry(ctx, netutil.MaxRetries, netutil.RetryBaseDelay, d.sleeper, func() error {
 		if item.Resolve != nil && resolvedURL == "" {
 			u, err := item.Resolve(ctx)
 			if err != nil {
-				lastErr = err
-				if ctx.Err() != nil {
-					break
-				}
 				var pe *model.PermanentError
 				if errors.As(err, &pe) {
-					// The resolver asserts this can never succeed
-					// (e.g. a 404 from the resolve API): fail
-					// permanently, same as a nonRetryable HTTP status.
-					lastErr = model.NewNonRetryable(err)
-					break
+					return model.NewNonRetryable(err)
 				}
-				continue
+				return err
 			}
 			resolvedURL = u
 		}
-
 		err := d.downloadOnce(ctx, item, resolvedURL, tempPath)
 		if err == nil {
-			if err := os.Rename(tempPath, finalPath); err != nil {
-				return "", errors.Join(err, removeFiles(tempPath, resumePath))
-			}
-			if !d.skipChecksums {
-				if err := fileutil.WriteChecksum(finalPath); err != nil {
-					d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed})
-					return "", fmt.Errorf("write checksum for %s: %w", finalPath, err)
-				}
-			}
-			// Resume-metadata cleanup is best-effort only.
-			_ = removeFiles(resumePath)
-			d.sendProgress(model.ProgressEvent{
-				Item:     item,
-				Status:   model.StatusCompleted,
-				Filename: finalPath,
-			})
-			return finalPath, nil
-		}
-		lastErr = err
-		if ctx.Err() != nil {
-			// Cancelled mid-attempt: stop retrying instead of sleeping
-			// through further backoff delays.
-			break
+			return nil
 		}
 		var nre *model.NonRetryableError
-		if errors.As(err, &nre) {
-			// A 403 on a lazily resolved signed URL almost always means
-			// the signature expired between resolution and request —
-			// re-resolve once for a fresh URL and retry with it. A
-			// second 403 (or any nonRetryable failure for an item
-			// without a resolver) stays permanent.
-			if item.Resolve != nil && !reResolved && nre.StatusCode == http.StatusForbidden {
-				reResolved = true
-				resolvedURL = ""
-				continue
-			}
-			// Client errors (404, 403, ...) will never succeed no matter
-			// how many times we retry — stop immediately.
-			break
+		if errors.As(err, &nre) && item.Resolve != nil && !reResolved && nre.StatusCode == http.StatusForbidden {
+			reResolved = true
+			resolvedURL = ""
+			return fmt.Errorf("retry with refreshed URL: %w", err)
 		}
+		return err
+	})
+	if lastErr == nil {
+		if err := os.Rename(tempPath, finalPath); err != nil {
+			return "", errors.Join(err, removeFiles(tempPath, resumePath))
+		}
+		if !d.skipChecksums {
+			if err := fileutil.WriteChecksum(finalPath); err != nil {
+				d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed})
+				return "", fmt.Errorf("write checksum for %s: %w", finalPath, err)
+			}
+		}
+		_ = removeFiles(resumePath)
+		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCompleted, Filename: finalPath})
+		return finalPath, nil
 	}
 
 	if ctx.Err() != nil {
@@ -314,7 +266,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) (string, error)
 	// same item resumes from it via a Range request instead of
 	// re-downloading everything from scratch.
 	d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed})
-	return "", fmt.Errorf("download failed after %d attempts: %w", maxRetries, errors.Join(lastErr, cleanupErr))
+	return "", fmt.Errorf("download failed after %d attempts: %w", netutil.MaxRetries, errors.Join(lastErr, cleanupErr))
 }
 
 // downloadOnce performs a single download attempt to tempPath, fetching
