@@ -175,19 +175,19 @@ func (p *Policy) dialContext(dialer *net.Dialer, readTimeout time.Duration) func
 }
 
 func NewPublicClient(timeout time.Duration, allowedPrivateURLs ...string) (*http.Client, error) {
-	return newPublicClient(timeout, timeout, timeout, "", allowedPrivateURLs...)
+	return newPublicClientWithConcurrency(1, timeout, timeout, timeout, "", allowedPrivateURLs...)
 }
 
 func NewPublicStreamingClient(responseHeaderTimeout time.Duration, allowedPrivateURLs ...string) (*http.Client, error) {
-	return newPublicClient(0, responseHeaderTimeout, responseHeaderTimeout, "", allowedPrivateURLs...)
+	return newPublicClientWithConcurrency(1, 0, responseHeaderTimeout, responseHeaderTimeout, "", allowedPrivateURLs...)
 }
 
 func NewPublicClientWithProxy(timeout time.Duration, proxyURL string) (*http.Client, error) {
-	return newPublicClient(timeout, timeout, timeout, proxyURL)
+	return newPublicClientWithConcurrency(1, timeout, timeout, timeout, proxyURL)
 }
 
 func NewPublicStreamingClientWithProxy(responseHeaderTimeout time.Duration, proxyURL string) (*http.Client, error) {
-	return newPublicClient(0, responseHeaderTimeout, responseHeaderTimeout, proxyURL)
+	return newPublicClientWithConcurrency(1, 0, responseHeaderTimeout, responseHeaderTimeout, proxyURL)
 }
 
 func WithUserAgent(client *http.Client, userAgent string) *http.Client {
@@ -213,9 +213,22 @@ func (t *userAgentTransport) RoundTrip(req *http.Request) (*http.Response, error
 	return t.base.RoundTrip(clone)
 }
 
-func newPublicClient(timeout, responseHeaderTimeout, readTimeout time.Duration, proxyURL string, allowedPrivateURLs ...string) (*http.Client, error) {
+func NewPublicStreamingClientWithConcurrency(concurrency int, responseHeaderTimeout time.Duration, allowedPrivateURLs ...string) (*http.Client, error) {
+	return newPublicClientWithConcurrency(concurrency, 0, responseHeaderTimeout, responseHeaderTimeout, "", allowedPrivateURLs...)
+}
+
+func NewPublicStreamingClientWithProxyAndConcurrency(concurrency int, responseHeaderTimeout time.Duration, proxyURL string) (*http.Client, error) {
+	return newPublicClientWithConcurrency(concurrency, 0, responseHeaderTimeout, responseHeaderTimeout, proxyURL)
+}
+
+func newPublicClientWithConcurrency(concurrency int, timeout, responseHeaderTimeout, readTimeout time.Duration, proxyURL string, allowedPrivateURLs ...string) (*http.Client, error) {
+	if concurrency < 1 {
+		concurrency = 1
+	}
 	policy := NewPolicy(allowedPrivateURLs...)
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConnsPerHost = concurrency + 2
+	transport.MaxIdleConns = 2 * concurrency
 	transport.Proxy = nil
 	if proxyURL != "" {
 		u, err := url.Parse(proxyURL)

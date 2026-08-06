@@ -61,9 +61,9 @@ func NewDownloaderWithConfig(concurrency int, timeout time.Duration, userAgent, 
 	var client *http.Client
 	var err error
 	if proxyURL != "" {
-		client, err = netutil.NewPublicStreamingClientWithProxy(timeout, proxyURL)
+		client, err = netutil.NewPublicStreamingClientWithProxyAndConcurrency(concurrency, timeout, proxyURL)
 	} else {
-		client, err = netutil.NewPublicStreamingClient(timeout)
+		client, err = netutil.NewPublicStreamingClientWithConcurrency(concurrency, timeout)
 	}
 	if err != nil {
 		return nil, err
@@ -410,7 +410,7 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, res
 		unknownSizeLimit = &io.LimitedReader{R: tee, N: MaxUnknownFileSize}
 		source = unknownSizeLimit
 	}
-	copiedBytes, copyErr := io.Copy(out, source)
+	copiedBytes, copyErr := io.CopyBuffer(out, source, make([]byte, 512*1024))
 	closeErr := out.Close()
 	if unknownSizeLimit != nil && copiedBytes >= MaxUnknownFileSize {
 		err := model.NewNonRetryable(fmt.Errorf("download exceeds maximum unknown file size of %d bytes", MaxUnknownFileSize))

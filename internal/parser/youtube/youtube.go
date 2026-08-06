@@ -547,7 +547,7 @@ func copyStreamToFile(ctx context.Context, stream io.Reader, size int64, path st
 	var read int64
 	hasher := sha256.New()
 	reader := io.TeeReader(stream, hasher)
-	buf := make([]byte, 32*1024)
+	buf := make([]byte, 512*1024)
 	for {
 		n, readErr := reader.Read(buf)
 		if n > 0 {
