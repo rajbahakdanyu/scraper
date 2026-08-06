@@ -2,8 +2,7 @@
 package goonbox
 
 import (
-	"encoding/json"
-	"errors"
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -73,24 +72,6 @@ func (s *Scraper) Parse(albumURL string) ([]model.MediaItem, error) {
 
 	for {
 		url := fmt.Sprintf("%s/albums/%s?page=%d", s.baseURL, albumID, page)
-		req, err := http.NewRequest("GET", url, nil)
-		if err != nil {
-			return nil, fmt.Errorf("goonbox: build album request: %w", err)
-		}
-		req.Header.Set("User-Agent", s.userAgent)
-
-		resp, err := s.client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			if err := resp.Body.Close(); err != nil {
-				return nil, fmt.Errorf("goonbox: close response body: %w", err)
-			}
-			return nil, fmt.Errorf("goonbox: HTTP %d for album %s page %d", resp.StatusCode, albumID, page)
-		}
-
 		var result struct {
 			Album struct {
 				Title string `json:"title"`
@@ -107,11 +88,8 @@ func (s *Scraper) Parse(albumURL string) ([]model.MediaItem, error) {
 			} `json:"pagination"`
 		}
 
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			return nil, errors.Join(err, resp.Body.Close())
-		}
-		if err := resp.Body.Close(); err != nil {
-			return nil, fmt.Errorf("goonbox: close response body: %w", err)
+		if err := netutil.GetJSON(context.Background(), s.client, url, &result); err != nil {
+			return nil, err
 		}
 
 		for _, img := range result.Images {

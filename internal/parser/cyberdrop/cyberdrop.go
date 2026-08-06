@@ -3,7 +3,6 @@ package cyberdrop
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -78,6 +77,19 @@ func permanentIfNotRetryable(signedURL string, err error) (string, error) {
 	return "", err
 }
 
+func classifyAPIError(err error, message string, args ...interface{}) error {
+	var statusErr *netutil.HTTPStatusError
+	if !errors.As(err, &statusErr) {
+		return err
+	}
+	statusArgs := append([]interface{}{statusErr.StatusCode}, args...)
+	statusError := fmt.Errorf(message, statusArgs...)
+	if !model.IsRetryableStatus(statusErr.StatusCode) {
+		return model.NewNonRetryable(statusError)
+	}
+	return statusError
+}
+
 // Parse handles both file URLs (/f/<slug>) and album URLs (/a/<slug>).
 // The signed CDN download URL is never resolved at parse time — signatures
 // expire, so an item queued behind a long album download would hold a
@@ -111,29 +123,9 @@ type fileInfo struct {
 func (s *Scraper) fetchFileInfo(ctx context.Context, slug string) (fileInfo, error) {
 	infoURL := fmt.Sprintf("%s/file/info/%s", s.baseURL, slug)
 
-	infoReq, err := http.NewRequestWithContext(ctx, "GET", infoURL, nil)
-	if err != nil {
-		return fileInfo{}, fmt.Errorf("cyberdrop: build file-info request: %w", err)
-	}
-	infoReq.Header.Set("User-Agent", s.userAgent)
-
-	infoResp, err := s.client.Do(infoReq)
-	if err != nil {
-		return fileInfo{}, err
-	}
-	defer infoResp.Body.Close()
-
-	if infoResp.StatusCode != http.StatusOK {
-		err := fmt.Errorf("cyberdrop: file not found (HTTP %d) for slug %s", infoResp.StatusCode, slug)
-		if !model.IsRetryableStatus(infoResp.StatusCode) {
-			return fileInfo{}, model.NewNonRetryable(err)
-		}
-		return fileInfo{}, err
-	}
-
 	var info fileInfo
-	if err := json.NewDecoder(infoResp.Body).Decode(&info); err != nil {
-		return fileInfo{}, err
+	if err := netutil.GetJSON(ctx, s.client, infoURL, &info); err != nil {
+		return fileInfo{}, classifyAPIError(err, "cyberdrop: file not found (HTTP %d) for slug %s", slug)
 	}
 
 	if info.AuthURL == "" {
@@ -148,31 +140,11 @@ func (s *Scraper) fetchFileInfo(ctx context.Context, slug string) (fileInfo, err
 
 // fetchSignedURL exchanges a file's auth_url for the signed CDN download URL.
 func (s *Scraper) fetchSignedURL(ctx context.Context, authURL, slug string) (string, error) {
-	authReq, err := http.NewRequestWithContext(ctx, "GET", authURL, nil)
-	if err != nil {
-		return "", fmt.Errorf("cyberdrop: invalid auth_url for %s: %w", slug, err)
-	}
-	authReq.Header.Set("User-Agent", s.userAgent)
-
-	authResp, err := s.client.Do(authReq)
-	if err != nil {
-		return "", err
-	}
-	defer authResp.Body.Close()
-
-	if authResp.StatusCode != http.StatusOK {
-		err := fmt.Errorf("cyberdrop: failed to get download URL (HTTP %d)", authResp.StatusCode)
-		if !model.IsRetryableStatus(authResp.StatusCode) {
-			return "", model.NewNonRetryable(err)
-		}
-		return "", err
-	}
-
 	var auth struct {
 		URL string `json:"url"`
 	}
-	if err := json.NewDecoder(authResp.Body).Decode(&auth); err != nil {
-		return "", err
+	if err := netutil.GetJSON(ctx, s.client, authURL, &auth); err != nil {
+		return "", classifyAPIError(err, "cyberdrop: failed to get download URL (HTTP %d)")
 	}
 
 	if auth.URL == "" {
@@ -219,22 +191,6 @@ func (s *Scraper) parseFile(ctx context.Context, pageURL, slug string) (model.Me
 func (s *Scraper) parseAlbum(albumPageURL, slug string) ([]model.MediaItem, error) {
 	albumURL := fmt.Sprintf("%s/album/%s", s.baseURL, slug)
 
-	req, err := http.NewRequest("GET", albumURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("cyberdrop: build album request: %w", err)
-	}
-	req.Header.Set("User-Agent", s.userAgent)
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("cyberdrop: album not found (HTTP %d) for slug %s", resp.StatusCode, slug)
-	}
-
 	var album struct {
 		Files []struct {
 			Name string `json:"name"`
@@ -243,7 +199,7 @@ func (s *Scraper) parseAlbum(albumPageURL, slug string) ([]model.MediaItem, erro
 			Type string `json:"type"`
 		} `json:"files"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&album); err != nil {
+	if err := netutil.GetJSON(context.Background(), s.client, albumURL, &album); err != nil {
 		return nil, err
 	}
 

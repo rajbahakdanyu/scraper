@@ -1,12 +1,61 @@
 package netutil
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 )
+
+func TestGetJSONDecodesSuccessfulResponse(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %s, want GET", r.Method)
+		}
+		_, _ = w.Write([]byte(`{"name":"example"}`))
+	}))
+	defer ts.Close()
+
+	var result struct {
+		Name string `json:"name"`
+	}
+	if err := GetJSON(context.Background(), ts.Client(), ts.URL, &result); err != nil {
+		t.Fatalf("GetJSON failed: %v", err)
+	}
+	if result.Name != "example" {
+		t.Fatalf("decoded name = %q, want example", result.Name)
+	}
+}
+
+func TestGetJSONRejectsUnexpectedStatus(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	var result struct{}
+	err := GetJSON(context.Background(), ts.Client(), ts.URL, &result)
+	if err == nil {
+		t.Fatal("GetJSON accepted non-2xx response")
+	}
+	if got := err.Error(); got != "unexpected status 404 from "+ts.URL {
+		t.Fatalf("error = %q, want unexpected status", got)
+	}
+}
+
+func TestGetJSONRejectsInvalidJSON(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("not json"))
+	}))
+	defer ts.Close()
+
+	var result struct{}
+	if err := GetJSON(context.Background(), ts.Client(), ts.URL, &result); err == nil {
+		t.Fatal("GetJSON accepted invalid JSON")
+	}
+}
 
 func TestPolicyRejectsPrivateTargets(t *testing.T) {
 	policy := NewPolicy()

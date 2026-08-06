@@ -2,6 +2,7 @@ package netutil
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -9,6 +10,36 @@ import (
 	"strings"
 	"time"
 )
+
+type HTTPStatusError struct {
+	StatusCode int
+	URL        string
+}
+
+func (e *HTTPStatusError) Error() string {
+	return fmt.Sprintf("unexpected status %d from %s", e.StatusCode, e.URL)
+}
+
+// GetJSON performs a GET request to url with the given client, checks for a
+// 2xx response, and decodes the JSON body into target.
+func GetJSON(ctx context.Context, client *http.Client, url string, target interface{}) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return &HTTPStatusError{StatusCode: resp.StatusCode, URL: url}
+	}
+	if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
+		return fmt.Errorf("decode response: %w", err)
+	}
+	return nil
+}
 
 type Policy struct {
 	allowedPrivateHosts map[string]struct{}
