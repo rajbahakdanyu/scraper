@@ -595,6 +595,90 @@ type fakeBatchJSONScraper struct {
 	err   error
 }
 
+type overlapBatchScraper struct {
+	secondStarted chan struct{}
+}
+
+func (s *overlapBatchScraper) Name() string { return "overlap" }
+func (s *overlapBatchScraper) Parse(ctx context.Context, url string) ([]model.MediaItem, error) {
+	if strings.HasSuffix(url, "/two") {
+		close(s.secondStarted)
+	}
+	return []model.MediaItem{{URL: url + ".jpg", Title: url}}, nil
+}
+
+type overlapBatchDownloader struct {
+	*fakePlainDownloader
+	firstStarted chan struct{}
+	release      chan struct{}
+	startOnce    sync.Once
+}
+
+func (d *overlapBatchDownloader) Download(item model.MediaItem, dest string) (string, error) {
+	d.startOnce.Do(func() { close(d.firstStarted) })
+	<-d.release
+	return "", nil
+}
+
+func newOverlapBatchDownloader() *overlapBatchDownloader {
+	return &overlapBatchDownloader{
+		fakePlainDownloader: newFakePlainDownloader(),
+		firstStarted:        make(chan struct{}),
+		release:             make(chan struct{}),
+	}
+}
+
+func TestRunBatchPlainOverlapsNextScrapeWithCurrentDownload(t *testing.T) {
+	dl := newOverlapBatchDownloader()
+	scraper := &overlapBatchScraper{secondStarted: make(chan struct{})}
+	albums := []dashboard.DashAlbumURL{
+		{URL: "https://example.com/one", Slug: "one", Dest: t.TempDir(), Scraper: scraper},
+		{URL: "https://example.com/two", Slug: "two", Dest: t.TempDir(), Scraper: scraper},
+	}
+	done := make(chan error, 1)
+	go func() { done <- runBatchPlain(dl, albums, t.TempDir(), &bytes.Buffer{}) }()
+	select {
+	case <-dl.firstStarted:
+	case <-time.After(time.Second):
+		t.Fatal("first download did not start")
+	}
+	select {
+	case <-scraper.secondStarted:
+	case <-time.After(time.Second):
+		t.Fatal("second scrape did not overlap the first download")
+	}
+	close(dl.release)
+	if err := <-done; err != nil {
+		t.Fatalf("batch failed: %v", err)
+	}
+}
+
+func TestRunBatchJSONOverlapsNextScrapeWithCurrentDownload(t *testing.T) {
+	dl := newOverlapBatchDownloader()
+	scraper := &overlapBatchScraper{secondStarted: make(chan struct{})}
+	albums := []dashboard.DashAlbumURL{
+		{Site: "test", URL: "https://example.com/one", Slug: "one", Dest: t.TempDir(), Scraper: scraper},
+		{Site: "test", URL: "https://example.com/two", Slug: "two", Dest: t.TempDir(), Scraper: scraper},
+	}
+	done := make(chan error, 1)
+	var out bytes.Buffer
+	go func() { done <- runBatchJSON(dl, albums, t.TempDir(), "", "", &out) }()
+	select {
+	case <-dl.firstStarted:
+	case <-time.After(time.Second):
+		t.Fatal("first download did not start")
+	}
+	select {
+	case <-scraper.secondStarted:
+	case <-time.After(time.Second):
+		t.Fatal("second scrape did not overlap the first download")
+	}
+	close(dl.release)
+	if err := <-done; err != nil {
+		t.Fatalf("batch failed: %v", err)
+	}
+}
+
 func (f *fakeBatchJSONScraper) Name() string { return "fake" }
 func (f *fakeBatchJSONScraper) Parse(ctx context.Context, url string) ([]model.MediaItem, error) {
 	return f.items, f.err

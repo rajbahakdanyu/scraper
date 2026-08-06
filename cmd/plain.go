@@ -160,6 +160,25 @@ func (p *plainPrinter) event(evt model.ProgressEvent) {
 	fmt.Fprintln(p.w, line)
 }
 
+type batchScrapeResult struct {
+	items []model.MediaItem
+	err   error
+}
+
+func startBatchScrape(ctx context.Context, abort <-chan struct{}, album dashboard.DashAlbumURL) <-chan batchScrapeResult {
+	resultCh := make(chan batchScrapeResult, 1)
+	go func() {
+		select {
+		case <-abort:
+			resultCh <- batchScrapeResult{err: context.Canceled}
+		default:
+			items, err := album.Scraper.Parse(ctx, album.URL)
+			resultCh <- batchScrapeResult{items: items, err: err}
+		}
+	}()
+	return resultCh
+}
+
 // runPlain is the non-TTY fallback for runWithScraper: it downloads every
 // scraped item while printing one status line per progress event to out,
 // consuming the same progress channel the dashboard would. It returns a
@@ -261,8 +280,8 @@ drain:
 	return model.NewPartialError("download", realErrs)
 }
 
-// runBatchPlain is the non-TTY fallback for runBatch: it scrapes each album
-// serially, prints a section header, and downloads every item while
+// runBatchPlain is the non-TTY fallback for runBatch: it scrapes albums with
+// one-album lookahead, prints a section header, and downloads every item while
 // reporting progress via a shared download queue.
 func runBatchPlain(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, destRoot string, out io.Writer) error {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -300,6 +319,7 @@ func runBatchPlain(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, des
 	}()
 
 	var allErrs []error
+	var scrapeCh <-chan batchScrapeResult
 batchLoop:
 	for albumIdx, a := range albums {
 		select {
@@ -313,8 +333,12 @@ batchLoop:
 		printCh <- fmt.Sprintf("%s\n", header)
 		printCh <- fmt.Sprintf("%s\n", strings.Repeat("─", len(header)))
 
+		if scrapeCh == nil {
+			scrapeCh = startBatchScrape(ctx, abort, a)
+		}
 		printCh <- fmt.Sprintf("Scraping %s...\n", a.URL)
-		items, err := a.Scraper.Parse(ctx, a.URL)
+		result := <-scrapeCh
+		items, err := result.items, result.err
 		if errors.Is(err, context.Canceled) {
 			printCh <- "interrupted\n"
 			break batchLoop
@@ -322,6 +346,9 @@ batchLoop:
 		if err != nil && len(items) == 0 {
 			printCh <- fmt.Sprintf("failed: %v\n", err)
 			allErrs = append(allErrs, err)
+			if albumIdx+1 < len(albums) {
+				scrapeCh = startBatchScrape(ctx, abort, albums[albumIdx+1])
+			}
 			continue
 		}
 		if err != nil {
@@ -329,6 +356,9 @@ batchLoop:
 		}
 		if len(items) == 0 {
 			printCh <- "No items found.\n"
+			if albumIdx+1 < len(albums) {
+				scrapeCh = startBatchScrape(ctx, abort, albums[albumIdx+1])
+			}
 			continue
 		}
 
@@ -339,12 +369,18 @@ batchLoop:
 		if err := os.MkdirAll(a.Dest, 0755); err != nil {
 			printCh <- fmt.Sprintf("failed: create album directory: %v\n", err)
 			allErrs = append(allErrs, err)
+			if albumIdx+1 < len(albums) {
+				scrapeCh = startBatchScrape(ctx, abort, albums[albumIdx+1])
+			}
 			continue
 		}
 		fi, err := os.Lstat(a.Dest)
 		if err != nil {
 			printCh <- fmt.Sprintf("failed: create album directory: %v\n", err)
 			allErrs = append(allErrs, err)
+			if albumIdx+1 < len(albums) {
+				scrapeCh = startBatchScrape(ctx, abort, albums[albumIdx+1])
+			}
 			continue
 		}
 		if fi.Mode()&os.ModeSymlink != 0 {
@@ -360,6 +396,9 @@ batchLoop:
 			errs = downloadAll(dl, items, a.Dest)
 			close(downloadsDone)
 		}()
+		if albumIdx+1 < len(albums) {
+			scrapeCh = startBatchScrape(ctx, abort, albums[albumIdx+1])
+		}
 
 		<-downloadsDone
 
@@ -470,8 +509,8 @@ func runJSON(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error)
 	return model.NewPartialError("download", errs)
 }
 
-// runBatchJSON downloads items from multiple albums serially, printing JSON
-// Lines events to out as each album's items finish.
+// runBatchJSON downloads items from multiple albums with one-album scrape
+// lookahead, printing JSON Lines events to out as each album's items finish.
 func runBatchJSON(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, destRoot string, quality, audioOnly string, out io.Writer) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -495,6 +534,7 @@ func runBatchJSON(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, dest
 	var allErrs []error
 	var grandCompleted, grandFailed, grandCancelled int
 	var grandTotalItems int
+	var scrapeCh <-chan batchScrapeResult
 batchLoop:
 	for albumIdx, a := range albums {
 		select {
@@ -502,8 +542,12 @@ batchLoop:
 			break batchLoop
 		default:
 		}
+		if scrapeCh == nil {
+			scrapeCh = startBatchScrape(ctx, abort, a)
+		}
 		fmt.Fprintf(os.Stderr, "Scraping %s...\n", a.URL)
-		items, err := a.Scraper.Parse(ctx, a.URL)
+		result := <-scrapeCh
+		items, err := result.items, result.err
 		if errors.Is(err, context.Canceled) {
 			fmt.Fprintln(os.Stderr, "interrupted")
 			break batchLoop
@@ -511,6 +555,9 @@ batchLoop:
 		if err != nil && len(items) == 0 {
 			writeJSONLine(out, model.JSONEvent{Event: "album_error", Site: a.Site, URL: a.URL, Slug: a.Slug, Error: err.Error()})
 			allErrs = append(allErrs, err)
+			if albumIdx+1 < len(albums) {
+				scrapeCh = startBatchScrape(ctx, abort, albums[albumIdx+1])
+			}
 			continue
 		}
 		if err != nil {
@@ -518,6 +565,9 @@ batchLoop:
 		}
 		if len(items) == 0 {
 			writeJSONLine(out, model.JSONEvent{Event: "album_error", Site: a.Site, URL: a.URL, Slug: a.Slug, Error: "no media items found"})
+			if albumIdx+1 < len(albums) {
+				scrapeCh = startBatchScrape(ctx, abort, albums[albumIdx+1])
+			}
 			continue
 		}
 
@@ -526,6 +576,9 @@ batchLoop:
 		if err := os.MkdirAll(a.Dest, 0755); err != nil {
 			writeJSONLine(out, model.JSONEvent{Event: "album_error", Site: a.Site, URL: a.URL, Slug: a.Slug, Error: fmt.Sprintf("create album directory: %v", err)})
 			allErrs = append(allErrs, err)
+			if albumIdx+1 < len(albums) {
+				scrapeCh = startBatchScrape(ctx, abort, albums[albumIdx+1])
+			}
 			continue
 		}
 
@@ -538,6 +591,9 @@ batchLoop:
 			errs, paths = downloadAllWithPaths(dl, items, a.Dest)
 			close(downloadsDone)
 		}()
+		if albumIdx+1 < len(albums) {
+			scrapeCh = startBatchScrape(ctx, abort, albums[albumIdx+1])
+		}
 
 		<-downloadsDone
 

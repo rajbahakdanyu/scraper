@@ -3,9 +3,11 @@ package goonbox
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rajbahakdanyu/scraper/internal/model"
@@ -21,6 +23,15 @@ type Scraper struct {
 	client    *http.Client
 	userAgent string
 	baseURL   string
+}
+
+type pageResult struct {
+	index      int
+	items      []model.MediaItem
+	unsafeErrs []error
+	current    int
+	last       int
+	err        error
 }
 
 func NewGoonBoxScraper() *Scraper {
@@ -66,11 +77,7 @@ func (s *Scraper) Parse(ctx context.Context, albumURL string) ([]model.MediaItem
 		return nil, fmt.Errorf("goonbox: could not extract album ID from URL: %s", albumURL)
 	}
 
-	var items []model.MediaItem
-	var unsafeErrs []error
-	page := 1
-
-	for {
+	fetchPage := func(page int) pageResult {
 		url := fmt.Sprintf("%s/albums/%s?page=%d", s.baseURL, albumID, page)
 		var result struct {
 			Album struct {
@@ -89,22 +96,21 @@ func (s *Scraper) Parse(ctx context.Context, albumURL string) ([]model.MediaItem
 		}
 
 		if err := netutil.GetJSON(ctx, s.client, url, s.userAgent, &result); err != nil {
-			return items, err
+			return pageResult{index: page - 1, err: err}
 		}
 
+		pageItems := make([]model.MediaItem, 0, len(result.Images))
+		var pageUnsafeErrs []error
 		for _, img := range result.Images {
 			if img.OriginalURL == "" {
 				continue
 			}
 			if err := netutil.NewPolicy().ValidateURL(img.OriginalURL); err != nil {
-				unsafeErrs = append(unsafeErrs, fmt.Errorf("unsafe image URL: %w", err))
+				pageUnsafeErrs = append(pageUnsafeErrs, fmt.Errorf("unsafe image URL: %w", err))
 				continue
 			}
 			title := img.OriginalFilename
-			if title == "" {
-				title = fmt.Sprintf("goonbox_%d", len(items)+1)
-			}
-			items = append(items, model.MediaItem{
+			pageItems = append(pageItems, model.MediaItem{
 				URL:      img.OriginalURL,
 				Title:    title,
 				Size:     img.SizeBytes,
@@ -112,11 +118,98 @@ func (s *Scraper) Parse(ctx context.Context, albumURL string) ([]model.MediaItem
 				Type:     model.MediaTypeForName(title),
 			})
 		}
+		return pageResult{
+			index:      page - 1,
+			items:      pageItems,
+			unsafeErrs: pageUnsafeErrs,
+			current:    result.Pagination.CurrentPage,
+			last:       result.Pagination.LastPage,
+		}
+	}
 
-		if page >= result.Pagination.LastPage || page >= maxAlbumPages {
+	first := fetchPage(1)
+	if first.err != nil {
+		return nil, first.err
+	}
+	lastPage := first.last
+	if lastPage < first.current {
+		lastPage = first.current
+	}
+	if lastPage < 1 {
+		lastPage = 1
+	}
+	if lastPage > maxAlbumPages {
+		lastPage = maxAlbumPages
+	}
+	results := make([]pageResult, lastPage)
+	results[0] = first
+
+	const workerCount = 8
+	jobs := make(chan int, workerCount)
+	resultCh := make(chan pageResult, workerCount)
+	var wg sync.WaitGroup
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for page := range jobs {
+				resultCh <- fetchPage(page)
+			}
+		}()
+	}
+
+	nextPage := 2
+	pending := 0
+	schedule := func() {
+		for nextPage <= lastPage && pending < workerCount {
+			jobs <- nextPage
+			nextPage++
+			pending++
+		}
+	}
+	schedule()
+	for pending > 0 {
+		result := <-resultCh
+		pending--
+		if result.last > lastPage {
+			lastPage = result.last
+			if lastPage > maxAlbumPages {
+				lastPage = maxAlbumPages
+			}
+		}
+		if result.current >= result.last && result.last > 0 && result.current < lastPage {
+			lastPage = result.current
+		}
+		if result.index >= 0 {
+			if result.index >= len(results) {
+				results = append(results, make([]pageResult, result.index-len(results)+1)...)
+			}
+			results[result.index] = result
+		}
+		schedule()
+	}
+	close(jobs)
+	wg.Wait()
+
+	var items []model.MediaItem
+	var unsafeErrs []error
+	for _, result := range results {
+		if result.err != nil {
+			if errors.Is(result.err, context.Canceled) {
+				return items, result.err
+			}
+			continue
+		}
+		for _, item := range result.items {
+			if item.Title == "" {
+				item.Title = fmt.Sprintf("goonbox_%d", len(items)+1)
+			}
+			items = append(items, item)
+		}
+		unsafeErrs = append(unsafeErrs, result.unsafeErrs...)
+		if result.current >= result.last && result.last > 0 {
 			break
 		}
-		page++
 	}
 
 	if len(items) == 0 {

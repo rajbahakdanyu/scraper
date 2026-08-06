@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/rajbahakdanyu/scraper/internal/model"
 )
@@ -154,6 +155,61 @@ func TestParseGoonBoxAlbumPagination(t *testing.T) {
 	}
 	if items[0].Title != "p1.jpg" || items[1].Title != "p2.jpg" {
 		t.Errorf("expected p1.jpg then p2.jpg, got %s then %s", items[0].Title, items[1].Title)
+	}
+}
+
+func TestParseGoonBoxAlbumParallelPagination(t *testing.T) {
+	var requests int32
+	var active int32
+	var maxActive int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/albums/parallel", func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("page")
+		n := 0
+		_, _ = fmt.Sscan(page, &n)
+		atomic.AddInt32(&requests, 1)
+		current := atomic.AddInt32(&active, 1)
+		for {
+			old := atomic.LoadInt32(&maxActive)
+			if current <= old || atomic.CompareAndSwapInt32(&maxActive, old, current) {
+				break
+			}
+		}
+		defer atomic.AddInt32(&active, -1)
+		if n == 1 {
+			time.Sleep(40 * time.Millisecond)
+		} else {
+			time.Sleep(time.Duration(6-n) * 5 * time.Millisecond)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"images": []map[string]interface{}{{
+				"original_url":      fmt.Sprintf("https://cdn.example.com/p%d.jpg", n),
+				"original_filename": fmt.Sprintf("p%d.jpg", n),
+			}},
+			"pagination": map[string]int{"current_page": n, "last_page": 5},
+		})
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	scraper := newTestGoonBoxScraper()
+	scraper.baseURL = ts.URL
+	items, err := scraper.Parse(context.Background(), ts.URL+"/a/parallel")
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	if got := atomic.LoadInt32(&requests); got != 5 {
+		t.Fatalf("expected 5 page requests, got %d", got)
+	}
+	if got := atomic.LoadInt32(&maxActive); got < 2 {
+		t.Fatalf("expected concurrent page requests, max active was %d", got)
+	}
+	for i, item := range items {
+		want := fmt.Sprintf("p%d.jpg", i+1)
+		if item.Title != want {
+			t.Fatalf("item %d = %q, want %q", i, item.Title, want)
+		}
 	}
 }
 
