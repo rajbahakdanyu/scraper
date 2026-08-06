@@ -410,15 +410,11 @@ func runJSON(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error)
 		}
 	}()
 
-	progress := dl.Progress()
 	paths := make(map[string]string)
+	var pathsMu sync.Mutex
 	progressDone := make(chan struct{})
 	go func() {
-		for evt := range progress {
-			if evt.Status == model.StatusCompleted && evt.Filename != "" {
-				key := evt.Item.Key()
-				paths[key] = evt.Filename
-			}
+		for range dl.Progress() {
 		}
 		close(progressDone)
 	}()
@@ -433,10 +429,16 @@ func runJSON(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error)
 			}
 			dl.Prepare(item)
 			wg.Add(1)
-			go func() {
+			go func(idx int, it model.MediaItem) {
 				defer wg.Done()
-				_, errs[i] = dl.Download(item, dest)
-			}()
+				p, err := dl.Download(it, dest)
+				errs[idx] = err
+				if p != "" {
+					pathsMu.Lock()
+					paths[it.Key()] = p
+					pathsMu.Unlock()
+				}
+			}(i, item)
 		}
 		wg.Wait()
 		close(downloadsDone)
