@@ -19,7 +19,7 @@ const (
 type DownloadStatus int
 
 const (
-	StatusPending     DownloadStatus = iota
+	StatusPending DownloadStatus = iota
 	StatusDownloading
 	StatusCompleted
 	StatusFailed
