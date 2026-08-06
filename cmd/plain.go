@@ -6,8 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/signal"
+	"path"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -536,16 +539,11 @@ func runBatchJSON(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, dest
 	progress := dl.Progress()
 	paths := make(map[string]string)
 	var pathsMu sync.Mutex
-	pathsReady := sync.NewCond(&pathsMu)
+	alloc := fileutil.NewPathAllocator()
 	progressDone := make(chan struct{})
 	go func() {
-		for evt := range progress {
-			if evt.Status == model.StatusCompleted && evt.Filename != "" {
-				pathsMu.Lock()
-				paths[evt.Item.Key()] = evt.Filename
-				pathsReady.Broadcast()
-				pathsMu.Unlock()
-			}
+		for range progress {
+			// Progress is consumed for live output while batch JSON is running.
 		}
 		close(progressDone)
 	}()
@@ -603,28 +601,23 @@ batchLoop:
 				}
 				dl.Prepare(item)
 				wg.Add(1)
-				go func() {
+				go func(i int, item model.MediaItem) {
 					defer wg.Done()
-					errs[i] = dl.Download(item, a.Dest)
-				}()
+					expectedPath := expectedDownloadPath(a.Dest, item, alloc)
+					err := dl.Download(item, a.Dest)
+					errs[i] = err
+					if err == nil {
+						pathsMu.Lock()
+						paths[item.Key()] = expectedPath
+						pathsMu.Unlock()
+					}
+				}(i, item)
 			}
 			wg.Wait()
 			close(downloadsDone)
 		}()
 
 		<-downloadsDone
-		// Download returns after publishing its completion event, but the
-		// shared progress consumer may not have processed it yet.
-		pathsMu.Lock()
-		for i, item := range items {
-			if item.URL == "" || errs[i] != nil {
-				continue
-			}
-			for paths[item.Key()] == "" {
-				pathsReady.Wait()
-			}
-		}
-		pathsMu.Unlock()
 
 		var completed, failed, cancelled int
 		albumReal := 0
@@ -700,6 +693,27 @@ batchLoop:
 	})
 
 	return model.NewPartialError("batch", allErrs)
+}
+
+func expectedDownloadPath(dest string, item model.MediaItem, alloc *fileutil.PathAllocator) string {
+	filename := fileutil.SanitizeFilename(item.Title)
+	if filename == "" {
+		filename = "download"
+	}
+	if path.Ext(filename) == "" {
+		if ext := extFromURL(item.URL); ext != "" {
+			filename += ext
+		}
+	}
+	return alloc.Claim(filepath.Join(dest, filename), item.Key())
+}
+
+func extFromURL(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	return path.Ext(u.Path)
 }
 
 // runDryRunJSON scrapes targetURL and prints a single JSON document with
