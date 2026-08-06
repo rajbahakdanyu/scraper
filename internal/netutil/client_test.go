@@ -21,11 +21,29 @@ func TestGetJSONDecodesSuccessfulResponse(t *testing.T) {
 	var result struct {
 		Name string `json:"name"`
 	}
-	if err := GetJSON(context.Background(), ts.Client(), ts.URL, &result); err != nil {
+	if err := GetJSON(context.Background(), ts.Client(), ts.URL, "", &result); err != nil {
 		t.Fatalf("GetJSON failed: %v", err)
 	}
 	if result.Name != "example" {
 		t.Fatalf("decoded name = %q, want example", result.Name)
+	}
+}
+
+func TestGetJSONSetsUserAgent(t *testing.T) {
+	const wantUserAgent = "parser-test/1.0"
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("User-Agent"); got != wantUserAgent {
+			t.Errorf("User-Agent = %q, want %q", got, wantUserAgent)
+		}
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer ts.Close()
+
+	var result struct {
+		OK bool `json:"ok"`
+	}
+	if err := GetJSON(context.Background(), ts.Client(), ts.URL, wantUserAgent, &result); err != nil {
+		t.Fatalf("GetJSON failed: %v", err)
 	}
 }
 
@@ -36,7 +54,7 @@ func TestGetJSONRejectsUnexpectedStatus(t *testing.T) {
 	defer ts.Close()
 
 	var result struct{}
-	err := GetJSON(context.Background(), ts.Client(), ts.URL, &result)
+	err := GetJSON(context.Background(), ts.Client(), ts.URL, "", &result)
 	if err == nil {
 		t.Fatal("GetJSON accepted non-2xx response")
 	}
@@ -52,7 +70,7 @@ func TestGetJSONRejectsInvalidJSON(t *testing.T) {
 	defer ts.Close()
 
 	var result struct{}
-	if err := GetJSON(context.Background(), ts.Client(), ts.URL, &result); err == nil {
+	if err := GetJSON(context.Background(), ts.Client(), ts.URL, "", &result); err == nil {
 		t.Fatal("GetJSON accepted invalid JSON")
 	}
 }

@@ -277,11 +277,25 @@ func (s *Scraper) getSignedMediaURL(ctx context.Context, dlURL *url.URL, fileID,
 	}
 
 	// Step 2: Sign the URL
+	signReq, err := http.NewRequestWithContext(ctx, http.MethodGet, s.signURL+"?path="+url.QueryEscape(parsedURL.Path), nil)
+	if err != nil {
+		return "", fmt.Errorf("bunker: build signing request: %w", err)
+	}
+	signReq.Header.Set("User-Agent", s.userAgent)
+	signResp, err := s.client.Do(signReq)
+	if err != nil {
+		return rawURL, nil
+	}
+	defer signResp.Body.Close()
+	if signResp.StatusCode != http.StatusOK {
+		return rawURL, nil
+	}
+
 	var sign struct {
 		Token string `json:"token"`
 		Ex    int64  `json:"ex"`
 	}
-	if err := netutil.GetJSON(ctx, s.client, s.signURL+"?path="+url.QueryEscape(parsedURL.Path), &sign); err != nil {
+	if err := json.NewDecoder(signResp.Body).Decode(&sign); err != nil {
 		return rawURL, nil
 	}
 

@@ -124,7 +124,7 @@ func (s *Scraper) fetchFileInfo(ctx context.Context, slug string) (fileInfo, err
 	infoURL := fmt.Sprintf("%s/file/info/%s", s.baseURL, slug)
 
 	var info fileInfo
-	if err := netutil.GetJSON(ctx, s.client, infoURL, &info); err != nil {
+	if err := netutil.GetJSON(ctx, s.client, infoURL, s.userAgent, &info); err != nil {
 		return fileInfo{}, classifyAPIError(err, "cyberdrop: file not found (HTTP %d) for slug %s", slug)
 	}
 
@@ -143,7 +143,7 @@ func (s *Scraper) fetchSignedURL(ctx context.Context, authURL, slug string) (str
 	var auth struct {
 		URL string `json:"url"`
 	}
-	if err := netutil.GetJSON(ctx, s.client, authURL, &auth); err != nil {
+	if err := netutil.GetJSON(ctx, s.client, authURL, s.userAgent, &auth); err != nil {
 		return "", classifyAPIError(err, "cyberdrop: failed to get download URL (HTTP %d)")
 	}
 
@@ -199,7 +199,7 @@ func (s *Scraper) parseAlbum(albumPageURL, slug string) ([]model.MediaItem, erro
 			Type string `json:"type"`
 		} `json:"files"`
 	}
-	if err := netutil.GetJSON(context.Background(), s.client, albumURL, &album); err != nil {
+	if err := netutil.GetJSON(context.Background(), s.client, albumURL, s.userAgent, &album); err != nil {
 		return nil, err
 	}
 

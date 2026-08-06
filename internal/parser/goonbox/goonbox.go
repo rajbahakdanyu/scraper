@@ -88,7 +88,7 @@ func (s *Scraper) Parse(albumURL string) ([]model.MediaItem, error) {
 			} `json:"pagination"`
 		}
 
-		if err := netutil.GetJSON(context.Background(), s.client, url, &result); err != nil {
+		if err := netutil.GetJSON(context.Background(), s.client, url, s.userAgent, &result); err != nil {
 			return nil, err
 		}
 

@@ -170,6 +170,44 @@ func TestResolve404IsPermanentNotRetried(t *testing.T) {
 	}
 }
 
+func TestGetSignedMediaURLRejectsNonOKSigningResponse(t *testing.T) {
+	mux := http.NewServeMux()
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	mux.HandleFunc("/api/_001_v2", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"mediafiles": "https://cdn.example.com",
+			"path":       "/storage/media/test.mp4",
+		})
+	})
+	mux.HandleFunc("/sign", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"token": "must-not-be-used",
+			"ex":    9999999999,
+		})
+	})
+
+	scraper := newTestBunkerScraper()
+	scraper.baseURL = ts.URL
+	scraper.signURL = ts.URL + "/sign"
+	dlURL, err := url.Parse(ts.URL + "/file/123")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, err := scraper.getSignedMediaURL(context.Background(), dlURL, "123", "test.mp4")
+	if err != nil {
+		t.Fatalf("getSignedMediaURL failed: %v", err)
+	}
+	if want := "https://cdn.example.com/storage/media/test.mp4"; resolved != want {
+		t.Fatalf("resolved URL = %q, want unsigned URL %q", resolved, want)
+	}
+}
+
 // Regression test: a file ID containing characters that need JSON escaping
 // must produce a valid JSON API request body with the exact ID value.
 func TestGetSignedMediaURLEscapesFileID(t *testing.T) {

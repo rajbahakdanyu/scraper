@@ -22,10 +22,13 @@ func (e *HTTPStatusError) Error() string {
 
 // GetJSON performs a GET request to url with the given client, checks for a
 // 2xx response, and decodes the JSON body into target.
-func GetJSON(ctx context.Context, client *http.Client, url string, target interface{}) error {
+func GetJSON(ctx context.Context, client *http.Client, url, userAgent string, target interface{}) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
+	}
+	if userAgent != "" {
+		req.Header.Set("User-Agent", userAgent)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
