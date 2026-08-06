@@ -314,6 +314,30 @@ func Execute() {
 	}
 }
 
+func newSiteCmd(use, short, site string, newScraper func() model.Scraper) *cobra.Command {
+	var urlFlag string
+
+	cmd := &cobra.Command{
+		Use:   use,
+		Short: short,
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			targetURL, err := resolveURL(args, urlFlag, site)
+			if err != nil {
+				return err
+			}
+			opts, err := globalOptionsFromCommand(cmd)
+			if err != nil {
+				return err
+			}
+			return runWithScraper(newScraper(), targetURL, site, opts)
+		},
+	}
+
+	cmd.Flags().StringVarP(&urlFlag, "url", "u", "", site+" URL")
+	return cmd
+}
+
 func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "scraper [url...]",
@@ -378,11 +402,11 @@ func NewRootCmd() *cobra.Command {
 	root.PersistentFlags().Bool("notify", false, "Send OS notification when downloads complete")
 
 	root.AddCommand(
-		newYouTubeCmd(),
-		newCyberDropCmd(),
-		newBunkerCmd(),
-		newGoonBoxCmd(),
-		newFilesterCmd(),
+		newSiteCmd("youtube <url>", "Scrape and download a YouTube video or playlist", "youtube", func() model.Scraper { return youtube.NewYouTubeScraper() }),
+		newSiteCmd("cyberdrop <url>", "Scrape and download a CyberDrop gallery", "cyberdrop", func() model.Scraper { return cyberdrop.NewCyberDropScraper() }),
+		newSiteCmd("bunker <url>", "Scrape and download Bunker content", "bunker", func() model.Scraper { return bunker.NewBunkerScraper() }),
+		newSiteCmd("goonbox <url>", "Scrape and download a GoonBox album", "goonbox", func() model.Scraper { return goonbox.NewGoonBoxScraper() }),
+		newSiteCmd("filester <url>", "Scrape and download a Filester file or folder", "filester", func() model.Scraper { return filester.NewFilesterScraper() }),
 		&cobra.Command{
 			Use:   "version",
 			Short: "Print the version",
@@ -425,45 +449,34 @@ func scraperRegistry(proxyURL string, cookies []*http.Cookie) (map[string]model.
 	reg := map[string]model.Scraper{
 		"youtube": youtube.NewYouTubeScraper(),
 	}
-	if proxyURL != "" {
-		cy, err := cyberdrop.NewCyberDropScraperWithProxy(proxyURL)
-		if err != nil {
-			return nil, err
-		}
-		bu, err := bunker.NewBunkerScraperWithProxy(proxyURL)
-		if err != nil {
-			return nil, err
-		}
-		gb, err := goonbox.NewGoonBoxScraperWithProxy(proxyURL)
-		if err != nil {
-			return nil, err
-		}
-		fs, err := filester.NewFilesterScraperWithProxy(proxyURL)
-		if err != nil {
-			return nil, err
-		}
-		if len(cookies) > 0 {
-			cy.SetCookies(cookies)
-			bu.SetCookies(cookies)
-			gb.SetCookies(cookies)
-			fs.SetCookies(cookies)
-		}
-		reg["cyberdrop"] = cy
-		reg["bunker"] = bu
-		reg["goonbox"] = gb
-		reg["filester"] = fs
-	} else {
-		if len(cookies) > 0 {
-			reg["cyberdrop"] = cyberdrop.NewCyberDropScraperWithCookies(cookies)
-			reg["bunker"] = bunker.NewBunkerScraperWithCookies(cookies)
-			reg["goonbox"] = goonbox.NewGoonBoxScraperWithCookies(cookies)
-			reg["filester"] = filester.NewFilesterScraperWithCookies(cookies)
+	constructors := []struct {
+		name    string
+		plain   func() model.Scraper
+		cookies func([]*http.Cookie) model.Scraper
+		proxy   func(string) (model.Scraper, error)
+	}{
+		{"cyberdrop", func() model.Scraper { return cyberdrop.NewCyberDropScraper() }, func(c []*http.Cookie) model.Scraper { return cyberdrop.NewCyberDropScraperWithCookies(c) }, func(p string) (model.Scraper, error) { return cyberdrop.NewCyberDropScraperWithProxy(p) }},
+		{"bunker", func() model.Scraper { return bunker.NewBunkerScraper() }, func(c []*http.Cookie) model.Scraper { return bunker.NewBunkerScraperWithCookies(c) }, func(p string) (model.Scraper, error) { return bunker.NewBunkerScraperWithProxy(p) }},
+		{"goonbox", func() model.Scraper { return goonbox.NewGoonBoxScraper() }, func(c []*http.Cookie) model.Scraper { return goonbox.NewGoonBoxScraperWithCookies(c) }, func(p string) (model.Scraper, error) { return goonbox.NewGoonBoxScraperWithProxy(p) }},
+		{"filester", func() model.Scraper { return filester.NewFilesterScraper() }, func(c []*http.Cookie) model.Scraper { return filester.NewFilesterScraperWithCookies(c) }, func(p string) (model.Scraper, error) { return filester.NewFilesterScraperWithProxy(p) }},
+	}
+	for _, constructors := range constructors {
+		var scraper model.Scraper
+		var err error
+		if proxyURL != "" {
+			scraper, err = constructors.proxy(proxyURL)
+			if err != nil {
+				return nil, err
+			}
+			if len(cookies) > 0 {
+				scraper.(interface{ SetCookies([]*http.Cookie) }).SetCookies(cookies)
+			}
+		} else if len(cookies) > 0 {
+			scraper = constructors.cookies(cookies)
 		} else {
-			reg["cyberdrop"] = cyberdrop.NewCyberDropScraper()
-			reg["bunker"] = bunker.NewBunkerScraper()
-			reg["goonbox"] = goonbox.NewGoonBoxScraper()
-			reg["filester"] = filester.NewFilesterScraper()
+			scraper = constructors.plain()
 		}
+		reg[constructors.name] = scraper
 	}
 	return reg, nil
 }
@@ -566,44 +579,11 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 		return err
 	}
 
-	var dl dashboard.Downloader
-	if siteName == "youtube" {
-		ytScraper, ok := scraper.(*youtube.Scraper)
-		if !ok {
-			return fmt.Errorf("youtube: unexpected scraper type %T", scraper)
-		}
-		ytDl, err := youtube.NewDownloaderWithConfig(ytScraper, youtube.DownloaderConfig{
-			Concurrency:  cfg.ConcurrentDownloads,
-			Timeout:      cfg.Timeout,
-			UserAgent:    cfg.UserAgent,
-			RateLimit:    rateLimitBytesPerSec,
-			SkipChecksum: cfg.SkipChecksums,
-			ProxyURL:     cfg.Proxy,
-			Cookies:      cfg.ParsedCookies(),
-			Quality:      cfg.Quality,
-			AudioOnly:    cfg.AudioOnly,
-		})
-		if err != nil {
-			return fmt.Errorf("youtube downloader: %w", err)
-		}
-		dl = ytDl
-		defer dl.Shutdown()
-	} else {
-		genericDl, err := downloader.NewDownloaderWithConfig(
-			cfg.ConcurrentDownloads,
-			cfg.Timeout,
-			cfg.UserAgent,
-			cfg.Proxy,
-			cfg.ParsedCookies(),
-		)
-		if err != nil {
-			return fmt.Errorf("downloader: %w", err)
-		}
-		genericDl.SetRateLimit(rateLimitBytesPerSec)
-		genericDl.SetSkipChecksums(cfg.SkipChecksums)
-		dl = genericDl
-		defer dl.Shutdown()
+	dl, err := buildDownloader(scraper, siteName, cfg, rateLimitBytesPerSec)
+	if err != nil {
+		return err
 	}
+	defer dl.Shutdown()
 
 	// The scraper function runs in a background goroutine.
 	scraperFn := func(ctx context.Context) ([]model.MediaItem, error) {
@@ -629,35 +609,77 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 	// When stdout is not a terminal (piped, redirected, cron), the
 	// bubbletea TUI would emit escape-code garbage — fall back to plain
 	// line-based output instead.
+	return finishRun(cfg, opts,
+		func() error {
+			return runJSON(dl, func() ([]model.MediaItem, error) {
+				return scraperFn(context.Background())
+			}, cfg.OutputDir, slug, siteName, targetURL, cfg.Quality, cfg.AudioOnly, os.Stdout)
+		},
+		func() error {
+			return runPlain(dl, func() ([]model.MediaItem, error) {
+				return scraperFn(context.Background())
+			}, cfg.OutputDir, slug, os.Stdout)
+		},
+		func() error {
+			d := dashboard.New(scraperFn, dl, cfg.OutputDir, siteName)
+			d.SetAlbumSlug(slug)
+
+			p := tea.NewProgram(d, tea.WithAltScreen())
+			d.SetSendFunc(func(msg tea.Msg) { p.Send(msg) })
+
+			_, err := p.Run()
+			return err
+		},
+	)
+}
+
+func buildDownloader(scraper model.Scraper, siteName string, cfg *config.Config, rateLimitBytesPerSec int64) (dashboard.Downloader, error) {
+	if siteName == "youtube" {
+		ytScraper, ok := scraper.(*youtube.Scraper)
+		if !ok {
+			return nil, fmt.Errorf("youtube: unexpected scraper type %T", scraper)
+		}
+		dl, err := youtube.NewDownloaderWithConfig(ytScraper, youtube.DownloaderConfig{
+			Concurrency:  cfg.ConcurrentDownloads,
+			Timeout:      cfg.Timeout,
+			UserAgent:    cfg.UserAgent,
+			RateLimit:    rateLimitBytesPerSec,
+			SkipChecksum: cfg.SkipChecksums,
+			ProxyURL:     cfg.Proxy,
+			Cookies:      cfg.ParsedCookies(),
+			Quality:      cfg.Quality,
+			AudioOnly:    cfg.AudioOnly,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("youtube downloader: %w", err)
+		}
+		return dl, nil
+	}
+
+	dl, err := downloader.NewDownloaderWithConfig(
+		cfg.ConcurrentDownloads,
+		cfg.Timeout,
+		cfg.UserAgent,
+		cfg.Proxy,
+		cfg.ParsedCookies(),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("downloader: %w", err)
+	}
+	dl.SetRateLimit(rateLimitBytesPerSec)
+	dl.SetSkipChecksums(cfg.SkipChecksums)
+	return dl, nil
+}
+
+func finishRun(cfg *config.Config, opts globalOptions, jsonRun, plainRun, tuiRun func() error) error {
+	var err error
 	if opts.json {
-		err := runJSON(dl, func() ([]model.MediaItem, error) {
-			return scraperFn(context.Background())
-		}, cfg.OutputDir, slug, siteName, targetURL, cfg.Quality, cfg.AudioOnly, os.Stdout)
-		if cfg.Notify {
-			tryNotify(cfg, "Download complete")
-		}
-		return err
+		err = jsonRun()
+	} else if opts.noTui || !term.IsTerminal(int(os.Stdout.Fd())) {
+		err = plainRun()
+	} else {
+		err = tuiRun()
 	}
-
-	if opts.noTui || !term.IsTerminal(int(os.Stdout.Fd())) {
-		err := runPlain(dl, func() ([]model.MediaItem, error) {
-			return scraperFn(context.Background())
-		}, cfg.OutputDir, slug, os.Stdout)
-		if cfg.Notify {
-			tryNotify(cfg, "Download complete")
-		}
-		return err
-	}
-
-	d := dashboard.New(scraperFn, dl, cfg.OutputDir, siteName)
-
-	// Pass the URL slug so the dashboard can create a subfolder for albums.
-	d.SetAlbumSlug(slug)
-
-	p := tea.NewProgram(d, tea.WithAltScreen())
-	d.SetSendFunc(func(msg tea.Msg) { p.Send(msg) })
-
-	_, err = p.Run()
 	if cfg.Notify {
 		tryNotify(cfg, "Download complete")
 	}
@@ -865,32 +887,23 @@ func runBatch(opts globalOptions, urls []string) error {
 		}
 	}
 
-	if opts.json {
-		err := runBatchJSON(dl, dashAlbums, cfg.OutputDir, cfg.Quality, cfg.AudioOnly, os.Stdout)
-		if cfg.Notify {
-			tryNotify(cfg, "Download complete")
-		}
-		return err
-	}
+	return finishRun(cfg, opts,
+		func() error {
+			return runBatchJSON(dl, dashAlbums, cfg.OutputDir, cfg.Quality, cfg.AudioOnly, os.Stdout)
+		},
+		func() error {
+			return runBatchPlain(dl, dashAlbums, cfg.OutputDir, os.Stdout)
+		},
+		func() error {
+			d := dashboard.NewBatch(dl, cfg.OutputDir, dashAlbums)
 
-	if opts.noTui || !term.IsTerminal(int(os.Stdout.Fd())) {
-		err := runBatchPlain(dl, dashAlbums, cfg.OutputDir, os.Stdout)
-		if cfg.Notify {
-			tryNotify(cfg, "Download complete")
-		}
-		return err
-	}
+			p := tea.NewProgram(d, tea.WithAltScreen())
+			d.SetSendFunc(func(msg tea.Msg) { p.Send(msg) })
 
-	d := dashboard.NewBatch(dl, cfg.OutputDir, dashAlbums)
-
-	p := tea.NewProgram(d, tea.WithAltScreen())
-	d.SetSendFunc(func(msg tea.Msg) { p.Send(msg) })
-
-	_, err = p.Run()
-	if cfg.Notify {
-		tryNotify(cfg, "Download complete")
-	}
-	return err
+			_, err := p.Run()
+			return err
+		},
+	)
 }
 
 var batchScraperRegistry = scraperRegistry
@@ -900,37 +913,11 @@ var batchYouTubeScraper = func() model.Scraper {
 }
 
 var batchYouTubeDownloader = func(scraper model.Scraper, cfg *config.Config, rateLimitBytesPerSec int64) (dashboard.Downloader, error) {
-	ytScraper, ok := scraper.(*youtube.Scraper)
-	if !ok {
-		return nil, fmt.Errorf("unexpected YouTube scraper type %T", scraper)
-	}
-	return youtube.NewDownloaderWithConfig(ytScraper, youtube.DownloaderConfig{
-		Concurrency:  cfg.ConcurrentDownloads,
-		Timeout:      cfg.Timeout,
-		UserAgent:    cfg.UserAgent,
-		RateLimit:    rateLimitBytesPerSec,
-		SkipChecksum: cfg.SkipChecksums,
-		ProxyURL:     cfg.Proxy,
-		Cookies:      cfg.ParsedCookies(),
-		Quality:      cfg.Quality,
-		AudioOnly:    cfg.AudioOnly,
-	})
+	return buildDownloader(scraper, "youtube", cfg, rateLimitBytesPerSec)
 }
 
 var batchGenericDownloader = func(cfg *config.Config, rateLimitBytesPerSec int64) (dashboard.Downloader, error) {
-	dl, err := downloader.NewDownloaderWithConfig(
-		cfg.ConcurrentDownloads,
-		cfg.Timeout,
-		cfg.UserAgent,
-		cfg.Proxy,
-		cfg.ParsedCookies(),
-	)
-	if err != nil {
-		return nil, err
-	}
-	dl.SetRateLimit(rateLimitBytesPerSec)
-	dl.SetSkipChecksums(cfg.SkipChecksums)
-	return dl, nil
+	return buildDownloader(nil, "generic", cfg, rateLimitBytesPerSec)
 }
 
 // runDryRun scrapes targetURL and prints the item count and total size
