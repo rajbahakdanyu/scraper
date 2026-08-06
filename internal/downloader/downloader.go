@@ -19,6 +19,7 @@ import (
 	"golang.org/x/sys/unix"
 	"golang.org/x/time/rate"
 
+	"github.com/rajbahakdanyu/scraper/internal/downloadercore"
 	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 	"github.com/rajbahakdanyu/scraper/internal/model"
 	"github.com/rajbahakdanyu/scraper/internal/netutil"
@@ -61,24 +62,17 @@ func (realSleeper) SleepCtx(ctx context.Context, d time.Duration) error {
 // Downloader manages concurrent media downloads with progress tracking,
 // cancellation, retry, and atomic file writes.
 type Downloader struct {
-	client        *http.Client
-	userAgent     string
-	progress      chan model.ProgressEvent
+	*downloadercore.Core
+	client    *http.Client
+	userAgent string
+	// These aliases keep existing package tests able to inspect coordination
+	// state while the embedded core owns the state and its lifecycle.
+	mu            *sync.Mutex
 	cancelMap     map[string]context.CancelFunc
-	queued        map[string]struct{}
-	cancelled     map[string]struct{}
-	mu            sync.Mutex
 	sem           chan struct{}
-	limiter       *rate.Limiter
 	skipChecksums bool
 	paths         *fileutil.PathAllocator
 	sleeper       Sleeper
-	// wg tracks in-flight Download calls. Shutdown closes the progress
-	// channel only after wg drains, so a sendProgress can never hit a
-	// closed channel. shuttingDown (guarded by mu) makes post-Shutdown
-	// Download calls fail fast instead of joining wg.
-	wg           sync.WaitGroup
-	shuttingDown bool
 }
 
 // NewDownloaderWithConfig creates a Downloader using settings from a config.
@@ -103,14 +97,14 @@ func NewDownloaderWithConfig(concurrency int, timeout time.Duration, userAgent, 
 		return nil, err
 	}
 	client = netutil.WithCookies(client, cookies)
+	core := downloadercore.New(concurrency, progressBufSize, nil, false)
 	return &Downloader{
+		Core:      core,
 		client:    client,
 		userAgent: userAgent,
-		progress:  make(chan model.ProgressEvent, progressBufSize),
-		cancelMap: make(map[string]context.CancelFunc),
-		queued:    make(map[string]struct{}),
-		cancelled: make(map[string]struct{}),
-		sem:       make(chan struct{}, concurrency),
+		mu:        core.Mutex(),
+		cancelMap: core.CancelMap(),
+		sem:       core.Semaphore(),
 		paths:     fileutil.NewPathAllocator(),
 		sleeper:   realSleeper{},
 	}, nil
@@ -121,9 +115,7 @@ func NewDownloaderWithConfig(concurrency int, timeout time.Duration, userAgent, 
 func (d *Downloader) SetSleeper(s Sleeper) { d.sleeper = s }
 
 func (d *Downloader) Prepare(item model.MediaItem) {
-	d.mu.Lock()
-	d.queued[item.Key()] = struct{}{}
-	d.mu.Unlock()
+	d.Core.Prepare(item.Key())
 }
 
 // SetRateLimit caps the combined download speed across all concurrent
@@ -131,10 +123,10 @@ func (d *Downloader) Prepare(item model.MediaItem) {
 // Call this before starting downloads, not concurrently with them.
 func (d *Downloader) SetRateLimit(bytesPerSec int64) {
 	if bytesPerSec <= 0 {
-		d.limiter = nil
+		d.Core.SetLimiter(nil)
 		return
 	}
-	d.limiter = rate.NewLimiter(rate.Limit(bytesPerSec), minRateLimitBurst)
+	d.Core.SetLimiter(rate.NewLimiter(rate.Limit(bytesPerSec), minRateLimitBurst))
 }
 
 // SetSkipChecksums disables writing and verifying the .sha256 sidecar file
@@ -158,42 +150,11 @@ func (d *Downloader) SetSkipChecksums(skip bool) {
 // retried once with a freshly re-resolved URL instead of failing
 // permanently; a second 403 is permanent like any other client error.
 func (d *Downloader) Download(item model.MediaItem, dest string) (string, error) {
-	ctx, cancel := context.WithCancel(context.Background())
-	d.mu.Lock()
-	if d.shuttingDown {
-		// Fail fast after Shutdown. This path is not tracked by d.wg, so
-		// it must not sendProgress — the channel may already be closed.
-		d.mu.Unlock()
-		cancel()
-		return "", fmt.Errorf("downloader is shut down: %s", item.URL)
+	ctx, _, release, err := d.Core.Begin(item.Key(), item, model.ProgressEvent{Item: item, Status: model.StatusCancelled})
+	if err != nil {
+		return "", err
 	}
-	d.wg.Add(1)
-	delete(d.queued, item.Key())
-	if _, ok := d.cancelled[item.Key()]; ok {
-		delete(d.cancelled, item.Key())
-		d.mu.Unlock()
-		cancel()
-		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled})
-		d.wg.Done()
-		return "", &model.CancelledError{URL: item.URL}
-	}
-	d.cancelMap[item.Key()] = cancel
-	d.mu.Unlock()
-	defer d.wg.Done()
-	defer func() {
-		d.mu.Lock()
-		delete(d.cancelMap, item.Key())
-		d.mu.Unlock()
-		cancel()
-	}()
-
-	select {
-	case d.sem <- struct{}{}:
-		defer func() { <-d.sem }()
-	case <-ctx.Done():
-		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled})
-		return "", &model.CancelledError{URL: item.URL}
-	}
+	defer release()
 
 	filename := fileutil.SanitizeFilename(item.Title)
 	if filename == "" {
@@ -495,7 +456,7 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, res
 				Status: model.StatusDownloading,
 			})
 		},
-		limiter: d.limiter,
+		limiter: d.Core.Limiter(),
 		ctx:     ctx,
 	}
 
@@ -561,14 +522,7 @@ func (pr *progressReader) Read(p []byte) (int, error) {
 // interrupts an in-progress body read right away rather than waiting for
 // the current attempt to finish.
 func (d *Downloader) Cancel(item model.MediaItem) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if cancel, ok := d.cancelMap[item.Key()]; ok {
-		cancel()
-		delete(d.cancelMap, item.Key())
-	} else if _, ok := d.queued[item.Key()]; ok {
-		d.cancelled[item.Key()] = struct{}{}
-	}
+	d.Core.Cancel(item.Key())
 }
 
 // Shutdown cancels every active download — aborting in-flight HTTP
@@ -581,42 +535,20 @@ func (d *Downloader) Cancel(item model.MediaItem) {
 // closes asynchronously); afterwards Download calls fail fast instead of
 // starting new work.
 func (d *Downloader) Shutdown() {
-	d.mu.Lock()
-	if d.shuttingDown {
-		d.mu.Unlock()
-		return
-	}
-	d.shuttingDown = true
-	cancels := make([]context.CancelFunc, 0, len(d.cancelMap))
-	for _, cancel := range d.cancelMap {
-		cancels = append(cancels, cancel)
-	}
-	d.mu.Unlock()
-
-	for _, cancel := range cancels {
-		cancel()
-	}
-
-	go func() {
-		d.wg.Wait()
-		close(d.progress)
-	}()
+	d.Core.Shutdown()
 }
 
 // Progress returns a read-only channel of download progress events. The
 // channel is closed by Shutdown once all in-flight downloads have returned.
 func (d *Downloader) Progress() <-chan model.ProgressEvent {
-	return d.progress
+	return d.Core.Progress()
 }
 
 // sendProgress sends an event. Uses a large buffer (4096) so events
 // are rarely dropped. If the buffer is full the event is dropped to
 // prevent stalling the download goroutine.
 func (d *Downloader) sendProgress(evt model.ProgressEvent) {
-	select {
-	case d.progress <- evt:
-	default:
-	}
+	d.Core.SendProgress(evt)
 }
 
 func parseContentRange(headerVal string) (start, end, total int64, err error) {

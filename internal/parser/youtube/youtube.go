@@ -17,6 +17,7 @@ import (
 	"time"
 
 	ytdl "github.com/kkdai/youtube/v2"
+	"github.com/rajbahakdanyu/scraper/internal/downloadercore"
 	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 	"github.com/rajbahakdanyu/scraper/internal/model"
 	"github.com/rajbahakdanyu/scraper/internal/netutil"
@@ -775,12 +776,10 @@ type DownloaderConfig struct {
 // highest-quality format available for that item, muxing video+audio with
 // ffmpeg when they aren't already combined in one stream.
 type Downloader struct {
-	scraper   *Scraper
-	progress  chan model.ProgressEvent
-	mu        sync.Mutex
-	cancelMap map[string]context.CancelFunc
-	queued    map[string]struct{}
-	cancelled map[string]struct{}
+	*downloadercore.Core
+	scraper *Scraper
+	// These aliases preserve the package-level policy inspection used by
+	// existing tests; Core remains authoritative for coordination and policy.
 	sem       chan struct{}
 	paths     *fileutil.PathAllocator
 	limiter   *rate.Limiter
@@ -829,13 +828,11 @@ func NewDownloaderWithConfig(scraper *Scraper, config DownloaderConfig) (*Downlo
 	if config.Quality != "" {
 		maxHeight = parseQualityHeight(config.Quality)
 	}
+	core := downloadercore.New(config.Concurrency, progressBufSize, limiter, config.SkipChecksum)
 	return &Downloader{
+		Core:      core,
 		scraper:   scraper,
-		progress:  make(chan model.ProgressEvent, progressBufSize),
-		cancelMap: make(map[string]context.CancelFunc),
-		queued:    make(map[string]struct{}),
-		cancelled: make(map[string]struct{}),
-		sem:       make(chan struct{}, config.Concurrency),
+		sem:       core.Semaphore(),
 		paths:     fileutil.NewPathAllocator(),
 		limiter:   limiter,
 		skipSum:   config.SkipChecksum,
@@ -895,48 +892,16 @@ var _ interface {
 } = (*Downloader)(nil)
 
 func (d *Downloader) Prepare(item model.MediaItem) {
-	d.mu.Lock()
-	d.queued[item.Key()] = struct{}{}
-	d.mu.Unlock()
+	d.Core.Prepare(item.Key())
 }
 
 func (d *Downloader) Download(item model.MediaItem, dest string) (string, error) {
-	ctx, cancel := context.WithCancel(context.Background())
-	d.mu.Lock()
-	if d.shuttingDown {
-		// Fail fast after Shutdown. This path is not tracked by d.wg, so
-		// it must not sendProgress — the channel may already be closed.
-		d.mu.Unlock()
-		cancel()
-		return "", fmt.Errorf("downloader is shut down: %s", item.URL)
+	cancelledEvent := model.ProgressEvent{Item: item, Status: model.StatusCancelled, Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly}
+	ctx, _, release, err := d.Core.Begin(item.Key(), item, cancelledEvent)
+	if err != nil {
+		return "", err
 	}
-	d.wg.Add(1)
-	delete(d.queued, item.Key())
-	if _, ok := d.cancelled[item.Key()]; ok {
-		delete(d.cancelled, item.Key())
-		d.mu.Unlock()
-		cancel()
-		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled, Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
-		d.wg.Done()
-		return "", &model.CancelledError{URL: item.URL}
-	}
-	d.cancelMap[item.Key()] = cancel
-	d.mu.Unlock()
-	defer d.wg.Done()
-	defer func() {
-		d.mu.Lock()
-		delete(d.cancelMap, item.Key())
-		d.mu.Unlock()
-		cancel()
-	}()
-
-	select {
-	case d.sem <- struct{}{}:
-		defer func() { <-d.sem }()
-	case <-ctx.Done():
-		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled, Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
-		return "", &model.CancelledError{URL: item.URL}
-	}
+	defer release()
 
 	d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusDownloading, Start: time.Now(), Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
 
@@ -947,9 +912,9 @@ func (d *Downloader) Download(item model.MediaItem, dest string) (string, error)
 	}
 
 	var finalPath string
-	err := withRetry(ctx, func() error {
+	err = withRetry(ctx, func() error {
 		var err error
-		finalPath, err = d.scraper.downloadBest(ctx, videoID, dest, item.Key(), d.paths, d.limiter, d.skipSum, d.quality, d.audioOnly, func(bytes, total int64) {
+		finalPath, err = d.scraper.downloadBest(ctx, videoID, dest, item.Key(), d.paths, d.Core.Limiter(), d.Core.SkipSum(), d.quality, d.audioOnly, func(bytes, total int64) {
 			d.sendProgress(model.ProgressEvent{Item: item, Bytes: bytes, Total: total, Status: model.StatusDownloading, Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
 		})
 		return err
@@ -972,14 +937,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) (string, error)
 // in-flight stream fetch or ffmpeg mux right away rather than waiting for
 // it to finish.
 func (d *Downloader) Cancel(item model.MediaItem) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if cancel, ok := d.cancelMap[item.Key()]; ok {
-		cancel()
-		delete(d.cancelMap, item.Key())
-	} else if _, ok := d.queued[item.Key()]; ok {
-		d.cancelled[item.Key()] = struct{}{}
-	}
+	d.Core.Cancel(item.Key())
 }
 
 // Shutdown cancels every active download — aborting in-flight stream
@@ -992,37 +950,15 @@ func (d *Downloader) Cancel(item model.MediaItem) {
 // closes asynchronously); afterwards Download calls fail fast instead of
 // starting new work.
 func (d *Downloader) Shutdown() {
-	d.mu.Lock()
-	if d.shuttingDown {
-		d.mu.Unlock()
-		return
-	}
-	d.shuttingDown = true
-	cancels := make([]context.CancelFunc, 0, len(d.cancelMap))
-	for _, cancel := range d.cancelMap {
-		cancels = append(cancels, cancel)
-	}
-	d.mu.Unlock()
-
-	for _, cancel := range cancels {
-		cancel()
-	}
-
-	go func() {
-		d.wg.Wait()
-		close(d.progress)
-	}()
+	d.Core.Shutdown()
 }
 
 // Progress returns a read-only channel of download progress events. The
 // channel is closed by Shutdown once all in-flight downloads have returned.
 func (d *Downloader) Progress() <-chan model.ProgressEvent {
-	return d.progress
+	return d.Core.Progress()
 }
 
 func (d *Downloader) sendProgress(evt model.ProgressEvent) {
-	select {
-	case d.progress <- evt:
-	default:
-	}
+	d.Core.SendProgress(evt)
 }
