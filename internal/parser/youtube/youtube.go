@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/rand"
 	"net/http"
 	"net/url"
 	"os"
@@ -260,7 +259,7 @@ func (s *Scraper) downloadBest(ctx context.Context, videoID, dest, owner string,
 		// The video has no downloadable formats (region-locked,
 		// members-only, audio-less, ...) — refetching the same metadata
 		// on a retry won't change that.
-		return &nonRetryableError{err}
+		return model.NewNonRetryable(err)
 	}
 
 	if audioOnly != "" {
@@ -284,7 +283,7 @@ func (s *Scraper) downloadAudioOnly(ctx context.Context, video *ytdl.Video, vide
 	if audioFormat == "mp3" {
 		ext = "mp3"
 	}
-	finalPath := paths.Claim(filepath.Join(dest, sanitizeFilename(title)+"."+ext), owner)
+	finalPath := paths.Claim(filepath.Join(dest, fileutil.SanitizeFilename(title)+"."+ext), owner)
 	skip, err := prepareOutput(finalPath, skipChecksums)
 	if err != nil {
 		return err
@@ -320,7 +319,7 @@ func (s *Scraper) downloadStreamDirect(ctx context.Context, video *ytdl.Video, f
 	if strings.Contains(format.MimeType, "webm") {
 		ext = "webm"
 	}
-	finalPath := paths.Claim(filepath.Join(dest, sanitizeFilename(title)+"."+ext), owner)
+	finalPath := paths.Claim(filepath.Join(dest, fileutil.SanitizeFilename(title)+"."+ext), owner)
 	skip, err := prepareOutput(finalPath, skipChecksums)
 	if err != nil {
 		return err
@@ -352,7 +351,7 @@ func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFm
 
 	tmpDir, err := os.MkdirTemp("", "scraper-yt-")
 	if err != nil {
-		return &nonRetryableError{err}
+		return model.NewNonRetryable(err)
 	}
 	defer os.RemoveAll(tmpDir)
 
@@ -462,7 +461,7 @@ func muxStreams(ctx context.Context, videoPath, audioPath, outputPath string, au
 		// succeed, so that stays retryable.
 		var exitErr *exec.ExitError
 		if !errors.As(err, &exitErr) {
-			return &nonRetryableError{fmt.Errorf("youtube: failed to start ffmpeg: %w", err)}
+			return model.NewNonRetryable(fmt.Errorf("youtube: failed to start ffmpeg: %w", err))
 		}
 		detail := strings.TrimSpace(stderr.String())
 		if idx := strings.LastIndex(detail, "\n"); idx >= 0 {
@@ -494,7 +493,7 @@ func extractAudio(ctx context.Context, srcPath, outputPath, format string) error
 	if err := cmd.Run(); err != nil {
 		var exitErr *exec.ExitError
 		if !errors.As(err, &exitErr) {
-			return &nonRetryableError{fmt.Errorf("youtube: failed to start ffmpeg: %w", err)}
+			return model.NewNonRetryable(fmt.Errorf("youtube: failed to start ffmpeg: %w", err))
 		}
 		stderrLines := strings.Split(strings.TrimSpace(stderr.String()), "\n")
 		lastLine := ""
@@ -525,7 +524,7 @@ func copyStreamToFile(ctx context.Context, stream io.Reader, size int64, path st
 	if err != nil {
 		// Local filesystem failures are permanent — a retry can't make
 		// the destination writable.
-		return &nonRetryableError{err}
+		return model.NewNonRetryable(err)
 	}
 	closed := false
 	defer func() {
@@ -545,7 +544,7 @@ func copyStreamToFile(ctx context.Context, stream io.Reader, size int64, path st
 				}
 			}
 			if _, werr := out.Write(buf[:n]); werr != nil {
-				return &nonRetryableError{werr}
+				return model.NewNonRetryable(werr)
 			}
 			read += int64(n)
 			if onProgress != nil {
@@ -563,7 +562,7 @@ func copyStreamToFile(ctx context.Context, stream io.Reader, size int64, path st
 		}
 	}
 	if err := out.Close(); err != nil {
-		return &nonRetryableError{err}
+		return model.NewNonRetryable(err)
 	}
 	closed = true
 	if size > 0 && read != size {
@@ -581,11 +580,11 @@ func prepareOutput(path string, skipChecksums bool) (bool, error) {
 		return false, nil
 	}
 	if err != nil {
-		return false, &nonRetryableError{err}
+		return false, model.NewNonRetryable(err)
 	}
 	if info.Size() == 0 {
 		if err := os.Remove(path); err != nil {
-			return false, &nonRetryableError{err}
+			return false, model.NewNonRetryable(err)
 		}
 		return false, nil
 	}
@@ -594,16 +593,16 @@ func prepareOutput(path string, skipChecksums bool) (bool, error) {
 	}
 	present, matches, err := fileutil.VerifyChecksum(path)
 	if err != nil {
-		return false, &nonRetryableError{err}
+		return false, model.NewNonRetryable(err)
 	}
 	if !present || matches {
 		return true, nil
 	}
 	if err := os.Remove(path); err != nil {
-		return false, &nonRetryableError{err}
+		return false, model.NewNonRetryable(err)
 	}
 	if err := os.Remove(fileutil.ChecksumPath(path)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return false, &nonRetryableError{err}
+		return false, model.NewNonRetryable(err)
 	}
 	return false, nil
 }
@@ -612,11 +611,11 @@ func prepareOutput(path string, skipChecksums bool) (bool, error) {
 // error it returns is wrapped as nonRetryable (see prepareOutput).
 func commitOutput(tempPath, finalPath string, skipChecksums bool) error {
 	if err := os.Rename(tempPath, finalPath); err != nil {
-		return &nonRetryableError{err}
+		return model.NewNonRetryable(err)
 	}
 	if !skipChecksums {
 		if err := fileutil.WriteChecksum(finalPath); err != nil {
-			return &nonRetryableError{fmt.Errorf("write checksum for %s: %w", finalPath, err)}
+			return model.NewNonRetryable(fmt.Errorf("write checksum for %s: %w", finalPath, err))
 		}
 	}
 	return nil
@@ -681,30 +680,12 @@ func videoWatchURL(videoID string) string {
 	return "https://www.youtube.com/watch?v=" + videoID
 }
 
-// sanitizeFilename removes characters that are invalid in filenames. It also
-// rejects "." and ".." (once slashes are stripped, these are the only
-// remaining path segments that could otherwise let a crafted video title
-// make the joined download path escape the destination directory).
-func sanitizeFilename(s string) string {
-	clean := make([]rune, 0, len(s))
-	for _, r := range s {
-		if r >= 32 && r != ':' && r != '<' && r != '>' && r != '|' && r != '/' && r != '\\' && r != '?' && r != '*' {
-			clean = append(clean, r)
-		}
-	}
-	result := string(clean)
-	if result == "" || result == "." || result == ".." {
-		return ""
-	}
-	return result
-}
-
 // safeOutputPath joins dest and the sanitized title into an absolute .mp4
 // path. Making it absolute ensures that even if dest is relative (e.g. ".")
 // and the sanitized title happens to start with "-", ffmpeg's argument
 // parser can never misread the muxed output path as a flag.
 func safeOutputPath(dest, title string) string {
-	p := filepath.Join(dest, sanitizeFilename(title)+".mp4")
+	p := filepath.Join(dest, fileutil.SanitizeFilename(title)+".mp4")
 	if abs, err := filepath.Abs(p); err == nil {
 		return abs
 	}
@@ -722,21 +703,11 @@ const (
 	retryBaseDelay      = 500 * time.Millisecond
 )
 
-// nonRetryableError marks an error that will never succeed no matter how
-// many times it's retried (no downloadable formats, a missing ffmpeg
-// binary, a local filesystem failure). Mirrors the downloader's error
-// classification; deliberately duplicated rather than shared (see
-// BACKLOG.md).
-type nonRetryableError struct{ err error }
-
-func (e *nonRetryableError) Error() string { return e.err.Error() }
-func (e *nonRetryableError) Unwrap() error { return e.err }
-
 // withRetry runs fn up to maxRetries times with exponential backoff +
 // jitter between attempts, mirroring the generic downloader's policy: a
 // single transient network blip shouldn't fail a whole video. A cancelled
 // context stops the loop immediately instead of sleeping through backoff,
-// and a nonRetryableError (a permanent failure retrying can't fix) stops
+// and a model.NonRetryableError (a permanent failure retrying can't fix) stops
 // it after the first attempt.
 func withRetry(ctx context.Context, fn func() error) error {
 	var lastErr error
@@ -745,7 +716,7 @@ func withRetry(ctx context.Context, fn func() error) error {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case <-time.After(backoffWithJitter(retryBaseDelay, attempt)):
+			case <-time.After(netutil.BackoffWithJitter(retryBaseDelay, attempt)):
 			}
 		}
 		if lastErr = fn(); lastErr == nil {
@@ -754,7 +725,7 @@ func withRetry(ctx context.Context, fn func() error) error {
 		if ctx.Err() != nil {
 			break
 		}
-		var nre *nonRetryableError
+		var nre *model.NonRetryableError
 		if errors.As(lastErr, &nre) {
 			// Permanent failure (no formats, missing ffmpeg, local
 			// filesystem): another attempt would just re-download the
@@ -763,15 +734,6 @@ func withRetry(ctx context.Context, fn func() error) error {
 		}
 	}
 	return lastErr
-}
-
-// backoffWithJitter returns an exponentially increasing delay (base *
-// 2^attempt) with up to ~30% random jitter added.
-func backoffWithJitter(base time.Duration, attempt int) time.Duration {
-	d := base << uint(attempt)
-	// #nosec G404 -- retry jitter does not require cryptographic randomness.
-	jitter := time.Duration(rand.Int63n(int64(d)/3 + 1))
-	return d + jitter
 }
 
 type DownloaderConfig struct {

@@ -61,28 +61,6 @@ func (s *Scraper) Name() string {
 	return "cyberdrop"
 }
 
-// nonRetryableError marks an error that will never succeed no matter how
-// many times it's retried (e.g. an HTTP 4xx client error other than
-// 408/429). Mirrors the downloader's error classification; deliberately
-// duplicated rather than shared (see BACKLOG.md).
-type nonRetryableError struct{ err error }
-
-func (e *nonRetryableError) Error() string { return e.err.Error() }
-func (e *nonRetryableError) Unwrap() error { return e.err }
-
-// isRetryableStatus reports whether an HTTP status code represents a
-// transient failure worth retrying (5xx, request timeout, rate limiting)
-// as opposed to a client error (bad URL, forbidden, not found, ...) that
-// will never succeed no matter how many times it's retried.
-func isRetryableStatus(code int) bool {
-	switch code {
-	case http.StatusRequestTimeout, http.StatusTooManyRequests:
-		return true
-	default:
-		return code >= 500
-	}
-}
-
 // permanentIfNotRetryable translates a permanent resolve-API failure (a
 // 4xx other than 408/429 — e.g. the file is gone upstream) into a
 // model.PermanentError so the downloader fails the item immediately
@@ -93,7 +71,7 @@ func permanentIfNotRetryable(signedURL string, err error) (string, error) {
 	if err == nil {
 		return signedURL, nil
 	}
-	var nre *nonRetryableError
+	var nre *model.NonRetryableError
 	if errors.As(err, &nre) {
 		return "", &model.PermanentError{Err: err}
 	}
@@ -147,8 +125,8 @@ func (s *Scraper) fetchFileInfo(ctx context.Context, slug string) (fileInfo, err
 
 	if infoResp.StatusCode != http.StatusOK {
 		err := fmt.Errorf("cyberdrop: file not found (HTTP %d) for slug %s", infoResp.StatusCode, slug)
-		if !isRetryableStatus(infoResp.StatusCode) {
-			return fileInfo{}, &nonRetryableError{err}
+		if !model.IsRetryableStatus(infoResp.StatusCode) {
+			return fileInfo{}, model.NewNonRetryable(err)
 		}
 		return fileInfo{}, err
 	}
@@ -184,8 +162,8 @@ func (s *Scraper) fetchSignedURL(ctx context.Context, authURL, slug string) (str
 
 	if authResp.StatusCode != http.StatusOK {
 		err := fmt.Errorf("cyberdrop: failed to get download URL (HTTP %d)", authResp.StatusCode)
-		if !isRetryableStatus(authResp.StatusCode) {
-			return "", &nonRetryableError{err}
+		if !model.IsRetryableStatus(authResp.StatusCode) {
+			return "", model.NewNonRetryable(err)
 		}
 		return "", err
 	}

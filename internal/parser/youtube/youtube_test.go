@@ -354,7 +354,7 @@ func TestWithRetryDoesNotRetryPermanentErrors(t *testing.T) {
 	attempts := 0
 	err := withRetry(t.Context(), func() error {
 		attempts++
-		return &nonRetryableError{errors.New("youtube: no video formats found for xyz")}
+		return model.NewNonRetryable(errors.New("youtube: no video formats found for xyz"))
 	})
 	if err == nil {
 		t.Fatal("expected an error")
@@ -375,7 +375,7 @@ func TestDownloadBestNoFormatsIsPermanent(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error for a video with no downloadable formats")
 	}
-	var nre *nonRetryableError
+	var nre *model.NonRetryableError
 	if !errors.As(err, &nre) {
 		t.Fatalf("format-selection failure must be classified permanent, got %T: %v", err, err)
 	}
@@ -428,7 +428,7 @@ func TestMuxStreamsMissingFFmpegIsPermanent(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error when ffmpeg is not installed")
 	}
-	var nre *nonRetryableError
+	var nre *model.NonRetryableError
 	if !errors.As(err, &nre) {
 		t.Fatalf("a missing ffmpeg binary must be permanent (not retried), got %T: %v", err, err)
 	}
@@ -444,7 +444,7 @@ func TestMuxStreamsMuxFailureStaysRetryable(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error when ffmpeg fails")
 	}
-	var nre *nonRetryableError
+	var nre *model.NonRetryableError
 	if errors.As(err, &nre) {
 		t.Fatalf("a mux failure must stay retryable, got %T: %v", err, err)
 	}

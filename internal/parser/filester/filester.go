@@ -148,41 +148,6 @@ const (
 	resolveRetryBaseDelay = 1500 * time.Millisecond
 )
 
-// backoffWithJitter returns an exponentially increasing delay (base *
-// 2^(attempt-1), attempt starting at 1) with up to ~30% random jitter
-// added on top, so many concurrent callers retrying around the same time
-// (e.g. resolveFile's worker pool) don't all land on the exact same
-// instant and re-trigger whatever rate limiting caused the retry.
-func backoffWithJitter(base time.Duration, attempt int) time.Duration {
-	d := base << uint(attempt-1)
-	// #nosec G404 -- retry jitter does not require cryptographic randomness.
-	jitter := time.Duration(rand.Int63n(int64(d)/3 + 1))
-	return d + jitter
-}
-
-// nonRetryableError marks an error that will never succeed no matter how
-// many times it's retried (e.g. an HTTP 4xx client error other than
-// 408/429, or an undecodable/invalid token response that retrying can't
-// fix). Mirrors the downloader's error classification; deliberately
-// duplicated rather than shared (see BACKLOG.md).
-type nonRetryableError struct{ err error }
-
-func (e *nonRetryableError) Error() string { return e.err.Error() }
-func (e *nonRetryableError) Unwrap() error { return e.err }
-
-// isRetryableStatus reports whether an HTTP status code represents a
-// transient failure worth retrying (5xx, request timeout, rate limiting) as
-// opposed to a client error (bad URL, forbidden, not found, ...) that will
-// never succeed no matter how many times it's retried.
-func isRetryableStatus(code int) bool {
-	switch code {
-	case http.StatusRequestTimeout, http.StatusTooManyRequests:
-		return true
-	default:
-		return code >= 500
-	}
-}
-
 // parseFolder fetches every page of a folder listing and builds one item
 // per file straight from the listing metadata — no per-file requests at
 // all. Each item's Resolve func exchanges the file's slug for a signed
@@ -257,7 +222,7 @@ func (s *Scraper) parseFolder(id string) ([]model.MediaItem, error) {
 					// token endpoint can never succeed, so the
 					// downloader fails the item immediately instead
 					// of retrying with backoff.
-					var nre *nonRetryableError
+					var nre *model.NonRetryableError
 					if errors.As(err, &nre) {
 						return "", &model.PermanentError{Err: err}
 					}
@@ -303,11 +268,11 @@ func (s *Scraper) fetchFolderPage(id string, page int) (entries []folderEntry, p
 	}
 
 	for attempt := 1; attempt < maxPageRetries; attempt++ {
-		time.Sleep(backoffWithJitter(pageRetryBaseDelay, attempt))
+		time.Sleep(netutil.BackoffWithJitter(pageRetryBaseDelay, attempt-1))
 
 		doc, ferr := s.fetchDoc(pageURL)
 		if ferr != nil {
-			var nre *nonRetryableError
+			var nre *model.NonRetryableError
 			if errors.As(ferr, &nre) {
 				// A permanent error (e.g. the folder 404ing mid-scan)
 				// can never recover — stop retrying this page now
@@ -369,14 +334,14 @@ func (s *Scraper) resolveFile(ctx context.Context, slug, knownName string) (mode
 			select {
 			case <-ctx.Done():
 				return model.MediaItem{}, ctx.Err()
-			case <-time.After(backoffWithJitter(resolveRetryBaseDelay, attempt-1)):
+			case <-time.After(netutil.BackoffWithJitter(resolveRetryBaseDelay, attempt-1)):
 			}
 		}
 		item, err := s.resolveFileOnce(ctx, slug, knownName)
 		if err == nil {
 			return item, nil
 		}
-		var nre *nonRetryableError
+		var nre *model.NonRetryableError
 		if errors.As(err, &nre) {
 			// Client errors (404, 403, ...) and token responses that
 			// fail to decode or validate will never succeed no matter
@@ -411,8 +376,8 @@ func (s *Scraper) resolveFileOnce(ctx context.Context, slug, knownName string) (
 
 	if resp.StatusCode != http.StatusOK {
 		err := fmt.Errorf("filester: download token request failed (HTTP %d) for %s", resp.StatusCode, slug)
-		if !isRetryableStatus(resp.StatusCode) {
-			return model.MediaItem{}, &nonRetryableError{err}
+		if !model.IsRetryableStatus(resp.StatusCode) {
+			return model.MediaItem{}, model.NewNonRetryable(err)
 		}
 		return model.MediaItem{}, err
 	}
@@ -424,27 +389,27 @@ func (s *Scraper) resolveFileOnce(ctx context.Context, slug, knownName string) (
 		Name   string `json:"name"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&tok); err != nil {
-		return model.MediaItem{}, &nonRetryableError{err}
+		return model.MediaItem{}, model.NewNonRetryable(err)
 	}
 	if tok.File == "" || tok.Token == "" {
-		return model.MediaItem{}, &nonRetryableError{fmt.Errorf("filester: incomplete download token for %s", slug)}
+		return model.MediaItem{}, model.NewNonRetryable(fmt.Errorf("filester: incomplete download token for %s", slug))
 	}
 
 	server := tok.Server
 	if server == "" {
 		if len(s.cdnURLs) == 0 {
-			return model.MediaItem{}, &nonRetryableError{fmt.Errorf("filester: no CDN server available for %s", slug)}
+			return model.MediaItem{}, model.NewNonRetryable(fmt.Errorf("filester: no CDN server available for %s", slug))
 		}
 		// #nosec G404 -- CDN load distribution is not a security decision.
 		server = s.cdnURLs[rand.Intn(len(s.cdnURLs))]
 	}
 	allowedURLs := append([]string{s.baseURL}, s.cdnURLs...)
 	if err := netutil.NewPolicy(allowedURLs...).ValidateURL(server); err != nil {
-		return model.MediaItem{}, &nonRetryableError{fmt.Errorf("filester: unsafe CDN server for %s: %w", slug, err)}
+		return model.MediaItem{}, model.NewNonRetryable(fmt.Errorf("filester: unsafe CDN server for %s: %w", slug, err))
 	}
 	for _, segment := range strings.Split(tok.File, "/") {
 		if segment == "." || segment == ".." {
-			return model.MediaItem{}, &nonRetryableError{fmt.Errorf("filester: unsafe CDN path for %s", slug)}
+			return model.MediaItem{}, model.NewNonRetryable(fmt.Errorf("filester: unsafe CDN path for %s", slug))
 		}
 	}
 
@@ -498,8 +463,8 @@ func (s *Scraper) fetchDoc(pageURL string) (*goquery.Document, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		err := fmt.Errorf("filester: HTTP %d for %s", resp.StatusCode, pageURL)
-		if !isRetryableStatus(resp.StatusCode) {
-			return nil, &nonRetryableError{err}
+		if !model.IsRetryableStatus(resp.StatusCode) {
+			return nil, model.NewNonRetryable(err)
 		}
 		return nil, err
 	}

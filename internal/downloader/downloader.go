@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/rand"
 	"net/http"
 	"net/url"
 	"os"
@@ -166,7 +165,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 		return fmt.Errorf("download cancelled: %s", item.URL)
 	}
 
-	filename := sanitizeFilename(item.Title)
+	filename := fileutil.SanitizeFilename(item.Title)
 	if filename == "" {
 		filename = "download"
 	}
@@ -237,7 +236,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 			case <-ctx.Done():
 				d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled})
 				return fmt.Errorf("download cancelled: %s", item.URL)
-			case <-time.After(backoffWithJitter(retryBaseDelay, attempt)):
+			case <-time.After(netutil.BackoffWithJitter(retryBaseDelay, attempt)):
 			}
 		}
 
@@ -253,7 +252,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 					// The resolver asserts this can never succeed
 					// (e.g. a 404 from the resolve API): fail
 					// permanently, same as a nonRetryable HTTP status.
-					lastErr = &nonRetryableError{err: err}
+					lastErr = model.NewNonRetryable(err)
 					break
 				}
 				continue
@@ -288,14 +287,14 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 			// through further backoff delays.
 			break
 		}
-		var nre *nonRetryableError
+		var nre *model.NonRetryableError
 		if errors.As(err, &nre) {
 			// A 403 on a lazily resolved signed URL almost always means
 			// the signature expired between resolution and request —
 			// re-resolve once for a fresh URL and retry with it. A
 			// second 403 (or any nonRetryable failure for an item
 			// without a resolver) stays permanent.
-			if item.Resolve != nil && !reResolved && nre.statusCode == http.StatusForbidden {
+			if item.Resolve != nil && !reResolved && nre.StatusCode == http.StatusForbidden {
 				reResolved = true
 				resolvedURL = ""
 				continue
@@ -312,7 +311,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 	}
 
 	var cleanupErr error
-	var nre *nonRetryableError
+	var nre *model.NonRetryableError
 	if errors.As(lastErr, &nre) {
 		// Will never succeed no matter how many times it's retried, so
 		// there's nothing worth resuming — clean up the partial file.
@@ -405,8 +404,8 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, res
 		return errors.Join(fmt.Errorf("HTTP %d for %s (stale partial download discarded)", resp.StatusCode, resolvedURL), cleanupErr)
 	default:
 		err := fmt.Errorf("HTTP %d for %s", resp.StatusCode, resolvedURL)
-		if !isRetryableStatus(resp.StatusCode) {
-			return &nonRetryableError{err: err, statusCode: resp.StatusCode}
+		if !model.IsRetryableStatus(resp.StatusCode) {
+			return model.NewNonRetryableStatus(err, resp.StatusCode)
 		}
 		return err
 	}
@@ -573,41 +572,6 @@ func (d *Downloader) sendProgress(evt model.ProgressEvent) {
 	}
 }
 
-// nonRetryableError marks an error that will never succeed no matter how
-// many times it's retried (e.g. an HTTP 4xx client error other than
-// 408/429). statusCode is the HTTP status that caused it, or 0 when the
-// failure wasn't an HTTP response (e.g. a permanent resolver error).
-type nonRetryableError struct {
-	err        error
-	statusCode int
-}
-
-func (e *nonRetryableError) Error() string { return e.err.Error() }
-func (e *nonRetryableError) Unwrap() error { return e.err }
-
-// backoffWithJitter returns an exponentially increasing delay (base *
-// 2^attempt) with up to ~30% random jitter added, so many concurrent
-// downloads retrying around the same time don't all retry at once.
-func backoffWithJitter(base time.Duration, attempt int) time.Duration {
-	d := base << uint(attempt)
-	// #nosec G404 -- retry jitter does not require cryptographic randomness.
-	jitter := time.Duration(rand.Int63n(int64(d)/3 + 1))
-	return d + jitter
-}
-
-// isRetryableStatus reports whether an HTTP status code represents a
-// transient failure worth retrying (5xx, request timeout, rate limiting) as
-// opposed to a client error (bad URL, forbidden, not found, ...) that will
-// never succeed no matter how many times it's retried.
-func isRetryableStatus(code int) bool {
-	switch code {
-	case http.StatusRequestTimeout, http.StatusTooManyRequests:
-		return true
-	default:
-		return code >= 500
-	}
-}
-
 func parseContentRange(headerVal string) (start, end, total int64, err error) {
 	if _, scanErr := fmt.Sscanf(headerVal, "bytes %d-%d/%d", &start, &end, &total); scanErr != nil {
 		return 0, 0, 0, scanErr
@@ -695,25 +659,6 @@ func removeFiles(paths ...string) error {
 		}
 	}
 	return errors.Join(errs...)
-}
-
-// sanitizeFilename removes characters that are invalid in filenames. It also
-// rejects "." and ".." (once slashes are stripped, these are the only
-// remaining path segments that could otherwise let a crafted item title
-// (e.g. a scraped title of "..") make the joined download path escape the
-// destination directory).
-func sanitizeFilename(s string) string {
-	clean := make([]rune, 0, len(s))
-	for _, r := range s {
-		if r >= 32 && r != ':' && r != '<' && r != '>' && r != '|' && r != '/' && r != '\\' && r != '?' && r != '*' {
-			clean = append(clean, r)
-		}
-	}
-	result := string(clean)
-	if result == "" || result == "." || result == ".." {
-		return ""
-	}
-	return result
 }
 
 // extFromURL extracts the file extension from a URL's path component.
