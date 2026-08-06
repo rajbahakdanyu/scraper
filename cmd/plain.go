@@ -180,6 +180,7 @@ drain:
 		}
 	}
 
+	var realErrs []error
 	for i, item := range items {
 		if errs[i] == nil {
 			continue
@@ -188,9 +189,14 @@ drain:
 		if title == "" {
 			title = item.URL
 		}
+		if model.IsCancelled(errs[i]) {
+			fmt.Fprintf(out, "interrupted: %s\n", title)
+			continue
+		}
 		fmt.Fprintf(out, "failed %s: %v\n", title, errs[i])
+		realErrs = append(realErrs, errs[i])
 	}
-	return model.NewPartialError("download", errs)
+	return model.NewPartialError("download", realErrs)
 }
 
 // runBatchPlain is the non-TTY fallback for runBatch: it scrapes each album
@@ -212,10 +218,24 @@ func runBatchPlain(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, des
 
 	printer := newPlainPrinter(out)
 	progress := dl.Progress()
+	printCh := make(chan string)
 	progressDone := make(chan struct{})
 	go func() {
-		for evt := range progress {
-			printer.event(evt)
+		for printCh != nil || progress != nil {
+			select {
+			case line, ok := <-printCh:
+				if !ok {
+					printCh = nil
+				} else {
+					fmt.Fprint(out, line)
+				}
+			case evt, ok := <-progress:
+				if !ok {
+					progress = nil
+				} else {
+					printer.event(evt)
+				}
+			}
 		}
 		close(progressDone)
 	}()
@@ -223,27 +243,27 @@ func runBatchPlain(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, des
 	var allErrs []error
 	for albumIdx, a := range albums {
 		header := fmt.Sprintf("[%s]", a.Slug)
-		fmt.Fprintln(out, "")
-		fmt.Fprintln(out, strings.Repeat("─", len(header)))
-		fmt.Fprintln(out, header)
-		fmt.Fprintln(out, strings.Repeat("─", len(header)))
+		printCh <- "\n"
+		printCh <- fmt.Sprintf("%s\n", strings.Repeat("─", len(header)))
+		printCh <- fmt.Sprintf("%s\n", header)
+		printCh <- fmt.Sprintf("%s\n", strings.Repeat("─", len(header)))
 
-		fmt.Fprintf(out, "Scraping %s...\n", a.URL)
+		printCh <- fmt.Sprintf("Scraping %s...\n", a.URL)
 		items, err := a.Scraper.Parse(a.URL)
 		if err != nil && len(items) == 0 {
-			fmt.Fprintf(out, "failed: %v\n", err)
+			printCh <- fmt.Sprintf("failed: %v\n", err)
 			allErrs = append(allErrs, err)
 			continue
 		}
 		if err != nil {
-			fmt.Fprintf(out, "Warning: %v\n", err)
+			printCh <- fmt.Sprintf("Warning: %v\n", err)
 		}
 		if len(items) == 0 {
-			fmt.Fprintln(out, "No items found.")
+			printCh <- "No items found.\n"
 			continue
 		}
 
-		fmt.Fprintf(out, "%d items, downloading to %s\n", len(items), a.Dest)
+		printCh <- fmt.Sprintf("%d items, downloading to %s\n", len(items), a.Dest)
 
 		for i := range items {
 			if items[i].ID == "" {
@@ -252,19 +272,19 @@ func runBatchPlain(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, des
 		}
 
 		if err := os.MkdirAll(a.Dest, 0755); err != nil {
-			fmt.Fprintf(out, "failed: create album directory: %v\n", err)
+			printCh <- fmt.Sprintf("failed: create album directory: %v\n", err)
 			allErrs = append(allErrs, err)
 			continue
 		}
 		fi, err := os.Lstat(a.Dest)
 		if err != nil {
-			fmt.Fprintf(out, "failed: create album directory: %v\n", err)
+			printCh <- fmt.Sprintf("failed: create album directory: %v\n", err)
 			allErrs = append(allErrs, err)
 			continue
 		}
 		if fi.Mode()&os.ModeSymlink != 0 {
 			err := fmt.Errorf("refusing to use symlinked output directory: %s", a.Dest)
-			fmt.Fprintf(out, "failed: create album directory: %v\n", err)
+			printCh <- fmt.Sprintf("failed: create album directory: %v\n", err)
 			allErrs = append(allErrs, err)
 			continue
 		}
@@ -298,13 +318,14 @@ func runBatchPlain(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, des
 			if title == "" {
 				title = item.URL
 			}
-			fmt.Fprintf(out, "failed %s: %v\n", title, errs[i])
+			printCh <- fmt.Sprintf("failed %s: %v\n", title, errs[i])
 		}
 		if partialErr := model.NewPartialError("album", errs); partialErr != nil {
 			allErrs = append(allErrs, partialErr)
 		}
 	}
 
+	close(printCh)
 	dl.Shutdown()
 	<-progressDone
 

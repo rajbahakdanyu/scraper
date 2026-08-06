@@ -282,6 +282,107 @@ func TestRunPlainFailsWhenAnyDownloadFails(t *testing.T) {
 	}
 }
 
+func TestRunPlainTreatsCancelledItemsAsInterrupted(t *testing.T) {
+	dl := newFakePlainDownloader()
+	item := model.MediaItem{URL: "https://example.com/cancelled.mp4", Title: "cancelled.mp4"}
+	dl.errs[item.URL] = &model.CancelledError{URL: item.URL}
+
+	var buf bytes.Buffer
+	if err := runPlain(dl, itemsScraper([]model.MediaItem{item}, nil), t.TempDir(), "", &buf); err != nil {
+		t.Fatalf("expected cancellation not to fail the run, got: %v", err)
+	}
+
+	out := buf.String()
+	if strings.Contains(out, "failed cancelled.mp4") {
+		t.Fatalf("cancelled item was reported as failed: %q", out)
+	}
+	if !strings.Contains(out, "interrupted: cancelled.mp4\n") {
+		t.Errorf("expected interrupted line, got: %q", out)
+	}
+}
+
+type blockingBatchDownloader struct {
+	progress   chan model.ProgressEvent
+	allowError chan struct{}
+}
+
+func (d *blockingBatchDownloader) Prepare(model.MediaItem) {}
+func (d *blockingBatchDownloader) Download(item model.MediaItem, _ string) error {
+	d.progress <- model.ProgressEvent{Item: item, Status: model.StatusDownloading}
+	<-d.allowError
+	return errors.New("download boom")
+}
+func (d *blockingBatchDownloader) Cancel(model.MediaItem)               {}
+func (d *blockingBatchDownloader) Shutdown()                            { close(d.progress) }
+func (d *blockingBatchDownloader) Progress() <-chan model.ProgressEvent { return d.progress }
+
+type serialOutputWriter struct {
+	mu        sync.Mutex
+	active    bool
+	overlap   bool
+	lines     []string
+	started   chan struct{}
+	release   chan struct{}
+	startOnce sync.Once
+}
+
+func (w *serialOutputWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	if w.active {
+		w.overlap = true
+	}
+	w.active = true
+	w.lines = append(w.lines, string(p))
+	if strings.Contains(string(p), "downloading ") {
+		w.startOnce.Do(func() { close(w.started) })
+		<-w.release
+	}
+	w.active = false
+	w.mu.Unlock()
+	return len(p), nil
+}
+
+func (w *serialOutputWriter) hasOverlap() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.overlap
+}
+
+func (w *serialOutputWriter) output() []string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]string(nil), w.lines...)
+}
+
+func TestRunBatchPlainSerializesProgressAndBatchOutput(t *testing.T) {
+	dl := &blockingBatchDownloader{
+		progress:   make(chan model.ProgressEvent, 1),
+		allowError: make(chan struct{}),
+	}
+	scraper := &fakeBatchJSONScraper{items: []model.MediaItem{{URL: "https://example.com/item", Title: "item"}}}
+	albums := []dashboard.DashAlbumURL{{URL: "https://example.com", Slug: "album", Dest: t.TempDir(), Scraper: scraper}}
+	writer := &serialOutputWriter{started: make(chan struct{}), release: make(chan struct{})}
+
+	done := make(chan error, 1)
+	go func() { done <- runBatchPlain(dl, albums, t.TempDir(), writer) }()
+	<-writer.started
+	close(dl.allowError)
+	time.Sleep(10 * time.Millisecond)
+	close(writer.release)
+
+	if err := <-done; err == nil {
+		t.Fatal("expected the scripted download failure")
+	}
+	if writer.hasOverlap() {
+		t.Fatal("batch output writes overlapped")
+	}
+	for _, line := range writer.output() {
+		if !strings.HasSuffix(line, "\n") {
+			t.Errorf("output write was not a complete line: %q", line)
+		}
+	}
+}
+
 func TestRunPlainPropagatesScrapeError(t *testing.T) {
 	dl := newFakePlainDownloader()
 	wantErr := fmt.Errorf("scrape boom")
@@ -368,8 +469,8 @@ func TestRunPlainShutsDownOnInterrupt(t *testing.T) {
 	// Shutdown, so a prompt return proves the wiring.
 	select {
 	case err := <-errCh:
-		if err == nil {
-			t.Error("expected a non-nil error after interrupting a download")
+		if err != nil {
+			t.Errorf("expected cancellation-only run to succeed, got: %v", err)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("runPlain did not return after SIGINT")
