@@ -850,10 +850,9 @@ func TestDownloadPermanentResolverErrorFailsImmediately(t *testing.T) {
 	}
 }
 
-// TestDownloadResumeMetadataStoresResolvedURL: the resume sidecar records
-// the RESOLVED signed URL (not the item's placeholder page URL), so the
-// validator machinery keeps working against the URL actually fetched.
-func TestDownloadResumeMetadataStoresResolvedURL(t *testing.T) {
+// TestDownloadResumeMetadataOmitsResolvedURL: resolver items do not persist
+// their signed URL in the resume sidecar.
+func TestDownloadResumeMetadataOmitsResolvedURL(t *testing.T) {
 	var attempts int32
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if atomic.AddInt32(&attempts, 1) == 1 {
@@ -886,8 +885,36 @@ func TestDownloadResumeMetadataStoresResolvedURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected resume metadata to survive exhausted retries: %v", err)
 	}
-	if metadata.URL != resolvedURL {
-		t.Errorf("resume metadata URL = %q, want the RESOLVED URL %q", metadata.URL, resolvedURL)
+	if metadata.URL != "" {
+		t.Errorf("resume metadata URL = %q, want it omitted for resolver items", metadata.URL)
+	}
+}
+
+func TestMetadataFromResponseStoreURL(t *testing.T) {
+	resp := &http.Response{Header: http.Header{"ETag": []string{`"v1"`}}}
+
+	withURL := metadataFromResponse("https://example.com/file", resp, true)
+	if withURL.URL != "https://example.com/file" {
+		t.Errorf("metadata URL = %q, want raw URL", withURL.URL)
+	}
+	withoutURL := metadataFromResponse("https://example.com/file", resp, false)
+	if withoutURL.URL != "" {
+		t.Errorf("metadata URL = %q, want empty URL", withoutURL.URL)
+	}
+}
+
+func TestWriteResumeMetadataUsesOwnerOnlyPermissions(t *testing.T) {
+	tempPath := filepath.Join(t.TempDir(), "file.part")
+	if err := writeResumeMetadata(tempPath, resumeMetadata{ETag: `"v1"`}); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := os.Stat(resumeMetadataPath(tempPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0600 {
+		t.Errorf("resume metadata permissions = %04o, want 0600", got)
 	}
 }
 

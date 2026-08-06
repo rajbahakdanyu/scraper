@@ -466,7 +466,7 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, res
 		return err
 	}
 	if existing == 0 {
-		resume = metadataFromResponse(resolvedURL, resp)
+		resume = metadataFromResponse(resolvedURL, resp, item.Resolve == nil)
 		if resume.validator() == "" {
 			if err := removeFiles(resumeMetadataPath(tempPath)); err != nil {
 				return errors.Join(err, out.Close())
@@ -629,13 +629,17 @@ type resumeMetadata struct {
 	LastModified string `json:"last_modified,omitempty"`
 }
 
-func metadataFromResponse(rawURL string, resp *http.Response) resumeMetadata {
+func metadataFromResponse(rawURL string, resp *http.Response, storeURL bool) resumeMetadata {
 	etag := resp.Header.Get("ETag")
 	if strings.HasPrefix(etag, "W/") {
 		etag = ""
 	}
+	url := ""
+	if storeURL {
+		url = rawURL
+	}
 	return resumeMetadata{
-		URL:          rawURL,
+		URL:          url,
 		ETag:         etag,
 		LastModified: resp.Header.Get("Last-Modified"),
 	}
@@ -676,7 +680,7 @@ func writeResumeMetadata(tempPath string, metadata resumeMetadata) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(resumeMetadataPath(tempPath), data, 0644)
+	return os.WriteFile(resumeMetadataPath(tempPath), data, 0600)
 }
 
 func removeFiles(paths ...string) error {
