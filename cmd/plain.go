@@ -536,12 +536,14 @@ func runBatchJSON(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, dest
 	progress := dl.Progress()
 	paths := make(map[string]string)
 	var pathsMu sync.Mutex
+	pathsReady := sync.NewCond(&pathsMu)
 	progressDone := make(chan struct{})
 	go func() {
 		for evt := range progress {
 			if evt.Status == model.StatusCompleted && evt.Filename != "" {
 				pathsMu.Lock()
 				paths[evt.Item.Key()] = evt.Filename
+				pathsReady.Broadcast()
 				pathsMu.Unlock()
 			}
 		}
@@ -611,6 +613,18 @@ batchLoop:
 		}()
 
 		<-downloadsDone
+		// Download returns after publishing its completion event, but the
+		// shared progress consumer may not have processed it yet.
+		pathsMu.Lock()
+		for i, item := range items {
+			if item.URL == "" || errs[i] != nil {
+				continue
+			}
+			for paths[item.Key()] == "" {
+				pathsReady.Wait()
+			}
+		}
+		pathsMu.Unlock()
 
 		var completed, failed, cancelled int
 		albumReal := 0

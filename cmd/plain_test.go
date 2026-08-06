@@ -725,6 +725,14 @@ func TestRunBatchJSONProducesJSONLines(t *testing.T) {
 		if !json.Valid([]byte(line)) {
 			t.Errorf("invalid JSON line: %s", line)
 		}
+		var event struct {
+			Event  string `json:"event"`
+			Status string `json:"status"`
+			Path   string `json:"path"`
+		}
+		if err := json.Unmarshal([]byte(line), &event); err == nil && event.Event == "item" && event.Status == "completed" && event.Path == "" {
+			t.Errorf("completed item has empty path: %s", line)
+		}
 	}
 
 	var lastEvent struct{ Event string }
