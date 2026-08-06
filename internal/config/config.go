@@ -159,7 +159,11 @@ func getDefaultConfigPath() string {
 // kilobytes/megabytes/gigabytes (binary, 1024-based), e.g. "500K", "2M",
 // "1.5G". An empty string or "0" means unlimited, returned as 0.
 func ParseRateLimit(s string) (int64, error) {
-	return parseSize(s)
+	n, err := parseSize(s)
+	if err != nil {
+		return 0, fmt.Errorf("invalid rate limit %q: %v", s, err)
+	}
+	return n, nil
 }
 
 func ParseSize(s string) (int64, error) {

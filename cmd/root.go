@@ -938,8 +938,9 @@ func (f *filterScraper) Parse(url string) ([]model.MediaItem, error) {
 		return nil, err
 	}
 	filtered, summary := model.FilterItems(items, f.include, f.exclude, f.minSize, f.maxSize)
-	if len(items) != len(filtered) {
-		fmt.Fprintf(os.Stderr, "filters: %s\n", summary)
+	fmt.Fprintf(os.Stderr, "filters: %s\n", summary)
+	if len(filtered) == 0 {
+		fmt.Fprintln(os.Stderr, "No items matched filters.")
 	}
 	return filtered, nil
 }

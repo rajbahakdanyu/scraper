@@ -832,6 +832,40 @@ func TestLoadGlobalConfigIncludeOverride(t *testing.T) {
 	}
 }
 
+type mockScraper struct{ items []model.MediaItem }
+
+func (m *mockScraper) Name() string                                { return "mock" }
+func (m *mockScraper) Parse(url string) ([]model.MediaItem, error) { return m.items, nil }
+
+func TestFilterScraperParse(t *testing.T) {
+	inner := &mockScraper{items: []model.MediaItem{
+		{URL: "https://cdn.example.com/video.mp4", Size: 1024},
+		{URL: "https://cdn.example.com/image.jpg", Size: 512},
+	}}
+	fs := &filterScraper{
+		inner:   inner,
+		include: []string{"*.mp4"},
+	}
+	items, _ := fs.Parse("https://example.com/a/test")
+	if len(items) != 1 || items[0].URL != "https://cdn.example.com/video.mp4" {
+		t.Fatalf("expected 1 filtered item, got %+v", items)
+	}
+}
+
+func TestFilterScraperNoItems(t *testing.T) {
+	inner := &mockScraper{items: []model.MediaItem{
+		{URL: "https://cdn.example.com/video.mp4"},
+	}}
+	fs := &filterScraper{
+		inner:   inner,
+		exclude: []string{"*.mp4"},
+	}
+	items, _ := fs.Parse("https://example.com/a/test")
+	if len(items) != 0 {
+		t.Fatalf("expected 0 items after filtering, got %d", len(items))
+	}
+}
+
 func TestLoadGlobalConfigParseSizeValues(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	content := "min_size: 1M\nmax_size: 500M\n"
