@@ -411,7 +411,7 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, res
 		start, _, _, err := parseContentRange(resp.Header.Get("Content-Range"))
 		if existing == 0 || err != nil || start != existing || !resume.matches(resp) {
 			cleanupErr := removeFiles(tempPath, resumeMetadataPath(tempPath))
-			return errors.Join(fmt.Errorf("invalid partial response for %s; discarded stale partial", resolvedURL), cleanupErr)
+			return errors.Join(fmt.Errorf("invalid partial response for %s; discarded stale partial", redactURL(resolvedURL)), cleanupErr)
 		}
 	case http.StatusRequestedRangeNotSatisfiable:
 		// A 416 whose Content-Range total equals our on-disk byte count
@@ -429,9 +429,9 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, res
 		// (e.g. it changed size) — discard it so the next retry attempt
 		// fetches the whole thing fresh.
 		cleanupErr := removeFiles(tempPath, resumeMetadataPath(tempPath))
-		return errors.Join(fmt.Errorf("HTTP %d for %s (stale partial download discarded)", resp.StatusCode, resolvedURL), cleanupErr)
+		return errors.Join(fmt.Errorf("HTTP %d for %s (stale partial download discarded)", resp.StatusCode, redactURL(resolvedURL)), cleanupErr)
 	default:
-		err := fmt.Errorf("HTTP %d for %s", resp.StatusCode, resolvedURL)
+		err := fmt.Errorf("HTTP %d for %s", resp.StatusCode, redactURL(resolvedURL))
 		if !model.IsRetryableStatus(resp.StatusCode) {
 			return model.NewNonRetryableStatus(err, resp.StatusCode)
 		}
@@ -505,7 +505,7 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, res
 			return statErr
 		}
 		if info.Size() != total {
-			return fmt.Errorf("download size mismatch for %s: got %d, want %d", resolvedURL, info.Size(), total)
+			return fmt.Errorf("download size mismatch for %s: got %d, want %d", redactURL(resolvedURL), info.Size(), total)
 		}
 	}
 
@@ -697,4 +697,14 @@ func extFromURL(rawURL string) string {
 		return ""
 	}
 	return path.Ext(u.Path)
+}
+
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "<redacted>"
+	}
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String()
 }

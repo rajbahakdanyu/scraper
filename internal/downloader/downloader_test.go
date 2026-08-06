@@ -758,6 +758,33 @@ func TestDownload403WithoutResolverNotRetried(t *testing.T) {
 	}
 }
 
+func TestRedactSignedURLFromDownloadError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer ts.Close()
+
+	dl := newTestDownloader(1, 0, "")
+	item := model.MediaItem{
+		URL:   ts.URL + "/placeholder",
+		Title: "signed.bin",
+		Resolve: func(ctx context.Context) (string, error) {
+			return ts.URL + "/signed?token=secret", nil
+		},
+	}
+
+	err := dl.Download(item, t.TempDir())
+	if err == nil {
+		t.Fatal("expected forbidden download to fail")
+	}
+	if strings.Contains(err.Error(), "secret") {
+		t.Errorf("download error exposed signed URL token: %v", err)
+	}
+	if !strings.Contains(err.Error(), ts.URL+"/signed") {
+		t.Errorf("download error omitted redacted URL host/path: %v", err)
+	}
+}
+
 // TestDownloadRetriesTransientResolverError: a resolver that fails
 // transiently (network blip) is retried with backoff like any other
 // transient download failure.
