@@ -432,7 +432,8 @@ Fish:  scraper completion fish | source`,
 				case "powershell":
 					return cmd.Root().GenPowerShellCompletion(os.Stdout)
 				}
-				return nil
+				fmt.Fprintf(cmd.ErrOrStderr(), "invalid completion shell %q\n\n%s", args[0], cmd.Root().UsageString())
+				return fmt.Errorf("invalid completion shell %q", args[0])
 			},
 		},
 	)
@@ -620,6 +621,7 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 			return fmt.Errorf("youtube downloader: %w", err)
 		}
 		dl = ytDl
+		defer dl.Shutdown()
 	} else {
 		genericDl, err := downloader.NewDownloaderWithConfig(
 			cfg.ConcurrentDownloads,
@@ -634,6 +636,7 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 		genericDl.SetRateLimit(rateLimitBytesPerSec)
 		genericDl.SetSkipChecksums(cfg.SkipChecksums)
 		dl = genericDl
+		defer dl.Shutdown()
 	}
 
 	// The scraper function runs in a background goroutine.
@@ -851,6 +854,7 @@ func runBatch(opts globalOptions, urls []string) error {
 			return fmt.Errorf("youtube downloader: %w", err)
 		}
 		dl = ytDl
+		defer dl.Shutdown()
 		for _, u := range urls {
 			slug := albumSlugFor("youtube", u)
 			dest, err := fileutil.SafeJoin(cfg.OutputDir, slug)
@@ -879,6 +883,7 @@ func runBatch(opts globalOptions, urls []string) error {
 		genericDl.SetRateLimit(rateLimitBytesPerSec)
 		genericDl.SetSkipChecksums(cfg.SkipChecksums)
 		dl = genericDl
+		defer dl.Shutdown()
 		for _, u := range urls {
 			site, _ := detectSite(u)
 			slug := albumSlugFor(site, u)

@@ -385,7 +385,9 @@ func (s *Scraper) resolveFile(ctx context.Context, slug, knownName string) (mode
 				return model.MediaItem{}, ctx.Err()
 			default:
 			}
-			s.sleeper.Sleep(netutil.BackoffWithJitter(resolveRetryBaseDelay, attempt-1))
+			if err := s.sleeper.SleepCtx(ctx, netutil.BackoffWithJitter(resolveRetryBaseDelay, attempt-1)); err != nil {
+				return model.MediaItem{}, err
+			}
 		}
 		item, err := s.resolveFileOnce(ctx, slug, knownName)
 		if err == nil {

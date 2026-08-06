@@ -21,6 +21,19 @@ type noopSleeper struct{}
 func (noopSleeper) Sleep(time.Duration)                           {}
 func (noopSleeper) SleepCtx(context.Context, time.Duration) error { return nil }
 
+type resolveSleeper struct {
+	sleepCtxCalled bool
+}
+
+func (s *resolveSleeper) Sleep(time.Duration) {
+	panic("resolveFile used non-context-aware sleep")
+}
+
+func (s *resolveSleeper) SleepCtx(ctx context.Context, _ time.Duration) error {
+	s.sleepCtxCalled = true
+	return context.Canceled
+}
+
 func newTestFilesterScraper() *Scraper {
 	scraper := NewFilesterScraper()
 	scraper.client = &http.Client{}
@@ -129,6 +142,27 @@ func TestParseFilesterFolder(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&tokenRequests); got != 1 {
 		t.Errorf("expected 1 token request after Resolve, got %d", got)
+	}
+}
+
+func TestResolveFileUsesContextAwareBackoff(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "retry", http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+
+	sleeper := &resolveSleeper{}
+	scraper := newTestFilesterScraper()
+	scraper.baseURL = server.URL
+	scraper.SetSleeper(sleeper)
+
+	ctx := context.Background()
+	_, err := scraper.resolveFile(ctx, "slug", "name")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("resolveFile error = %v, want context.Canceled", err)
+	}
+	if !sleeper.sleepCtxCalled {
+		t.Fatal("expected resolveFile to use SleepCtx for retry backoff")
 	}
 }
 

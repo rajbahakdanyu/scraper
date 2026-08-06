@@ -813,7 +813,10 @@ func NewDownloaderWithConfig(scraper *Scraper, config DownloaderConfig) (*Downlo
 		scraper.video.HTTPClient = netutil.WithUserAgent(httpClient, config.UserAgent)
 		scraper.video.HTTPClient = netutil.WithCookies(scraper.video.HTTPClient, config.Cookies)
 	} else {
-		httpClient, _ := netutil.NewPublicStreamingClient(config.Timeout)
+		httpClient, err := netutil.NewPublicStreamingClient(config.Timeout)
+		if err != nil {
+			return nil, err
+		}
 		scraper.video.HTTPClient = netutil.WithUserAgent(httpClient, config.UserAgent)
 		scraper.video.HTTPClient = netutil.WithCookies(scraper.video.HTTPClient, config.Cookies)
 	}

@@ -82,6 +82,20 @@ func TestNewRootCmdRegistersSubcommands(t *testing.T) {
 	}
 }
 
+func TestCompletionRejectsUnknownShell(t *testing.T) {
+	root := NewRootCmd()
+	var stderr bytes.Buffer
+	root.SetErr(&stderr)
+	root.SetArgs([]string{"completion", "tcsh"})
+
+	if _, err := root.ExecuteC(); err == nil {
+		t.Fatal("expected unknown completion shell to return an error")
+	}
+	if !strings.Contains(stderr.String(), "tcsh") {
+		t.Fatalf("expected error output to mention shell, got %q", stderr.String())
+	}
+}
+
 func TestExplicitSubcommandReadsInheritedOptions(t *testing.T) {
 	root := NewRootCmd()
 	if err := root.PersistentFlags().Set("config", "/tmp/custom.yaml"); err != nil {
