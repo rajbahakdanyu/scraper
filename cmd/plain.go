@@ -101,6 +101,13 @@ func runPlain(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error
 		if err := os.MkdirAll(albumDest, 0755); err != nil {
 			return fmt.Errorf("create album directory: %w", err)
 		}
+		fi, err := os.Lstat(albumDest)
+		if err != nil {
+			return err
+		}
+		if fi.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refusing to use symlinked output directory: %s", albumDest)
+		}
 		dest = albumDest
 	}
 
@@ -245,6 +252,18 @@ func runBatchPlain(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, des
 		}
 
 		if err := os.MkdirAll(a.Dest, 0755); err != nil {
+			fmt.Fprintf(out, "failed: create album directory: %v\n", err)
+			allErrs = append(allErrs, err)
+			continue
+		}
+		fi, err := os.Lstat(a.Dest)
+		if err != nil {
+			fmt.Fprintf(out, "failed: create album directory: %v\n", err)
+			allErrs = append(allErrs, err)
+			continue
+		}
+		if fi.Mode()&os.ModeSymlink != 0 {
+			err := fmt.Errorf("refusing to use symlinked output directory: %s", a.Dest)
 			fmt.Fprintf(out, "failed: create album directory: %v\n", err)
 			allErrs = append(allErrs, err)
 			continue

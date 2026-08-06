@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -20,6 +21,30 @@ import (
 	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 	"github.com/rajbahakdanyu/scraper/internal/model"
 )
+
+func TestCopyStreamToFileRefusesSymlink(t *testing.T) {
+	dest := t.TempDir()
+	target := filepath.Join(dest, "outside")
+	if err := os.WriteFile(target, []byte("untouched"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	partPath := filepath.Join(dest, "video.part")
+	if err := os.Symlink(target, partPath); err != nil {
+		t.Fatal(err)
+	}
+
+	err := copyStreamToFile(context.Background(), io.LimitReader(strings.NewReader("fresh"), 5), 5, partPath, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "refusing to follow symlink") {
+		t.Fatalf("expected symlink refusal, got %v", err)
+	}
+	got, readErr := os.ReadFile(target)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(got) != "untouched" {
+		t.Fatalf("symlink target was modified: %q", got)
+	}
+}
 
 func TestExtractVideoID(t *testing.T) {
 	scraper := NewYouTubeScraper()

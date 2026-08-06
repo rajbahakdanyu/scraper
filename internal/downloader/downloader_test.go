@@ -92,6 +92,36 @@ func TestDownload(t *testing.T) {
 	}
 }
 
+func TestDownloadRefusesSymlinkedPartFile(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "5")
+		_, _ = w.Write([]byte("fresh"))
+	}))
+	defer ts.Close()
+
+	dest := t.TempDir()
+	target := filepath.Join(dest, "outside")
+	if err := os.WriteFile(target, []byte("untouched"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(dest, "video.part")); err != nil {
+		t.Fatal(err)
+	}
+
+	dl := newTestDownloader(1, 0, "")
+	err := dl.Download(model.MediaItem{URL: ts.URL, Title: "video"}, dest)
+	if err == nil || !strings.Contains(err.Error(), "refusing to follow symlink") {
+		t.Fatalf("expected symlink refusal, got %v", err)
+	}
+	got, readErr := os.ReadFile(target)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(got) != "untouched" {
+		t.Fatalf("symlink target was modified: %q", got)
+	}
+}
+
 func TestDownloadUnknownLengthExceedsCapDiscardsPartial(t *testing.T) {
 	oldMax := MaxUnknownFileSize
 	MaxUnknownFileSize = 1024

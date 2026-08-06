@@ -3,6 +3,8 @@ package dashboard
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -50,6 +52,47 @@ func (f *fakeDownloader) Progress() <-chan model.ProgressEvent {
 func instantItems(items []model.MediaItem) func() ([]model.MediaItem, error) {
 	return func() ([]model.MediaItem, error) {
 		return items, nil
+	}
+}
+
+func TestDashboardRefusesSymlinkedAlbumDirectory(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "outside")
+	if err := os.Mkdir(target, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(root, "album")); err != nil {
+		t.Fatal(err)
+	}
+
+	items := []model.MediaItem{{URL: "https://example.com/a", Title: "a"}, {URL: "https://example.com/b", Title: "b"}}
+	d := New(instantItems(items), nil, root, "test")
+	d.SetAlbumSlug("album")
+	d.Update(scrapeResultMsg{items: items})
+
+	if d.phase != phaseDone || !strings.Contains(d.loadingErr, "refusing to use symlinked output directory") {
+		t.Fatalf("expected symlinked directory refusal, phase=%v error=%q", d.phase, d.loadingErr)
+	}
+}
+
+func TestBatchDashboardRefusesSymlinkedAlbumDirectory(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "outside")
+	if err := os.Mkdir(target, 0755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "album")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+
+	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 1)}
+	urls := []DashAlbumURL{{Site: "test", URL: "https://example.com/album", Slug: "album", Dest: link}}
+	d := NewBatch(fd, root, urls)
+	d.handleBatchScrape(batchScrapeMsg{album: urls[0], items: []model.MediaItem{{URL: "https://example.com/a", Title: "a"}}})
+
+	if d.phase != phaseDone || !strings.Contains(d.loadingErr, "refusing to use symlinked output directory") {
+		t.Fatalf("expected symlinked directory refusal, phase=%v error=%q", d.phase, d.loadingErr)
 	}
 }
 

@@ -358,6 +358,19 @@ func (d *Dashboard) handleScrapeResult(msg scrapeResultMsg) (tea.Model, tea.Cmd)
 			d.phase = phaseDone
 			return d, nil
 		}
+		fi, err := os.Lstat(albumDest)
+		if err != nil {
+			d.states = nil
+			d.loadingErr = err.Error()
+			d.phase = phaseDone
+			return d, nil
+		}
+		if fi.Mode()&os.ModeSymlink != 0 {
+			d.states = nil
+			d.loadingErr = fmt.Sprintf("refusing to use symlinked output directory: %s", albumDest)
+			d.phase = phaseDone
+			return d, nil
+		}
 		d.dest = albumDest
 	}
 
@@ -416,6 +429,17 @@ func (d *Dashboard) handleBatchScrape(msg batchScrapeMsg) (tea.Model, tea.Cmd) {
 
 	if err := os.MkdirAll(msg.album.Dest, 0755); err != nil {
 		d.loadingErr = fmt.Sprintf("create album directory: %v", err)
+		d.phase = phaseDone
+		return d, nil
+	}
+	fi, err := os.Lstat(msg.album.Dest)
+	if err != nil {
+		d.loadingErr = err.Error()
+		d.phase = phaseDone
+		return d, nil
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		d.loadingErr = fmt.Sprintf("refusing to use symlinked output directory: %s", msg.album.Dest)
 		d.phase = phaseDone
 		return d, nil
 	}

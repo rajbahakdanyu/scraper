@@ -82,6 +82,27 @@ func itemsScraper(items []model.MediaItem, err error) func() ([]model.MediaItem,
 	return func() ([]model.MediaItem, error) { return items, err }
 }
 
+func TestRunPlainRefusesSymlinkedAlbumDirectory(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "outside")
+	if err := os.Mkdir(target, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(root, "album")); err != nil {
+		t.Fatal(err)
+	}
+
+	dl := newFakePlainDownloader()
+	items := []model.MediaItem{{URL: "https://example.com/a", Title: "a"}, {URL: "https://example.com/b", Title: "b"}}
+	err := runPlain(dl, itemsScraper(items, nil), root, "album", &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "refusing to use symlinked output directory") {
+		t.Fatalf("expected symlinked directory refusal, got %v", err)
+	}
+	if len(dl.downloaded) != 0 {
+		t.Fatalf("downloads started despite symlinked directory: %d", len(dl.downloaded))
+	}
+}
+
 func TestProgressLine(t *testing.T) {
 	item := model.MediaItem{URL: "https://example.com/a.mp4", Title: "a.mp4"}
 	tests := []struct {

@@ -20,6 +20,7 @@ import (
 	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 	"github.com/rajbahakdanyu/scraper/internal/model"
 	"github.com/rajbahakdanyu/scraper/internal/netutil"
+	"golang.org/x/sys/unix"
 	"golang.org/x/time/rate"
 )
 
@@ -520,12 +521,16 @@ func (s *Scraper) downloadStreamToFileProgress(ctx context.Context, video *ytdl.
 // partial file can never be committed and blessed with a checksum sidecar.
 func copyStreamToFile(ctx context.Context, stream io.Reader, size int64, path string, limiter *rate.Limiter, onProgress func(int64, int64)) error {
 	// #nosec G304 -- path is internally allocated under the configured output or private temp directory.
-	out, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	fd, err := unix.Open(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|unix.O_NOFOLLOW, 0644)
 	if err != nil {
+		if errors.Is(err, unix.ELOOP) {
+			return model.NewNonRetryable(fmt.Errorf("refusing to follow symlink for .part file %s: %w", path, err))
+		}
 		// Local filesystem failures are permanent — a retry can't make
 		// the destination writable.
 		return model.NewNonRetryable(err)
 	}
+	out := os.NewFile(uintptr(fd), path)
 	closed := false
 	defer func() {
 		if !closed {
