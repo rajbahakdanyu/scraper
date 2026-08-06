@@ -372,7 +372,7 @@ func (d *Dashboard) handleScrapeResult(msg scrapeResultMsg) (tea.Model, tea.Cmd)
 			d.phase = phaseDone
 			return d, nil
 		}
-		if err := os.MkdirAll(albumDest, 0755); err != nil { // #nosec G301 -- user download directory, 0755 is standard
+		if err := os.MkdirAll(albumDest, 0750); err != nil {
 			d.states = nil
 			d.loadingErr = fmt.Sprintf("create album directory: %v", err)
 			d.phase = phaseDone
@@ -480,7 +480,7 @@ func (d *Dashboard) handleBatchScrape(msg batchScrapeMsg) (tea.Model, tea.Cmd) {
 
 	wasFirstAlbum := d.phase == phaseLoading
 
-	if err := os.MkdirAll(msg.album.Dest, 0755); err != nil { // #nosec G301 -- user download directory, 0755 is standard
+	if err := os.MkdirAll(msg.album.Dest, 0750); err != nil {
 		d.loadingErr = fmt.Sprintf("create album directory: %v", err)
 		d.phase = phaseDone
 		return d, nil

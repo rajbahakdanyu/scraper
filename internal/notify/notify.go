@@ -27,12 +27,7 @@ func darwinNotify(summary string) error {
 		return nil
 	}
 	script := fmt.Sprintf(`display notification %q with title "scraper"`, sanitizeNotificationSummary(summary))
-	// #nosec G204 -- osascript is invoked with sanitized input (no quotes or backslashes).
-	cmd := exec.Command("osascript", "-e", script)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("notification: osascript failed: %v (%s)", err, strings.TrimSpace(string(out)))
-	}
-	return nil
+	return execNotify("osascript", "-e", script)
 }
 
 func sanitizeNotificationSummary(summary string) string {
@@ -43,10 +38,18 @@ func linuxNotify(summary string) error {
 	if _, err := exec.LookPath("notify-send"); err != nil {
 		return nil
 	}
-	// #nosec G204 -- notify-send uses argv directly with a message that is always the constant "Download complete".
-	cmd := exec.Command("notify-send", "scraper", summary)
+	return execNotify("notify-send", "scraper", summary)
+}
+
+// execNotify runs a notification command. All callers sanitize their
+// arguments: darwinNotify quotes the message via sanitizeNotificationSummary;
+// linuxNotify receives the constant "Download complete".
+//
+// #nosec G204 -- arguments are sanitized or constant, not attacker-controlled.
+func execNotify(name string, args ...string) error {
+	cmd := exec.Command(name, args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("notification: notify-send failed: %v (%s)", err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("notification: %s failed: %v (%s)", name, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
