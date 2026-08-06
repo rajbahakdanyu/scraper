@@ -71,7 +71,7 @@ func TestDownload(t *testing.T) {
 	item := model.MediaItem{URL: ts.URL, Title: "test_video"}
 
 	dest := t.TempDir()
-	err := dl.Download(item, dest)
+	_, err := dl.Download(item, dest)
 	if err != nil {
 		t.Fatalf("download failed: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestDownloadRefusesSymlinkedPartFile(t *testing.T) {
 	}
 
 	dl := newTestDownloader(1, 0, "")
-	err := dl.Download(model.MediaItem{URL: ts.URL, Title: "video"}, dest)
+	_, err := dl.Download(model.MediaItem{URL: ts.URL, Title: "video"}, dest)
 	if err == nil || !strings.Contains(err.Error(), "refusing to follow symlink") {
 		t.Fatalf("expected symlink refusal, got %v", err)
 	}
@@ -136,7 +136,7 @@ func TestDownloadUnknownLengthExceedsCapDiscardsPartial(t *testing.T) {
 	dl := newTestDownloader(1, 0, "")
 	dest := t.TempDir()
 	item := model.MediaItem{URL: ts.URL, Title: "too-large.bin"}
-	err := dl.Download(item, dest)
+	_, err := dl.Download(item, dest)
 	if err == nil {
 		t.Fatal("expected unknown-length download to exceed the cap")
 	}
@@ -170,7 +170,7 @@ func TestDownloadRetry(t *testing.T) {
 	dl := newTestDownloader(1, 0, "")
 	item := model.MediaItem{URL: ts.URL, Title: "retry_test"}
 
-	err := dl.Download(item, t.TempDir())
+	_, err := dl.Download(item, t.TempDir())
 	if err != nil {
 		t.Fatalf("expected retry to succeed, got: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestDownloadCancelDuringRetryBackoff(t *testing.T) {
 	dl.SetSleeper(sleeper)
 	item := model.MediaItem{URL: ts.URL, Title: "cancel_backoff"}
 	done := make(chan error, 1)
-	go func() { done <- dl.Download(item, t.TempDir()) }()
+	go func() { _, err := dl.Download(item, t.TempDir()); done <- err }()
 
 	<-requestStarted
 	<-sleeper.started
@@ -220,7 +220,7 @@ func TestDownloadAllFail(t *testing.T) {
 	dl := newTestDownloader(1, 0, "")
 	item := model.MediaItem{URL: ts.URL, Title: "fail_test"}
 
-	err := dl.Download(item, t.TempDir())
+	_, err := dl.Download(item, t.TempDir())
 	if err == nil {
 		t.Fatal("expected error for failing download")
 	}
@@ -241,7 +241,7 @@ func TestCancel(t *testing.T) {
 	}()
 
 	start := time.Now()
-	err := dl.Download(item, t.TempDir())
+	_, err := dl.Download(item, t.TempDir())
 	elapsed := time.Since(start)
 	t.Logf("Download() returned after %v", elapsed)
 
@@ -281,12 +281,12 @@ func TestCancelQueuedDownload(t *testing.T) {
 	dest := t.TempDir()
 
 	firstDone := make(chan error, 1)
-	go func() { firstDone <- dl.Download(first, dest) }()
+	go func() { _, err := dl.Download(first, dest); firstDone <- err }()
 	<-firstStarted
 
 	dl.Prepare(second)
 	secondDone := make(chan error, 1)
-	go func() { secondDone <- dl.Download(second, dest) }()
+	go func() { _, err := dl.Download(second, dest); secondDone <- err }()
 
 	deadline := time.Now().Add(time.Second)
 	for {
@@ -378,7 +378,7 @@ func TestNewRequestError(t *testing.T) {
 	dl := newTestDownloader(1, 0, "")
 	item := model.MediaItem{URL: "://bad-url", Title: "bad"}
 
-	err := dl.Download(item, t.TempDir())
+	_, err := dl.Download(item, t.TempDir())
 	if err == nil {
 		t.Fatal("expected error for malformed URL")
 	}
@@ -416,7 +416,7 @@ func TestDownloadResumesFromPartialFile(t *testing.T) {
 		t.Fatalf("failed to seed resume metadata: %v", err)
 	}
 
-	if err := dl.Download(item, dest); err != nil {
+	if _, err := dl.Download(item, dest); err != nil {
 		t.Fatalf("expected resumed download to succeed, got: %v", err)
 	}
 
@@ -463,7 +463,7 @@ func TestDownloadFallsBackWhenServerIgnoresRange(t *testing.T) {
 		t.Fatalf("failed to seed resume metadata: %v", err)
 	}
 
-	if err := dl.Download(item, dest); err != nil {
+	if _, err := dl.Download(item, dest); err != nil {
 		t.Fatalf("expected download to succeed, got: %v", err)
 	}
 
@@ -505,7 +505,7 @@ func TestDownloadRestartsAfter416(t *testing.T) {
 		t.Fatalf("failed to seed resume metadata: %v", err)
 	}
 
-	if err := dl.Download(item, dest); err != nil {
+	if _, err := dl.Download(item, dest); err != nil {
 		t.Fatalf("expected download to succeed after discarding a stale partial, got: %v", err)
 	}
 	if got := atomic.LoadInt32(&requests); got != 2 {
@@ -553,7 +553,7 @@ func TestDownloadTreats416WithCompletePartialAsFinished(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := dl.Download(item, dest); err != nil {
+	if _, err := dl.Download(item, dest); err != nil {
 		t.Fatalf("complete partial behind a 416 must succeed, got: %v", err)
 	}
 	if got := atomic.LoadInt32(&requests); got != 1 {
@@ -595,7 +595,7 @@ func TestDownloadRejectsMismatchedContentRange(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := dl.Download(item, dest); err != nil {
+	if _, err := dl.Download(item, dest); err != nil {
 		t.Fatalf("download failed after safe restart: %v", err)
 	}
 	if atomic.LoadInt32(&requests) != 2 {
@@ -631,7 +631,7 @@ func TestDownloadKeepsPartialFileAfterExhaustedRetries(t *testing.T) {
 	item := model.MediaItem{URL: ts.URL, Title: "partial_keep.bin"}
 	dest := t.TempDir()
 
-	if err := dl.Download(item, dest); err == nil {
+	if _, err := dl.Download(item, dest); err == nil {
 		t.Fatal("expected download to fail after exhausting retries")
 	}
 
@@ -663,7 +663,7 @@ func TestDownloadRemovesPartialFileOnNonRetryableFailure(t *testing.T) {
 	item := model.MediaItem{URL: ts.URL, Title: "partial_remove.bin"}
 	dest := t.TempDir()
 
-	if err := dl.Download(item, dest); err == nil {
+	if _, err := dl.Download(item, dest); err == nil {
 		t.Fatal("expected download to fail")
 	}
 
@@ -703,7 +703,7 @@ func TestDownloadResolvesURLAtDownloadTime(t *testing.T) {
 	}
 
 	dest := t.TempDir()
-	if err := dl.Download(item, dest); err != nil {
+	if _, err := dl.Download(item, dest); err != nil {
 		t.Fatalf("download failed: %v", err)
 	}
 	if got := atomic.LoadInt32(&resolveCalls); got != 1 {
@@ -747,7 +747,7 @@ func TestDownloadReResolvesOn403(t *testing.T) {
 	}
 
 	dest := t.TempDir()
-	if err := dl.Download(item, dest); err != nil {
+	if _, err := dl.Download(item, dest); err != nil {
 		t.Fatalf("expected re-resolve on 403 to recover the download, got: %v", err)
 	}
 	if got := atomic.LoadInt32(&resolveCalls); got != 2 {
@@ -787,7 +787,7 @@ func TestDownloadSecond403AfterReResolveIsPermanent(t *testing.T) {
 		},
 	}
 
-	err := dl.Download(item, t.TempDir())
+	_, err := dl.Download(item, t.TempDir())
 	if err == nil {
 		t.Fatal("expected a permanent failure after a second 403")
 	}
@@ -812,7 +812,7 @@ func TestDownload403WithoutResolverNotRetried(t *testing.T) {
 	dl := newTestDownloader(1, 0, "")
 	item := model.MediaItem{URL: ts.URL + "/file", Title: "plain403.bin"}
 
-	err := dl.Download(item, t.TempDir())
+	_, err := dl.Download(item, t.TempDir())
 	if err == nil {
 		t.Fatal("expected error for 403 download")
 	}
@@ -836,7 +836,7 @@ func TestRedactSignedURLFromDownloadError(t *testing.T) {
 		},
 	}
 
-	err := dl.Download(item, t.TempDir())
+	_, err := dl.Download(item, t.TempDir())
 	if err == nil {
 		t.Fatal("expected forbidden download to fail")
 	}
@@ -871,7 +871,7 @@ func TestDownloadRetriesTransientResolverError(t *testing.T) {
 	}
 
 	dest := t.TempDir()
-	if err := dl.Download(item, dest); err != nil {
+	if _, err := dl.Download(item, dest); err != nil {
 		t.Fatalf("expected transient resolver error to be retried successfully, got: %v", err)
 	}
 	if got := atomic.LoadInt32(&resolveCalls); got != 2 {
@@ -901,7 +901,7 @@ func TestDownloadPermanentResolverErrorFailsImmediately(t *testing.T) {
 		},
 	}
 
-	err := dl.Download(item, t.TempDir())
+	_, err := dl.Download(item, t.TempDir())
 	if err == nil {
 		t.Fatal("expected permanent resolver error to fail the download")
 	}
@@ -940,7 +940,7 @@ func TestDownloadResumeMetadataOmitsResolvedURL(t *testing.T) {
 	}
 
 	dest := t.TempDir()
-	if err := dl.Download(item, dest); err == nil {
+	if _, err := dl.Download(item, dest); err == nil {
 		t.Fatal("expected download to fail after exhausting retries")
 	}
 
@@ -1031,7 +1031,7 @@ func TestDownloadResumesAfterSignedURLRotation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := dl.Download(item, dest); err != nil {
+	if _, err := dl.Download(item, dest); err != nil {
 		t.Fatalf("expected resume across signed-URL rotation to succeed, got: %v", err)
 	}
 	mu.Lock()
@@ -1067,7 +1067,7 @@ func TestSetRateLimitThrottlesThroughput(t *testing.T) {
 	item := model.MediaItem{URL: ts.URL, Title: "throttled.bin"}
 
 	start := time.Now()
-	if err := dl.Download(item, t.TempDir()); err != nil {
+	if _, err := dl.Download(item, t.TempDir()); err != nil {
 		t.Fatalf("download failed: %v", err)
 	}
 	if elapsed := time.Since(start); elapsed < time.Second {
@@ -1088,7 +1088,7 @@ func TestSetRateLimitZeroRemovesCap(t *testing.T) {
 	item := model.MediaItem{URL: ts.URL, Title: "unthrottled.bin"}
 
 	start := time.Now()
-	if err := dl.Download(item, t.TempDir()); err != nil {
+	if _, err := dl.Download(item, t.TempDir()); err != nil {
 		t.Fatalf("download failed: %v", err)
 	}
 	if elapsed := time.Since(start); elapsed > 2*time.Second {
@@ -1106,7 +1106,7 @@ func TestDownloadWritesChecksumSidecar(t *testing.T) {
 	item := model.MediaItem{URL: ts.URL, Title: "sum.bin"}
 	dest := t.TempDir()
 
-	if err := dl.Download(item, dest); err != nil {
+	if _, err := dl.Download(item, dest); err != nil {
 		t.Fatalf("download failed: %v", err)
 	}
 
@@ -1132,7 +1132,7 @@ func TestDownloadSkipsChecksumSidecarWhenDisabled(t *testing.T) {
 	item := model.MediaItem{URL: ts.URL, Title: "nosum.bin"}
 	dest := t.TempDir()
 
-	if err := dl.Download(item, dest); err != nil {
+	if _, err := dl.Download(item, dest); err != nil {
 		t.Fatalf("download failed: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dest, "nosum.bin.sha256")); !os.IsNotExist(err) {
@@ -1162,7 +1162,7 @@ func TestDownloadRedownloadsWhenChecksumMismatches(t *testing.T) {
 		t.Fatalf("failed to seed a checksum sidecar: %v", err)
 	}
 
-	if err := dl.Download(item, dest); err != nil {
+	if _, err := dl.Download(item, dest); err != nil {
 		t.Fatalf("download failed: %v", err)
 	}
 	if got := atomic.LoadInt32(&requests); got != 1 {
@@ -1200,7 +1200,7 @@ func TestDownloadSkipsWhenChecksumMatches(t *testing.T) {
 		t.Fatalf("failed to seed a checksum sidecar: %v", err)
 	}
 
-	if err := dl.Download(item, dest); err != nil {
+	if _, err := dl.Download(item, dest); err != nil {
 		t.Fatalf("download failed: %v", err)
 	}
 	if got := atomic.LoadInt32(&requests); got != 0 {
@@ -1226,7 +1226,7 @@ func TestDownloadRejectsMalformedChecksumSidecar(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := dl.Download(item, dest)
+	_, err := dl.Download(item, dest)
 	if err == nil || !strings.Contains(err.Error(), "invalid SHA-256") {
 		t.Fatalf("expected malformed checksum error, got %v", err)
 	}
@@ -1248,7 +1248,7 @@ func TestDownloadSurfacesChecksumWriteFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := dl.Download(item, dest)
+	_, err := dl.Download(item, dest)
 	if err == nil || !strings.Contains(err.Error(), "write checksum") {
 		t.Fatalf("expected checksum write error, got %v", err)
 	}
@@ -1278,7 +1278,8 @@ func TestConcurrentDownloadsWithSameTitleUseDistinctPaths(t *testing.T) {
 		wg.Add(1)
 		go func(item model.MediaItem) {
 			defer wg.Done()
-			errs <- dl.Download(item, dest)
+			_, err := dl.Download(item, dest)
+			errs <- err
 		}(item)
 	}
 	wg.Wait()
@@ -1317,7 +1318,7 @@ func TestDownloadRejectsTruncatedChunkedResponse(t *testing.T) {
 	dl := newTestDownloader(1, 0, "")
 	item := model.MediaItem{URL: ts.URL, Title: "chunked.bin", Size: 100}
 
-	err := dl.Download(item, t.TempDir())
+	_, err := dl.Download(item, t.TempDir())
 	if err == nil || !strings.Contains(err.Error(), "size mismatch") {
 		t.Fatalf("expected a size-mismatch error for a truncated chunked body, got %v", err)
 	}
@@ -1335,7 +1336,7 @@ func TestDownloadAcceptsChunkedResponseMatchingItemSize(t *testing.T) {
 	item := model.MediaItem{URL: ts.URL, Title: "chunked-ok.bin", Size: 100}
 	dest := t.TempDir()
 
-	if err := dl.Download(item, dest); err != nil {
+	if _, err := dl.Download(item, dest); err != nil {
 		t.Fatalf("chunked body matching the item size must succeed: %v", err)
 	}
 	if info, err := os.Stat(filepath.Join(dest, "chunked-ok.bin")); err != nil || info.Size() != 100 {
@@ -1373,7 +1374,7 @@ func TestShutdownCancelsInFlightDownload(t *testing.T) {
 	item := model.MediaItem{URL: ts.URL, Title: "slow.bin"}
 
 	downloadDone := make(chan error, 1)
-	go func() { downloadDone <- dl.Download(item, t.TempDir()) }()
+	go func() { _, err := dl.Download(item, t.TempDir()); downloadDone <- err }()
 	<-requestStarted
 
 	start := time.Now()
@@ -1413,11 +1414,11 @@ func TestShutdownUnblocksQueuedDownloads(t *testing.T) {
 	dest := t.TempDir()
 
 	firstDone := make(chan error, 1)
-	go func() { firstDone <- dl.Download(first, dest) }()
+	go func() { _, err := dl.Download(first, dest); firstDone <- err }()
 	<-firstStarted
 
 	secondDone := make(chan error, 1)
-	go func() { secondDone <- dl.Download(second, dest) }()
+	go func() { _, err := dl.Download(second, dest); secondDone <- err }()
 
 	// Wait until the second download is queued behind the semaphore.
 	deadline := time.Now().Add(time.Second)
@@ -1458,7 +1459,7 @@ func TestShutdownDeliversBufferedEventsBeforeClosing(t *testing.T) {
 
 	dl := newTestDownloader(1, 0, "")
 	item := model.MediaItem{URL: ts.URL, Title: "quick.bin"}
-	if err := dl.Download(item, t.TempDir()); err != nil {
+	if _, err := dl.Download(item, t.TempDir()); err != nil {
 		t.Fatalf("download failed: %v", err)
 	}
 
@@ -1495,7 +1496,7 @@ func TestDownloadFailsFastAfterShutdown(t *testing.T) {
 	waitProgressClosed(t, dl.Progress(), 5*time.Second)
 
 	start := time.Now()
-	err := dl.Download(model.MediaItem{URL: "http://example.com/x", Title: "x"}, t.TempDir())
+	_, err := dl.Download(model.MediaItem{URL: "http://example.com/x", Title: "x"}, t.TempDir())
 	if err == nil {
 		t.Fatal("expected Download to fail fast after Shutdown")
 	}
@@ -1532,7 +1533,7 @@ func TestShutdownKeepsPartialFileForResume(t *testing.T) {
 	dest := t.TempDir()
 
 	downloadDone := make(chan error, 1)
-	go func() { downloadDone <- dl.Download(item, dest) }()
+	go func() { _, err := dl.Download(item, dest); downloadDone <- err }()
 
 	// Wait until the partial bytes have actually landed on disk.
 	tempPath := filepath.Join(dest, "resume_shutdown.bin.part")
@@ -1600,7 +1601,8 @@ func TestShutdownWithConcurrentDownloads(t *testing.T) {
 				URL:   ts.URL,
 				Title: fmt.Sprintf("file%d.bin", i),
 			}
-			errs <- dl.Download(item, dest)
+			_, err := dl.Download(item, dest)
+			errs <- err
 		}(i)
 	}
 

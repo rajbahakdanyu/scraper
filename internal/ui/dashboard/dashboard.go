@@ -21,7 +21,7 @@ import (
 
 type Downloader interface {
 	Prepare(item model.MediaItem)
-	Download(item model.MediaItem, dest string) error
+	Download(item model.MediaItem, dest string) (string, error)
 	Cancel(item model.MediaItem)
 	// Shutdown cancels every in-flight download and closes the progress
 	// channel once they have unwound.
@@ -231,7 +231,7 @@ func (d *Dashboard) startNextScrape() tea.Cmd {
 
 func startDownload(dl Downloader, item model.MediaItem, dest string) tea.Cmd {
 	return func() tea.Msg {
-		err := dl.Download(item, dest)
+		_, err := dl.Download(item, dest)
 		return downloadDoneMsg{key: item.Key(), err: err}
 	}
 }

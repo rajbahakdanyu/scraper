@@ -157,7 +157,7 @@ func (d *Downloader) SetSkipChecksums(skip bool) {
 // in a long queue. A 403 on a resolved URL (an expired signature) is
 // retried once with a freshly re-resolved URL instead of failing
 // permanently; a second 403 is permanent like any other client error.
-func (d *Downloader) Download(item model.MediaItem, dest string) error {
+func (d *Downloader) Download(item model.MediaItem, dest string) (string, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	d.mu.Lock()
 	if d.shuttingDown {
@@ -165,7 +165,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 		// it must not sendProgress — the channel may already be closed.
 		d.mu.Unlock()
 		cancel()
-		return fmt.Errorf("downloader is shut down: %s", item.URL)
+		return "", fmt.Errorf("downloader is shut down: %s", item.URL)
 	}
 	d.wg.Add(1)
 	delete(d.queued, item.Key())
@@ -175,7 +175,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 		cancel()
 		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled})
 		d.wg.Done()
-		return &model.CancelledError{URL: item.URL}
+		return "", &model.CancelledError{URL: item.URL}
 	}
 	d.cancelMap[item.Key()] = cancel
 	d.mu.Unlock()
@@ -192,7 +192,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 		defer func() { <-d.sem }()
 	case <-ctx.Done():
 		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled})
-		return &model.CancelledError{URL: item.URL}
+		return "", &model.CancelledError{URL: item.URL}
 	}
 
 	filename := fileutil.SanitizeFilename(item.Title)
@@ -218,12 +218,12 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 				Status:   model.StatusCompleted,
 				Filename: finalPath,
 			})
-			return nil
+			return finalPath, nil
 		}
 		present, matches, verifyErr := fileutil.VerifyChecksum(finalPath)
 		if verifyErr != nil {
 			d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed})
-			return fmt.Errorf("verify existing checksum for %s: %w", finalPath, verifyErr)
+			return "", fmt.Errorf("verify existing checksum for %s: %w", finalPath, verifyErr)
 		}
 		if !present || matches {
 			d.sendProgress(model.ProgressEvent{
@@ -231,15 +231,15 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 				Status:   model.StatusCompleted,
 				Filename: finalPath,
 			})
-			return nil
+			return finalPath, nil
 		}
 		// Existing file no longer matches its checksum — treat it as
 		// corrupt and redownload rather than trusting stale bytes.
 		if err := os.Remove(finalPath); err != nil {
-			return fmt.Errorf("remove corrupt file %s: %w", finalPath, err)
+			return "", fmt.Errorf("remove corrupt file %s: %w", finalPath, err)
 		}
 		if err := os.Remove(fileutil.ChecksumPath(finalPath)); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("remove stale checksum for %s: %w", finalPath, err)
+			return "", fmt.Errorf("remove stale checksum for %s: %w", finalPath, err)
 		}
 	}
 
@@ -265,11 +265,11 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 			select {
 			case <-ctx.Done():
 				d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled})
-				return &model.CancelledError{URL: item.URL}
+				return "", &model.CancelledError{URL: item.URL}
 			default:
 			}
 			if err := d.sleeper.SleepCtx(ctx, netutil.BackoffWithJitter(retryBaseDelay, attempt)); err != nil {
-				return lastErr
+				return "", lastErr
 			}
 		}
 
@@ -296,15 +296,15 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 		err := d.downloadOnce(ctx, item, resolvedURL, tempPath)
 		if err == nil {
 			if err := os.Rename(tempPath, finalPath); err != nil {
-				return errors.Join(err, removeFiles(tempPath, resumePath))
+				return "", errors.Join(err, removeFiles(tempPath, resumePath))
 			}
 			if err := removeFiles(resumePath); err != nil {
-				return err
+				return "", err
 			}
 			if !d.skipChecksums {
 				if err := fileutil.WriteChecksum(finalPath); err != nil {
 					d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed})
-					return fmt.Errorf("write checksum for %s: %w", finalPath, err)
+					return "", fmt.Errorf("write checksum for %s: %w", finalPath, err)
 				}
 			}
 			d.sendProgress(model.ProgressEvent{
@@ -312,7 +312,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 				Status:   model.StatusCompleted,
 				Filename: finalPath,
 			})
-			return nil
+			return finalPath, nil
 		}
 		lastErr = err
 		if ctx.Err() != nil {
@@ -340,7 +340,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 
 	if ctx.Err() != nil {
 		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled})
-		return &model.CancelledError{URL: item.URL}
+		return "", &model.CancelledError{URL: item.URL}
 	}
 
 	var cleanupErr error
@@ -354,7 +354,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 	// same item resumes from it via a Range request instead of
 	// re-downloading everything from scratch.
 	d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed})
-	return fmt.Errorf("download failed after %d attempts: %w", maxRetries, errors.Join(lastErr, cleanupErr))
+	return "", fmt.Errorf("download failed after %d attempts: %w", maxRetries, errors.Join(lastErr, cleanupErr))
 }
 
 // downloadOnce performs a single download attempt to tempPath, fetching

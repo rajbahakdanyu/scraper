@@ -35,10 +35,11 @@ func SafeJoin(root, component string) (string, error) {
 type PathAllocator struct {
 	mu      sync.Mutex
 	claimed map[string]string
+	owners  map[string]string
 }
 
 func NewPathAllocator() *PathAllocator {
-	return &PathAllocator{claimed: make(map[string]string)}
+	return &PathAllocator{claimed: make(map[string]string), owners: make(map[string]string)}
 }
 
 func (a *PathAllocator) Claim(path, owner string) string {
@@ -48,8 +49,12 @@ func (a *PathAllocator) Claim(path, owner string) string {
 	if a.claimed == nil {
 		a.claimed = make(map[string]string)
 	}
+	if a.owners == nil {
+		a.owners = make(map[string]string)
+	}
 	if currentOwner, ok := a.claimed[pathKey(path)]; !ok || currentOwner == owner {
 		a.claimed[pathKey(path)] = owner
+		a.owners[owner] = path
 		return path
 	}
 
@@ -59,9 +64,16 @@ func (a *PathAllocator) Claim(path, owner string) string {
 		candidate := fmt.Sprintf("%s (%d)%s", stem, suffix, ext)
 		if _, exists := a.claimed[pathKey(candidate)]; !exists {
 			a.claimed[pathKey(candidate)] = owner
+			a.owners[owner] = candidate
 			return candidate
 		}
 	}
+}
+
+func (a *PathAllocator) Load(owner string) string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.owners[owner]
 }
 
 func pathKey(path string) string {

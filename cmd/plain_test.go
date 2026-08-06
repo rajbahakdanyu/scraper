@@ -47,7 +47,7 @@ func newFakePlainDownloader() *fakePlainDownloader {
 
 func (f *fakePlainDownloader) Prepare(item model.MediaItem) {}
 
-func (f *fakePlainDownloader) Download(item model.MediaItem, dest string) error {
+func (f *fakePlainDownloader) Download(item model.MediaItem, dest string) (string, error) {
 	f.mu.Lock()
 	f.downloaded = append(f.downloaded, item)
 	f.dests = append(f.dests, dest)
@@ -55,13 +55,17 @@ func (f *fakePlainDownloader) Download(item model.MediaItem, dest string) error 
 	f.mu.Unlock()
 	if block {
 		<-f.shutdownCh
-		return &model.CancelledError{URL: item.URL}
+		return "", &model.CancelledError{URL: item.URL}
 	}
+	var completedPath string
 	for _, evt := range f.scripted[item.URL] {
 		evt.Item = item
 		f.progress <- evt
+		if evt.Status == model.StatusCompleted {
+			completedPath = evt.Filename
+		}
 	}
-	return f.errs[item.URL]
+	return completedPath, f.errs[item.URL]
 }
 
 func (f *fakePlainDownloader) Cancel(item model.MediaItem) {}
@@ -308,10 +312,10 @@ type blockingBatchDownloader struct {
 }
 
 func (d *blockingBatchDownloader) Prepare(model.MediaItem) {}
-func (d *blockingBatchDownloader) Download(item model.MediaItem, _ string) error {
+func (d *blockingBatchDownloader) Download(item model.MediaItem, _ string) (string, error) {
 	d.progress <- model.ProgressEvent{Item: item, Status: model.StatusDownloading}
 	<-d.allowError
-	return errors.New("download boom")
+	return "", errors.New("download boom")
 }
 func (d *blockingBatchDownloader) Cancel(model.MediaItem)               {}
 func (d *blockingBatchDownloader) Shutdown()                            { close(d.progress) }

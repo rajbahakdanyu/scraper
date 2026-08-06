@@ -28,11 +28,11 @@ type fakeDownloader struct {
 
 func (f *fakeDownloader) Prepare(item model.MediaItem) {}
 
-func (f *fakeDownloader) Download(item model.MediaItem, dest string) error {
+func (f *fakeDownloader) Download(item model.MediaItem, dest string) (string, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, item)
 	f.mu.Unlock()
-	return nil
+	return "fake/path", nil
 }
 
 func (f *fakeDownloader) Cancel(item model.MediaItem) {

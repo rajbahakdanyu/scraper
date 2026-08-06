@@ -240,13 +240,13 @@ func (s *Scraper) takeParsedVideo(videoID string) *ytdl.Video {
 // extracting audio with ffmpeg if needed) the result to dest. maxHeight caps
 // video resolution (0 = no cap). audioOnly, if non-empty ("m4a" or "mp3"),
 // bypasses video and downloads/extracts only audio.
-func (s *Scraper) downloadBest(ctx context.Context, videoID, dest, owner string, paths *fileutil.PathAllocator, limiter *rate.Limiter, skipChecksums bool, maxHeight int, audioOnly string, onProgress func(bytes, total int64)) error {
+func (s *Scraper) downloadBest(ctx context.Context, videoID, dest, owner string, paths *fileutil.PathAllocator, limiter *rate.Limiter, skipChecksums bool, maxHeight int, audioOnly string, onProgress func(bytes, total int64)) (string, error) {
 	video := s.takeParsedVideo(videoID)
 	if video == nil {
 		var err error
 		video, err = s.video.GetVideoContext(ctx, videoID)
 		if err != nil {
-			return fmt.Errorf("youtube: failed to fetch video info: %w", err)
+			return "", fmt.Errorf("youtube: failed to fetch video info: %w", err)
 		}
 	}
 
@@ -260,16 +260,19 @@ func (s *Scraper) downloadBest(ctx context.Context, videoID, dest, owner string,
 		// The video has no downloadable formats (region-locked,
 		// members-only, audio-less, ...) — refetching the same metadata
 		// on a retry won't change that.
-		return model.NewNonRetryable(err)
+		return "", model.NewNonRetryable(err)
 	}
 
 	if audioOnly != "" {
-		return s.downloadAudioOnly(ctx, video, videoFmt, audioFmt, title, dest, owner, paths, limiter, skipChecksums, audioOnly, onProgress)
+		err := s.downloadAudioOnly(ctx, video, videoFmt, audioFmt, title, dest, owner, paths, limiter, skipChecksums, audioOnly, onProgress)
+		return paths.Load(owner), err
 	}
 	if audioFmt == nil {
-		return s.downloadStreamDirect(ctx, video, videoFmt, title, dest, owner, paths, limiter, skipChecksums, onProgress)
+		err := s.downloadStreamDirect(ctx, video, videoFmt, title, dest, owner, paths, limiter, skipChecksums, onProgress)
+		return paths.Load(owner), err
 	}
-	return s.downloadAndMux(ctx, video, videoFmt, audioFmt, title, dest, owner, paths, limiter, skipChecksums, onProgress)
+	err = s.downloadAndMux(ctx, video, videoFmt, audioFmt, title, dest, owner, paths, limiter, skipChecksums, onProgress)
+	return paths.Load(owner), err
 }
 
 func (s *Scraper) downloadAudioOnly(ctx context.Context, video *ytdl.Video, videoFmt, audioFmt *ytdl.Format, title, dest, owner string, paths *fileutil.PathAllocator, limiter *rate.Limiter, skipChecksums bool, audioFormat string, onProgress func(int64, int64)) error {
@@ -882,7 +885,7 @@ func parseQualityHeight(q string) int {
 // internal/ui/dashboard, which would invert the dependency direction).
 var _ interface {
 	Prepare(item model.MediaItem)
-	Download(item model.MediaItem, dest string) error
+	Download(item model.MediaItem, dest string) (string, error)
 	Cancel(item model.MediaItem)
 	Shutdown()
 	Progress() <-chan model.ProgressEvent
@@ -894,7 +897,7 @@ func (d *Downloader) Prepare(item model.MediaItem) {
 	d.mu.Unlock()
 }
 
-func (d *Downloader) Download(item model.MediaItem, dest string) error {
+func (d *Downloader) Download(item model.MediaItem, dest string) (string, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	d.mu.Lock()
 	if d.shuttingDown {
@@ -902,7 +905,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 		// it must not sendProgress — the channel may already be closed.
 		d.mu.Unlock()
 		cancel()
-		return fmt.Errorf("downloader is shut down: %s", item.URL)
+		return "", fmt.Errorf("downloader is shut down: %s", item.URL)
 	}
 	d.wg.Add(1)
 	delete(d.queued, item.Key())
@@ -912,7 +915,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 		cancel()
 		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled, Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
 		d.wg.Done()
-		return &model.CancelledError{URL: item.URL}
+		return "", &model.CancelledError{URL: item.URL}
 	}
 	d.cancelMap[item.Key()] = cancel
 	d.mu.Unlock()
@@ -929,7 +932,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 		defer func() { <-d.sem }()
 	case <-ctx.Done():
 		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled, Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
-		return &model.CancelledError{URL: item.URL}
+		return "", &model.CancelledError{URL: item.URL}
 	}
 
 	d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusDownloading, Start: time.Now(), Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
@@ -937,25 +940,28 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 	videoID := d.scraper.ExtractVideoID(item.URL)
 	if videoID == "" {
 		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed, Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
-		return fmt.Errorf("youtube: could not extract video ID from %s", item.URL)
+		return "", fmt.Errorf("youtube: could not extract video ID from %s", item.URL)
 	}
 
+	var finalPath string
 	err := withRetry(ctx, func() error {
-		return d.scraper.downloadBest(ctx, videoID, dest, item.Key(), d.paths, d.limiter, d.skipSum, d.quality, d.audioOnly, func(bytes, total int64) {
+		var err error
+		finalPath, err = d.scraper.downloadBest(ctx, videoID, dest, item.Key(), d.paths, d.limiter, d.skipSum, d.quality, d.audioOnly, func(bytes, total int64) {
 			d.sendProgress(model.ProgressEvent{Item: item, Bytes: bytes, Total: total, Status: model.StatusDownloading, Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
 		})
+		return err
 	})
 
 	switch {
 	case err == nil:
 		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCompleted, Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
-		return nil
+		return finalPath, nil
 	case ctx.Err() != nil:
 		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled, Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
-		return &model.CancelledError{URL: item.URL}
+		return "", &model.CancelledError{URL: item.URL}
 	default:
 		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed, Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
-		return err
+		return "", err
 	}
 }
 

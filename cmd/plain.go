@@ -6,11 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"os/signal"
-	"path"
-	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -147,7 +144,7 @@ func runPlain(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				errs[i] = dl.Download(item, dest)
+				_, errs[i] = dl.Download(item, dest)
 			}()
 		}
 		wg.Wait()
@@ -321,7 +318,7 @@ batchLoop:
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					errs[i] = dl.Download(item, a.Dest)
+					_, errs[i] = dl.Download(item, a.Dest)
 				}()
 			}
 			wg.Wait()
@@ -438,7 +435,7 @@ func runJSON(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error)
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				errs[i] = dl.Download(item, dest)
+				_, errs[i] = dl.Download(item, dest)
 			}()
 		}
 		wg.Wait()
@@ -539,7 +536,6 @@ func runBatchJSON(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, dest
 	progress := dl.Progress()
 	paths := make(map[string]string)
 	var pathsMu sync.Mutex
-	alloc := fileutil.NewPathAllocator()
 	progressDone := make(chan struct{})
 	go func() {
 		for range progress {
@@ -603,12 +599,11 @@ batchLoop:
 				wg.Add(1)
 				go func(i int, item model.MediaItem) {
 					defer wg.Done()
-					expectedPath := expectedDownloadPath(a.Dest, item, alloc)
-					err := dl.Download(item, a.Dest)
+					path, err := dl.Download(item, a.Dest)
 					errs[i] = err
 					if err == nil {
 						pathsMu.Lock()
-						paths[item.Key()] = expectedPath
+						paths[item.Key()] = path
 						pathsMu.Unlock()
 					}
 				}(i, item)
@@ -693,27 +688,6 @@ batchLoop:
 	})
 
 	return model.NewPartialError("batch", allErrs)
-}
-
-func expectedDownloadPath(dest string, item model.MediaItem, alloc *fileutil.PathAllocator) string {
-	filename := fileutil.SanitizeFilename(item.Title)
-	if filename == "" {
-		filename = "download"
-	}
-	if path.Ext(filename) == "" {
-		if ext := extFromURL(item.URL); ext != "" {
-			filename += ext
-		}
-	}
-	return alloc.Claim(filepath.Join(dest, filename), item.Key())
-}
-
-func extFromURL(rawURL string) string {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return ""
-	}
-	return path.Ext(u.Path)
 }
 
 // runDryRunJSON scrapes targetURL and prints a single JSON document with

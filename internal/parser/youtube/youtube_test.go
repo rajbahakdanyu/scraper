@@ -294,7 +294,7 @@ func TestDownloaderReturnsErrorForUnresolvableURL(t *testing.T) {
 	d, _ := NewDownloaderWithConfig(NewYouTubeScraper(), DownloaderConfig{Concurrency: 1})
 	item := model.MediaItem{URL: "not-a-youtube-url"}
 
-	if err := d.Download(item, t.TempDir()); err == nil {
+	if _, err := d.Download(item, t.TempDir()); err == nil {
 		t.Fatal("expected an error for a URL with no extractable video ID")
 	}
 }
@@ -410,7 +410,7 @@ func TestDownloadBestNoFormatsIsPermanent(t *testing.T) {
 	scraper := NewYouTubeScraper()
 	scraper.parsed["nofmts"] = &ytdl.Video{ID: "nofmts", Title: "No Formats"}
 
-	err := scraper.downloadBest(t.Context(), "nofmts", t.TempDir(), "owner", fileutil.NewPathAllocator(), nil, true, 0, "", nil)
+	_, err := scraper.downloadBest(t.Context(), "nofmts", t.TempDir(), "owner", fileutil.NewPathAllocator(), nil, true, 0, "", nil)
 	if err == nil {
 		t.Fatal("expected an error for a video with no downloadable formats")
 	}
@@ -730,7 +730,7 @@ func TestParseThenDownloadFetchesVideoInfoOnce(t *testing.T) {
 	}
 
 	dest := t.TempDir()
-	if err := d.Download(items[0], dest); err != nil {
+	if _, err := d.Download(items[0], dest); err != nil {
 		t.Fatalf("Download: %v", err)
 	}
 
@@ -753,7 +753,7 @@ func TestDownloadWithoutParseFetchesVideoInfoOnce(t *testing.T) {
 
 	dest := t.TempDir()
 	item := model.MediaItem{URL: videoWatchURL(videoID), Title: "Test Video", Type: model.MediaTypeVideo}
-	if err := d.Download(item, dest); err != nil {
+	if _, err := d.Download(item, dest); err != nil {
 		t.Fatalf("Download: %v", err)
 	}
 
@@ -778,7 +778,7 @@ func TestDownloadNoFormatsFailsAfterOneAttempt(t *testing.T) {
 	scraper.parsed[videoID] = &ytdl.Video{ID: videoID, Title: "No Formats"}
 
 	item := model.MediaItem{URL: videoWatchURL(videoID), Title: "No Formats", Type: model.MediaTypeVideo}
-	if err := d.Download(item, t.TempDir()); err == nil {
+	if _, err := d.Download(item, t.TempDir()); err == nil {
 		t.Fatal("expected an error for a video with no downloadable formats")
 	}
 	if got := fake.playerPosts.Load(); got != 0 {
@@ -814,7 +814,7 @@ func TestDownloaderShutdownCancelsInFlightDownload(t *testing.T) {
 
 	item := model.MediaItem{URL: videoWatchURL(videoID), Title: "Slow Video", Type: model.MediaTypeVideo}
 	downloadDone := make(chan error, 1)
-	go func() { downloadDone <- d.Download(item, t.TempDir()) }()
+	go func() { _, err := d.Download(item, t.TempDir()); downloadDone <- err }()
 
 	// Wait until the stream request is genuinely in flight.
 	startDeadline := time.Now().Add(5 * time.Second)
@@ -989,7 +989,7 @@ func TestDownloaderFailsFastAfterShutdown(t *testing.T) {
 
 	start := time.Now()
 	item := model.MediaItem{URL: videoWatchURL("shutdown02"), Title: "Late", Type: model.MediaTypeVideo}
-	err := d.Download(item, t.TempDir())
+	_, err := d.Download(item, t.TempDir())
 	if err == nil {
 		t.Fatal("expected Download to fail fast after Shutdown")
 	}
