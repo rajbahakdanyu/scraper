@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -262,6 +263,10 @@ batchLoop:
 
 		printCh <- fmt.Sprintf("Scraping %s...\n", a.URL)
 		items, err := a.Scraper.Parse(ctx, a.URL)
+		if errors.Is(err, context.Canceled) {
+			printCh <- "interrupted\n"
+			break batchLoop
+		}
 		if err != nil && len(items) == 0 {
 			printCh <- fmt.Sprintf("failed: %v\n", err)
 			allErrs = append(allErrs, err)
@@ -555,6 +560,10 @@ batchLoop:
 		}
 		fmt.Fprintf(os.Stderr, "Scraping %s...\n", a.URL)
 		items, err := a.Scraper.Parse(ctx, a.URL)
+		if errors.Is(err, context.Canceled) {
+			fmt.Fprintln(os.Stderr, "interrupted")
+			break batchLoop
+		}
 		if err != nil && len(items) == 0 {
 			writeJSONLine(out, model.JSONEvent{Event: "album_error", Site: a.Site, URL: a.URL, Slug: a.Slug, Error: err.Error()})
 			allErrs = append(allErrs, err)

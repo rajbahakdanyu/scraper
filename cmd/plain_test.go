@@ -633,6 +633,65 @@ func (f *fakeBatchJSONScraper) Parse(ctx context.Context, url string) ([]model.M
 	return f.items, f.err
 }
 
+type interruptingBatchScraper struct {
+	started  chan struct{}
+	complete int
+}
+
+func (s *interruptingBatchScraper) Name() string { return "interrupting" }
+
+func (s *interruptingBatchScraper) Parse(ctx context.Context, url string) ([]model.MediaItem, error) {
+	if s.complete == 0 {
+		s.complete++
+		return []model.MediaItem{{URL: "https://example.com/first.mp4", Title: "first.mp4"}}, nil
+	}
+	close(s.started)
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestRunBatchPlainInterruptStopsAfterFirstScrape(t *testing.T) {
+	safety := make(chan os.Signal, 1)
+	signal.Notify(safety, os.Interrupt)
+	defer signal.Stop(safety)
+
+	dl := newFakePlainDownloader()
+	scraper := &interruptingBatchScraper{started: make(chan struct{})}
+	albums := []dashboard.DashAlbumURL{
+		{URL: "https://example.com/one", Slug: "one", Dest: t.TempDir(), Scraper: scraper},
+		{URL: "https://example.com/two", Slug: "two", Dest: t.TempDir(), Scraper: scraper},
+		{URL: "https://example.com/three", Slug: "three", Dest: t.TempDir(), Scraper: scraper},
+	}
+
+	done := make(chan error, 1)
+	var out bytes.Buffer
+	go func() { done <- runBatchPlain(dl, albums, t.TempDir(), &out) }()
+
+	select {
+	case <-scraper.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("second scrape did not start")
+	}
+	if err := syscall.Kill(syscall.Getpid(), syscall.SIGINT); err != nil {
+		t.Fatalf("send SIGINT: %v", err)
+	}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("expected clean batch interruption, got: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("batch did not stop after SIGINT")
+	}
+	if scraper.complete != 1 {
+		t.Fatalf("expected only the first album to scrape successfully, got %d", scraper.complete)
+	}
+	if strings.Contains(out.String(), "failed: context canceled") {
+		t.Fatalf("cancellation was reported as a scrape failure: %s", out.String())
+	}
+}
+
 func TestRunBatchJSONProducesJSONLines(t *testing.T) {
 	fd := newFakePlainDownloader()
 	scraper := &fakeBatchJSONScraper{items: []model.MediaItem{

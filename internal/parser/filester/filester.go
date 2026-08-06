@@ -27,11 +27,23 @@ const defaultBaseURL = "https://filester.sh"
 // Sleeper is a test-injectable alternative to time.Sleep.
 type Sleeper interface {
 	Sleep(d time.Duration)
+	SleepCtx(ctx context.Context, d time.Duration) error
 }
 
 type realSleeper struct{}
 
 func (realSleeper) Sleep(d time.Duration) { time.Sleep(d) }
+
+func (realSleeper) SleepCtx(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
 
 // defaultCDNURLs mirrors the CDN_URLS list filester's own /js/file_dl.js
 // picks a random entry from when a download token response doesn't include
@@ -196,10 +208,8 @@ func (s *Scraper) parseFolder(ctx context.Context, id string) ([]model.MediaItem
 			return itemsFromEntries(allEntries, s), err
 		}
 		if page > 1 {
-			select {
-			case <-ctx.Done():
-				return itemsFromEntries(allEntries, s), ctx.Err()
-			case <-time.After(pageFetchDelay):
+			if err := s.sleeper.SleepCtx(ctx, pageFetchDelay); err != nil {
+				return itemsFromEntries(allEntries, s), err
 			}
 		}
 
@@ -305,10 +315,8 @@ func (s *Scraper) fetchFolderPage(ctx context.Context, id string, page int) (ent
 	}
 
 	for attempt := 1; attempt < maxPageRetries; attempt++ {
-		select {
-		case <-ctx.Done():
-			return nil, pageTotal, ctx.Err()
-		case <-time.After(netutil.BackoffWithJitter(pageRetryBaseDelay, attempt-1)):
+		if err := s.sleeper.SleepCtx(ctx, netutil.BackoffWithJitter(pageRetryBaseDelay, attempt-1)); err != nil {
+			return nil, pageTotal, err
 		}
 
 		doc, ferr := s.fetchDoc(ctx, pageURL)

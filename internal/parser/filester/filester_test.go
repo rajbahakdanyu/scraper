@@ -18,7 +18,8 @@ import (
 
 type noopSleeper struct{}
 
-func (noopSleeper) Sleep(time.Duration) {}
+func (noopSleeper) Sleep(time.Duration)                           {}
+func (noopSleeper) SleepCtx(context.Context, time.Duration) error { return nil }
 
 func newTestFilesterScraper() *Scraper {
 	scraper := NewFilesterScraper()
