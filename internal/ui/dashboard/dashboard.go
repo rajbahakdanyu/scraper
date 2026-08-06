@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/progress"
@@ -69,6 +70,9 @@ type Dashboard struct {
 	theme    styles.Theme
 
 	states     []itemState
+	stateIndex map[string]int
+	rows       []table.Row
+	dirtyRows  map[int]struct{}
 	downloader Downloader
 	dest       string
 
@@ -84,8 +88,11 @@ type Dashboard struct {
 	scraperFn  func(context.Context) ([]model.MediaItem, error)
 	loadingErr string
 
-	sendFunc  func(tea.Msg)
-	albumSlug string
+	sendFunc       func(tea.Msg)
+	albumSlug      string
+	progressMu     sync.Mutex
+	pending        map[string]model.ProgressEvent
+	refreshPending bool
 
 	batchMode      bool
 	batchURLs      []DashAlbumURL
@@ -195,6 +202,7 @@ func (d *Dashboard) Init() tea.Cmd {
 // --- Messages ---
 
 type progressMsg model.ProgressEvent
+type refreshMsg struct{}
 type downloadDoneMsg struct {
 	key string
 	err error
@@ -317,6 +325,11 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		d.refreshRows()
 		return d, nil
 
+	case refreshMsg:
+		d.applyPendingProgress()
+		d.refreshRows()
+		return d, tea.Tick(time.Second/15, func(t time.Time) tea.Msg { return refreshMsg{} })
+
 	case downloadDoneMsg:
 		d.applyDone(msg)
 		d.refreshRows()
@@ -413,7 +426,40 @@ func (d *Dashboard) drainProgress() {
 	}
 	ch := d.downloader.Progress()
 	for evt := range ch {
-		d.sendFunc(progressMsg(evt))
+		d.progressMu.Lock()
+		if d.pending == nil {
+			d.pending = make(map[string]model.ProgressEvent)
+		}
+		d.pending[evt.Item.Key()] = evt
+		sendRefresh := !d.refreshPending
+		d.refreshPending = true
+		d.progressMu.Unlock()
+		if sendRefresh {
+			d.sendFunc(refreshMsg{})
+		}
+	}
+}
+
+func (d *Dashboard) queueProgress(evt model.ProgressEvent) {
+	d.progressMu.Lock()
+	if d.pending == nil {
+		d.pending = make(map[string]model.ProgressEvent)
+	}
+	d.pending[evt.Item.Key()] = evt
+	d.progressMu.Unlock()
+}
+
+func (d *Dashboard) applyPendingProgress() {
+	d.progressMu.Lock()
+	pending := d.pending
+	d.pending = make(map[string]model.ProgressEvent)
+	d.refreshPending = false
+	d.progressMu.Unlock()
+	if len(pending) == 0 {
+		return
+	}
+	for _, evt := range pending {
+		d.applyProgress(evt)
 	}
 }
 
@@ -640,75 +686,77 @@ func (d *Dashboard) startAllDownloads() tea.Cmd {
 }
 
 func (d *Dashboard) applyProgress(evt model.ProgressEvent) {
-	for i := range d.states {
-		if d.states[i].isHeader {
-			continue
-		}
-		if d.states[i].item.Key() != evt.Item.Key() {
-			continue
-		}
-		// Terminal states are authoritative: a progress event that was
-		// buffered before the item finished (cancelled, completed, failed)
-		// must not resurrect it back to an active state.
-		switch d.states[i].status {
-		case model.StatusCompleted, model.StatusFailed, model.StatusCancelled:
-			return
-		}
-		// Terminal status values (Failed, Cancelled) must only come from
-		// applyDone, not from buffered progress events — a stale
-		// StatusFailed event queued before a retry would otherwise
-		// corrupt the retried item.
-		if evt.Status == model.StatusFailed || evt.Status == model.StatusCancelled {
-			return
-		}
-		if d.states[i].started.IsZero() {
-			d.states[i].started = time.Now()
-		}
-		elapsed := time.Since(d.states[i].started).Seconds()
-		d.states[i].status = evt.Status
-		d.states[i].bytes = evt.Bytes
-		if evt.Total > 0 {
-			d.states[i].total = evt.Total
-		}
-		if elapsed > 0 && evt.Bytes > 0 {
-			d.states[i].speed = float64(evt.Bytes) / elapsed
-		}
+	d.ensureStateIndex()
+	i, ok := d.stateIndex[evt.Item.Key()]
+	if !ok {
 		return
 	}
+	// Terminal states are authoritative: a progress event that was
+	// buffered before the item finished (cancelled, completed, failed)
+	// must not resurrect it back to an active state.
+	switch d.states[i].status {
+	case model.StatusCompleted, model.StatusFailed, model.StatusCancelled:
+		return
+	}
+	// Terminal status values (Failed, Cancelled) must only come from
+	// applyDone, not from buffered progress events — a stale
+	// StatusFailed event queued before a retry would otherwise
+	// corrupt the retried item.
+	if evt.Status == model.StatusFailed || evt.Status == model.StatusCancelled {
+		return
+	}
+	if d.states[i].started.IsZero() {
+		d.states[i].started = time.Now()
+	}
+	elapsed := time.Since(d.states[i].started).Seconds()
+	d.states[i].status = evt.Status
+	d.states[i].bytes = evt.Bytes
+	if evt.Total > 0 {
+		d.states[i].total = evt.Total
+	}
+	if elapsed > 0 && evt.Bytes > 0 {
+		d.states[i].speed = float64(evt.Bytes) / elapsed
+	}
+	d.markDirty(i)
+	return
 }
 
 func (d *Dashboard) applyDone(msg downloadDoneMsg) {
-	for i := range d.states {
-		if d.states[i].isHeader {
-			continue
-		}
-		if d.states[i].item.Key() != msg.key {
-			continue
-		}
-		switch {
-		case msg.err == nil:
-			d.states[i].status = model.StatusCompleted
-			d.states[i].lastErr = nil
-			if d.states[i].total > 0 {
-				d.states[i].bytes = d.states[i].total
-			}
-		case d.states[i].status == model.StatusCancelled:
-			// Already marked cancelled via the progress channel; a
-			// cancelled download also returns an error here, but that's
-			// not a failure worth downgrading the status for.
-		default:
-			d.states[i].status = model.StatusFailed
-			d.states[i].lastErr = msg.err
-		}
-		break
+	d.ensureStateIndex()
+	i, ok := d.stateIndex[msg.key]
+	if !ok {
+		return
 	}
+	switch {
+	case msg.err == nil:
+		d.states[i].status = model.StatusCompleted
+		d.states[i].lastErr = nil
+		if d.states[i].total > 0 {
+			d.states[i].bytes = d.states[i].total
+		}
+	case d.states[i].status == model.StatusCancelled:
+		// Already marked cancelled via the progress channel; a
+		// cancelled download also returns an error here, but that's
+		// not a failure worth downgrading the status for.
+	default:
+		d.states[i].status = model.StatusFailed
+		d.states[i].lastErr = msg.err
+	}
+	d.markDirty(i)
 }
 
 // --- Rendering ---
 
 func (d *Dashboard) refreshRows() {
-	rows := make([]table.Row, len(d.states))
-	for i, st := range d.states {
+	if len(d.rows) != len(d.states) {
+		d.rows = make([]table.Row, len(d.states))
+		d.dirtyRows = make(map[int]struct{}, len(d.states))
+		for i := range d.states {
+			d.dirtyRows[i] = struct{}{}
+		}
+	}
+	for i := range d.dirtyRows {
+		st := d.states[i]
 		if st.isHeader {
 			var done, active int
 			for j := i + 1; j < len(d.states); j++ {
@@ -738,7 +786,7 @@ func (d *Dashboard) refreshRows() {
 				}
 			}
 			styled := d.theme.Cyan.Bold(true).Render(headerText)
-			rows[i] = table.Row{styled, "", "", ""}
+			d.rows[i] = table.Row{styled, "", "", ""}
 			continue
 		}
 
@@ -756,9 +804,35 @@ func (d *Dashboard) refreshRows() {
 			mark = "·"
 		}
 
-		rows[i] = table.Row{mark, truncate(st.item.Title, 40), statusShort(st.status), miniBar(st)}
+		d.rows[i] = table.Row{mark, truncate(st.item.Title, 40), statusShort(st.status), miniBar(st)}
 	}
-	d.table.SetRows(rows)
+	d.dirtyRows = make(map[int]struct{})
+	d.table.SetRows(d.rows)
+}
+
+func (d *Dashboard) ensureStateIndex() {
+	if len(d.stateIndex) == len(d.states) {
+		return
+	}
+	d.stateIndex = make(map[string]int, len(d.states))
+	for i := range d.states {
+		if !d.states[i].isHeader {
+			d.stateIndex[d.states[i].item.Key()] = i
+		}
+	}
+}
+
+func (d *Dashboard) markDirty(i int) {
+	if d.dirtyRows == nil {
+		d.dirtyRows = make(map[int]struct{})
+	}
+	d.dirtyRows[i] = struct{}{}
+	for i > 0 && !d.states[i-1].isHeader {
+		i--
+	}
+	if d.states[i].isHeader {
+		d.dirtyRows[i] = struct{}{}
+	}
 }
 
 // --- View ---
