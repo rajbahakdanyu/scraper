@@ -22,6 +22,12 @@ func WriteChecksum(path string) error {
 	if err != nil {
 		return err
 	}
+	return WriteChecksumDigest(path, sum)
+}
+
+// WriteChecksumDigest writes a checksum sidecar from an already-computed
+// SHA-256 digest, avoiding a second read of path.
+func WriteChecksumDigest(path, sum string) error {
 	line := fmt.Sprintf("%s  %s\n", sum, filepath.Base(path))
 	sidecarPath := ChecksumPath(path)
 	temp, err := os.CreateTemp(filepath.Dir(sidecarPath), ".checksum-*")

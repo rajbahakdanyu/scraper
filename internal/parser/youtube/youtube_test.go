@@ -3,6 +3,8 @@ package youtube
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -34,7 +36,7 @@ func TestCopyStreamToFileRefusesSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := copyStreamToFile(context.Background(), io.LimitReader(strings.NewReader("fresh"), 5), 5, partPath, nil, nil)
+	_, err := copyStreamToFile(context.Background(), io.LimitReader(strings.NewReader("fresh"), 5), 5, partPath, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "refusing to follow symlink") {
 		t.Fatalf("expected symlink refusal, got %v", err)
 	}
@@ -44,6 +46,31 @@ func TestCopyStreamToFileRefusesSymlink(t *testing.T) {
 	}
 	if string(got) != "untouched" {
 		t.Fatalf("symlink target was modified: %q", got)
+	}
+}
+
+func TestCopyStreamToFileReturnsInlineChecksum(t *testing.T) {
+	content := "inline checksum"
+	path := filepath.Join(t.TempDir(), "stream.bin")
+
+	digest, err := copyStreamToFile(context.Background(), strings.NewReader(content), int64(len(content)), path, nil, nil)
+	if err != nil {
+		t.Fatalf("copyStreamToFile failed: %v", err)
+	}
+	if err := fileutil.WriteChecksum(path); err != nil {
+		t.Fatalf("WriteChecksum failed: %v", err)
+	}
+	sidecar, err := os.ReadFile(fileutil.ChecksumPath(path))
+	if err != nil {
+		t.Fatalf("failed to read checksum sidecar: %v", err)
+	}
+	want := sha256.Sum256([]byte(content))
+	wantDigest := hex.EncodeToString(want[:])
+	if digest != wantDigest {
+		t.Fatalf("inline digest = %q, want %q", digest, wantDigest)
+	}
+	if !strings.HasPrefix(string(sidecar), digest+"  ") {
+		t.Fatalf("sidecar = %q, want digest prefix %q", sidecar, digest+"  ")
 	}
 }
 
@@ -313,7 +340,7 @@ func TestCopyStreamToFileRejectsTruncatedStream(t *testing.T) {
 	short := strings.NewReader("only-partial-content")
 	path := filepath.Join(t.TempDir(), "video.mp4")
 
-	err := copyStreamToFile(t.Context(), short, 1<<20, path, nil, nil)
+	_, err := copyStreamToFile(t.Context(), short, 1<<20, path, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "size mismatch") {
 		t.Fatalf("expected a size-mismatch error for a truncated stream, got %v", err)
 	}
@@ -323,7 +350,7 @@ func TestCopyStreamToFileAcceptsExactStream(t *testing.T) {
 	content := strings.Repeat("x", 4096)
 	path := filepath.Join(t.TempDir(), "video.mp4")
 
-	if err := copyStreamToFile(t.Context(), strings.NewReader(content), int64(len(content)), path, nil, nil); err != nil {
+	if _, err := copyStreamToFile(t.Context(), strings.NewReader(content), int64(len(content)), path, nil, nil); err != nil {
 		t.Fatalf("unexpected error for an exact-size stream: %v", err)
 	}
 	got, err := os.ReadFile(path)
@@ -338,7 +365,7 @@ func TestCopyStreamToFileAcceptsExactStream(t *testing.T) {
 func TestCopyStreamToFileSkipsCheckWhenSizeUnknown(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "video.mp4")
 
-	if err := copyStreamToFile(t.Context(), strings.NewReader("whatever"), 0, path, nil, nil); err != nil {
+	if _, err := copyStreamToFile(t.Context(), strings.NewReader("whatever"), 0, path, nil, nil); err != nil {
 		t.Fatalf("size 0 (unknown) must not trigger the size check, got %v", err)
 	}
 }

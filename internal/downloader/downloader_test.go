@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 	"github.com/rajbahakdanyu/scraper/internal/model"
 	"github.com/rajbahakdanyu/scraper/internal/netutil"
 )
@@ -373,7 +374,7 @@ func TestDownloadOnceTimesOutWaitingForResponseHeaders(t *testing.T) {
 	item := model.MediaItem{URL: ts.URL, Title: "headers.bin"}
 
 	start := time.Now()
-	err = dl.downloadOnce(context.Background(), item, item.URL, filepath.Join(t.TempDir(), "headers.bin.part"))
+	_, err = dl.downloadOnce(context.Background(), item, item.URL, filepath.Join(t.TempDir(), "headers.bin.part"))
 	<-started
 	if err == nil {
 		t.Fatal("expected response-header timeout")
@@ -1160,6 +1161,37 @@ func TestDownloadWritesChecksumSidecar(t *testing.T) {
 	wantHex := hex.EncodeToString(want[:])
 	if !strings.HasPrefix(string(data), wantHex) {
 		t.Errorf("sidecar content = %q, want it to start with %q", data, wantHex)
+	}
+}
+
+func TestDownloadInlineChecksumMatchesWriteChecksum(t *testing.T) {
+	const content = "inline downloader checksum"
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprint(len(content)))
+		_, _ = w.Write([]byte(content))
+	}))
+	defer ts.Close()
+
+	dl := newTestDownloader(1, 0, "")
+	dest := t.TempDir()
+	tempPath := filepath.Join(dest, "inline.bin.part")
+	finalPath := filepath.Join(dest, "inline.bin")
+	digest, err := dl.downloadOnce(context.Background(), model.MediaItem{URL: ts.URL}, ts.URL, tempPath)
+	if err != nil {
+		t.Fatalf("downloadOnce failed: %v", err)
+	}
+	if err := os.Rename(tempPath, finalPath); err != nil {
+		t.Fatalf("rename failed: %v", err)
+	}
+	if err := fileutil.WriteChecksum(finalPath); err != nil {
+		t.Fatalf("WriteChecksum failed: %v", err)
+	}
+	sidecar, err := os.ReadFile(fileutil.ChecksumPath(finalPath))
+	if err != nil {
+		t.Fatalf("failed to read checksum sidecar: %v", err)
+	}
+	if !strings.HasPrefix(string(sidecar), digest+"  ") {
+		t.Fatalf("inline digest = %q, sidecar = %q", digest, sidecar)
 	}
 }
 

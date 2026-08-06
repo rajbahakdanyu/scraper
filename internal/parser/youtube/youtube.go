@@ -4,6 +4,8 @@ package youtube
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -310,7 +312,7 @@ func (s *Scraper) downloadAudioOnly(ctx context.Context, video *ytdl.Video, vide
 	streamTemp := tempPath + ".stream"
 	defer os.Remove(streamTemp)
 
-	if err := s.downloadStreamToFileProgress(ctx, video, srcFormat, streamTemp, limiter, func(n, total int64) {
+	if _, err := s.downloadStreamToFileProgress(ctx, video, srcFormat, streamTemp, limiter, func(n, total int64) {
 		if onProgress != nil {
 			onProgress(n, total)
 		}
@@ -347,10 +349,11 @@ func (s *Scraper) downloadStreamDirect(ctx context.Context, video *ytdl.Video, f
 	tempPath := finalPath + ".part"
 	defer os.Remove(tempPath)
 
-	if err := s.downloadStreamToFileProgress(ctx, video, format, tempPath, limiter, onProgress); err != nil {
+	checksum, err := s.downloadStreamToFileProgress(ctx, video, format, tempPath, limiter, onProgress)
+	if err != nil {
 		return err
 	}
-	return commitOutput(tempPath, finalPath, skipChecksums)
+	return commitOutputWithChecksum(tempPath, finalPath, skipChecksums, checksum)
 }
 
 func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFmt, audioFmt *ytdl.Format, title, dest, owner string, paths *fileutil.PathAllocator, limiter *rate.Limiter, skipChecksums bool, onProgress func(int64, int64)) error {
@@ -401,7 +404,7 @@ func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFm
 	}
 
 	// Download video stream.
-	if err := s.downloadStreamToFileProgress(ctx, video, videoFmt, videoPath, limiter, func(n, _ int64) {
+	if _, err := s.downloadStreamToFileProgress(ctx, video, videoFmt, videoPath, limiter, func(n, _ int64) {
 		videoRead = n
 		report()
 	}); err != nil {
@@ -409,7 +412,7 @@ func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFm
 	}
 
 	// Download audio stream.
-	if err := s.downloadStreamToFileProgress(ctx, video, audioFmt, audioPath, limiter, func(n, _ int64) {
+	if _, err := s.downloadStreamToFileProgress(ctx, video, audioFmt, audioPath, limiter, func(n, _ int64) {
 		audioRead = n
 		report()
 	}); err != nil {
@@ -509,10 +512,10 @@ func ffmpegError(op string, err error, stderr *bytes.Buffer) error {
 	return fmt.Errorf("youtube: ffmpeg %s failed: %w: %s", op, err, detail)
 }
 
-func (s *Scraper) downloadStreamToFileProgress(ctx context.Context, video *ytdl.Video, format *ytdl.Format, path string, limiter *rate.Limiter, onProgress func(int64, int64)) error {
+func (s *Scraper) downloadStreamToFileProgress(ctx context.Context, video *ytdl.Video, format *ytdl.Format, path string, limiter *rate.Limiter, onProgress func(int64, int64)) (string, error) {
 	stream, size, err := s.video.GetStreamContext(ctx, video, format)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer stream.Close()
 	return copyStreamToFile(ctx, stream, size, path, limiter, onProgress)
@@ -522,16 +525,16 @@ func (s *Scraper) downloadStreamToFileProgress(ctx context.Context, video *ytdl.
 // When size > 0 the stream must deliver exactly that many bytes: a stream
 // that ends early (io.EOF before size bytes) is rejected as truncated so a
 // partial file can never be committed and blessed with a checksum sidecar.
-func copyStreamToFile(ctx context.Context, stream io.Reader, size int64, path string, limiter *rate.Limiter, onProgress func(int64, int64)) error {
+func copyStreamToFile(ctx context.Context, stream io.Reader, size int64, path string, limiter *rate.Limiter, onProgress func(int64, int64)) (string, error) {
 	// #nosec G304 -- path is internally allocated under the configured output or private temp directory.
 	fd, err := unix.Open(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|unix.O_NOFOLLOW, 0644)
 	if err != nil {
 		if errors.Is(err, unix.ELOOP) {
-			return model.NewNonRetryable(fmt.Errorf("refusing to follow symlink for .part file %s: %w", path, err))
+			return "", model.NewNonRetryable(fmt.Errorf("refusing to follow symlink for .part file %s: %w", path, err))
 		}
 		// Local filesystem failures are permanent — a retry can't make
 		// the destination writable.
-		return model.NewNonRetryable(err)
+		return "", model.NewNonRetryable(err)
 	}
 	out := os.NewFile(uintptr(fd), path)
 	closed := false
@@ -542,17 +545,19 @@ func copyStreamToFile(ctx context.Context, stream io.Reader, size int64, path st
 	}()
 
 	var read int64
+	hasher := sha256.New()
+	reader := io.TeeReader(stream, hasher)
 	buf := make([]byte, 32*1024)
 	for {
-		n, readErr := stream.Read(buf)
+		n, readErr := reader.Read(buf)
 		if n > 0 {
 			if limiter != nil {
 				if err := limiter.WaitN(ctx, n); err != nil {
-					return err
+					return "", err
 				}
 			}
 			if _, werr := out.Write(buf[:n]); werr != nil {
-				return model.NewNonRetryable(werr)
+				return "", model.NewNonRetryable(werr)
 			}
 			read += int64(n)
 			if onProgress != nil {
@@ -563,20 +568,20 @@ func copyStreamToFile(ctx context.Context, stream io.Reader, size int64, path st
 			break
 		}
 		if readErr != nil {
-			return readErr
+			return "", readErr
 		}
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return "", ctx.Err()
 		}
 	}
 	if err := out.Close(); err != nil {
-		return model.NewNonRetryable(err)
+		return "", model.NewNonRetryable(err)
 	}
 	closed = true
 	if size > 0 && read != size {
-		return fmt.Errorf("download size mismatch: got %d bytes, want %d (stream truncated)", read, size)
+		return "", fmt.Errorf("download size mismatch: got %d bytes, want %d (stream truncated)", read, size)
 	}
-	return nil
+	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
 // prepareOutput's failures are all local filesystem operations, so every
@@ -618,11 +623,21 @@ func prepareOutput(path string, skipChecksums bool) (bool, error) {
 // commitOutput's failures are all local filesystem operations, so every
 // error it returns is wrapped as nonRetryable (see prepareOutput).
 func commitOutput(tempPath, finalPath string, skipChecksums bool) error {
+	return commitOutputWithChecksum(tempPath, finalPath, skipChecksums, "")
+}
+
+func commitOutputWithChecksum(tempPath, finalPath string, skipChecksums bool, checksum string) error {
 	if err := os.Rename(tempPath, finalPath); err != nil {
 		return model.NewNonRetryable(err)
 	}
 	if !skipChecksums {
-		if err := fileutil.WriteChecksum(finalPath); err != nil {
+		var err error
+		if checksum != "" {
+			err = fileutil.WriteChecksumDigest(finalPath, checksum)
+		} else {
+			err = fileutil.WriteChecksum(finalPath)
+		}
+		if err != nil {
 			return model.NewNonRetryable(fmt.Errorf("write checksum for %s: %w", finalPath, err))
 		}
 	}

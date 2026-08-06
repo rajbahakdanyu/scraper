@@ -3,6 +3,7 @@ package downloader
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -192,6 +193,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) (string, error)
 	reResolved := false
 
 	var lastErr error
+	var checksum string
 	lastErr = netutil.Retry(ctx, netutil.MaxRetries, netutil.RetryBaseDelay, d.sleeper, func() error {
 		if item.Resolve != nil && resolvedURL == "" {
 			u, err := item.Resolve(ctx)
@@ -204,8 +206,9 @@ func (d *Downloader) Download(item model.MediaItem, dest string) (string, error)
 			}
 			resolvedURL = u
 		}
-		err := d.downloadOnce(ctx, item, resolvedURL, tempPath)
+		attemptChecksum, err := d.downloadOnce(ctx, item, resolvedURL, tempPath)
 		if err == nil {
+			checksum = attemptChecksum
 			return nil
 		}
 		var nre *model.NonRetryableError
@@ -221,7 +224,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) (string, error)
 			return "", errors.Join(err, removeFiles(tempPath, resumePath))
 		}
 		if !d.skipChecksums {
-			if err := fileutil.WriteChecksum(finalPath); err != nil {
+			if err := fileutil.WriteChecksumDigest(finalPath, checksum); err != nil {
 				d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed})
 				return "", fmt.Errorf("write checksum for %s: %w", finalPath, err)
 			}
@@ -259,7 +262,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) (string, error)
 // a Range header and appends; if the server doesn't honor the range (a
 // plain 200 response) it falls back to a full re-download instead of
 // corrupting the file.
-func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, resolvedURL, tempPath string) error {
+func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, resolvedURL, tempPath string) (string, error) {
 	var existing int64
 	var resume resumeMetadata
 	if info, err := os.Stat(tempPath); err == nil {
@@ -283,7 +286,7 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, res
 
 	req, err := http.NewRequestWithContext(ctx, "GET", resolvedURL, nil)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if d.userAgent != "" {
 		req.Header.Set("User-Agent", d.userAgent)
@@ -295,7 +298,7 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, res
 
 	resp, err := d.client.Do(req)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer resp.Body.Close()
 
@@ -309,7 +312,7 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, res
 		start, _, _, err := parseContentRange(resp.Header.Get("Content-Range"))
 		if existing == 0 || err != nil || start != existing || !resume.matches(resp) {
 			cleanupErr := removeFiles(tempPath, resumeMetadataPath(tempPath))
-			return errors.Join(fmt.Errorf("invalid partial response for %s; discarded stale partial", redactURL(resolvedURL)), cleanupErr)
+			return "", errors.Join(fmt.Errorf("invalid partial response for %s; discarded stale partial", redactURL(resolvedURL)), cleanupErr)
 		}
 	case http.StatusRequestedRangeNotSatisfiable:
 		// A 416 whose Content-Range total equals our on-disk byte count
@@ -320,20 +323,20 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, res
 		// changed to the same size doesn't get trusted by accident.
 		if existing > 0 && resume.matches(resp) {
 			if total, err := parseContentRangeTotal(resp.Header.Get("Content-Range")); err == nil && total == existing {
-				return nil
+				return hashFileDigest(tempPath)
 			}
 		}
 		// Our recorded partial no longer lines up with the remote resource
 		// (e.g. it changed size) — discard it so the next retry attempt
 		// fetches the whole thing fresh.
 		cleanupErr := removeFiles(tempPath, resumeMetadataPath(tempPath))
-		return errors.Join(fmt.Errorf("HTTP %d for %s (stale partial download discarded)", resp.StatusCode, redactURL(resolvedURL)), cleanupErr)
+		return "", errors.Join(fmt.Errorf("HTTP %d for %s (stale partial download discarded)", resp.StatusCode, redactURL(resolvedURL)), cleanupErr)
 	default:
 		err := fmt.Errorf("HTTP %d for %s", resp.StatusCode, redactURL(resolvedURL))
 		if !model.IsRetryableStatus(resp.StatusCode) {
-			return model.NewNonRetryableStatus(err, resp.StatusCode)
+			return "", model.NewNonRetryableStatus(err, resp.StatusCode)
 		}
-		return err
+		return "", err
 	}
 
 	total := existing + resp.ContentLength
@@ -362,19 +365,19 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, res
 	fd, err := unix.Open(tempPath, flags|unix.O_NOFOLLOW, 0644)
 	if err != nil {
 		if errors.Is(err, unix.ELOOP) {
-			return fmt.Errorf("refusing to follow symlink for .part file %s: %w", tempPath, err)
+			return "", fmt.Errorf("refusing to follow symlink for .part file %s: %w", tempPath, err)
 		}
-		return err
+		return "", err
 	}
 	out := os.NewFile(uintptr(fd), tempPath)
 	if existing == 0 {
 		resume = metadataFromResponse(resolvedURL, resp, item.Resolve == nil)
 		if resume.validator() == "" {
 			if err := removeFiles(resumeMetadataPath(tempPath)); err != nil {
-				return errors.Join(err, out.Close())
+				return "", errors.Join(err, out.Close())
 			}
 		} else if err := writeResumeMetadata(tempPath, resume); err != nil {
-			return errors.Join(err, out.Close())
+			return "", errors.Join(err, out.Close())
 		}
 	}
 
@@ -393,36 +396,62 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, res
 		ctx:     ctx,
 	}
 
-	var source io.Reader = pr
+	hasher := sha256.New()
+	if existing > 0 {
+		if err := seedHasher(tempPath, hasher); err != nil {
+			return "", errors.Join(err, out.Close())
+		}
+	}
+	tee := io.TeeReader(pr, hasher)
+	var source io.Reader = tee
 	var unknownSizeLimit *io.LimitedReader
 	unknownSize := total <= 0 || (existing > 0 && resp.ContentLength < 0)
 	if unknownSize {
-		unknownSizeLimit = &io.LimitedReader{R: pr, N: MaxUnknownFileSize}
+		unknownSizeLimit = &io.LimitedReader{R: tee, N: MaxUnknownFileSize}
 		source = unknownSizeLimit
 	}
 	copiedBytes, copyErr := io.Copy(out, source)
 	closeErr := out.Close()
 	if unknownSizeLimit != nil && copiedBytes >= MaxUnknownFileSize {
 		err := model.NewNonRetryable(fmt.Errorf("download exceeds maximum unknown file size of %d bytes", MaxUnknownFileSize))
-		return errors.Join(err, closeErr)
+		return "", errors.Join(err, closeErr)
 	}
 	if copyErr != nil {
-		return copyErr
+		return "", copyErr
 	}
 	if closeErr != nil {
-		return closeErr
+		return "", closeErr
 	}
 	if total > 0 {
 		info, statErr := os.Stat(tempPath)
 		if statErr != nil {
-			return statErr
+			return "", statErr
 		}
 		if info.Size() != total {
-			return fmt.Errorf("download size mismatch for %s: got %d, want %d", redactURL(resolvedURL), info.Size(), total)
+			return "", fmt.Errorf("download size mismatch for %s: got %d, want %d", redactURL(resolvedURL), info.Size(), total)
 		}
 	}
 
-	return nil
+	return fmt.Sprintf("%x", hasher.Sum(nil)), nil
+}
+
+func seedHasher(path string, hasher io.Writer) error {
+	// #nosec G304 -- tempPath is allocated beneath the configured output directory.
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	_, err = io.Copy(hasher, file)
+	return err
+}
+
+func hashFileDigest(path string) (string, error) {
+	hasher := sha256.New()
+	if err := seedHasher(path, hasher); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", hasher.Sum(nil)), nil
 }
 
 // progressReader wraps an io.Reader and calls onProgress after each Read.
