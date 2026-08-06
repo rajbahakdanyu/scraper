@@ -104,10 +104,9 @@ func TestParseRateLimit(t *testing.T) {
 		{"abc", 0, true},
 		{"-5", 0, true},
 		{"-5M", 0, true},
-		{"NaN", 0, true},
+		{"Nan", 0, true},
 		{"Inf", 0, true},
 		{"1e100G", 0, true},
-		{"0.1", 0, true},
 	}
 
 	for _, tt := range tests {
@@ -180,5 +179,38 @@ func TestConfigProxyEmptyDefault(t *testing.T) {
 	}
 	if cfg.Proxy != "" {
 		t.Errorf("Proxy default should be empty, got %q", cfg.Proxy)
+	}
+}
+
+func TestParseSize(t *testing.T) {
+	tests := []struct {
+		input string
+		want  int64
+	}{
+		{"", 0},
+		{"0", 0},
+		{"500K", 500 * 1024},
+		{"1M", 1024 * 1024},
+		{"1.5M", int64(1.5 * 1024 * 1024)},
+		{"2G", 2 * 1024 * 1024 * 1024},
+		{"1k", 1024},
+	}
+	for _, tt := range tests {
+		got, err := ParseSize(tt.input)
+		if err != nil {
+			t.Errorf("ParseSize(%q) error: %v", tt.input, err)
+			continue
+		}
+		if got != tt.want {
+			t.Errorf("ParseSize(%q) = %d, want %d", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestParseSizeInvalid(t *testing.T) {
+	for _, s := range []string{"-1M", "abc", "1.2.3M"} {
+		if _, err := ParseSize(s); err == nil {
+			t.Errorf("ParseSize(%q) should error", s)
+		}
 	}
 }

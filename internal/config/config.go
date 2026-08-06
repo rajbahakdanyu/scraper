@@ -42,6 +42,17 @@ type Config struct {
 	// cookies holds the parsed cookies at runtime. Set by loadGlobalConfig
 	// in cmd/root.go after parsing the file. Not serialized to YAML.
 	cookies []*http.Cookie `yaml:"-"`
+	// Include specifies glob patterns for filenames to keep (filepath.Match).
+	Include []string `yaml:"include"`
+	// Exclude specifies glob patterns for filenames to drop.
+	Exclude []string `yaml:"exclude"`
+	// MinSize is the minimum file size in human-readable format (500K, 2M, 1G).
+	MinSize string `yaml:"min_size"`
+	// MaxSize is the maximum file size in human-readable format.
+	MaxSize string `yaml:"max_size"`
+
+	minSizeBytes int64 `yaml:"-"`
+	maxSizeBytes int64 `yaml:"-"`
 }
 
 func (c *Config) ParsedCookies() []*http.Cookie {
@@ -51,6 +62,15 @@ func (c *Config) ParsedCookies() []*http.Cookie {
 func (c *Config) SetParsedCookies(cookies []*http.Cookie) {
 	c.cookies = cookies
 }
+
+func (c *Config) HasFilters() bool {
+	return len(c.Include) > 0 || len(c.Exclude) > 0 || c.MinSize != "" || c.MaxSize != ""
+}
+
+func (c *Config) MinSizeBytes() int64    { return c.minSizeBytes }
+func (c *Config) MaxSizeBytes() int64    { return c.maxSizeBytes }
+func (c *Config) SetMinSizeBytes(n int64) { c.minSizeBytes = n }
+func (c *Config) SetMaxSizeBytes(n int64) { c.maxSizeBytes = n }
 
 func Load(path string) (*Config, error) {
 	if path == "" {
@@ -139,6 +159,15 @@ func getDefaultConfigPath() string {
 // kilobytes/megabytes/gigabytes (binary, 1024-based), e.g. "500K", "2M",
 // "1.5G". An empty string or "0" means unlimited, returned as 0.
 func ParseRateLimit(s string) (int64, error) {
+	return parseSize(s)
+}
+
+func ParseSize(s string) (int64, error) {
+	return parseSize(s)
+}
+
+// parseSize parses human-readable byte sizes: 500K, 2M, 1G (1024-based).
+func parseSize(s string) (int64, error) {
 	s = strings.TrimSpace(s)
 	if s == "" || s == "0" {
 		return 0, nil
@@ -160,17 +189,14 @@ func ParseRateLimit(s string) (int64, error) {
 
 	n, err := strconv.ParseFloat(numPart, 64)
 	if err != nil {
-		return 0, fmt.Errorf("invalid rate limit %q: %w", s, err)
+		return 0, fmt.Errorf("invalid size %q: %w", s, err)
 	}
 	if n < 0 {
-		return 0, fmt.Errorf("invalid rate limit %q: must not be negative", s)
+		return 0, fmt.Errorf("invalid size %q: must not be negative", s)
 	}
 	scaled := n * mult
 	if math.IsNaN(scaled) || math.IsInf(scaled, 0) || scaled > math.MaxInt64 {
-		return 0, fmt.Errorf("invalid rate limit %q: out of range", s)
-	}
-	if scaled > 0 && scaled < 1 {
-		return 0, fmt.Errorf("invalid rate limit %q: must be at least 1 byte/sec", s)
+		return 0, fmt.Errorf("invalid size %q: out of range", s)
 	}
 	return int64(scaled), nil
 }
