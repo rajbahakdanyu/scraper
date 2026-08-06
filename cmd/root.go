@@ -55,6 +55,14 @@ type globalOptions struct {
 	qualitySet       bool
 	audioOnly        string
 	audioOnlySet     bool
+	include          []string
+	includeSet       bool
+	exclude          []string
+	excludeSet       bool
+	minSize          string
+	minSizeSet       bool
+	maxSize          string
+	maxSizeSet       bool
 }
 
 // loadGlobalConfig loads the config file and applies CLI flag overrides.
@@ -103,6 +111,44 @@ func loadGlobalConfig(opts globalOptions) (*config.Config, error) {
 		if cfg.AudioOnly != "m4a" && cfg.AudioOnly != "mp3" {
 			return nil, fmt.Errorf("invalid --audio-only value %q (valid: m4a, mp3)", cfg.AudioOnly)
 		}
+	}
+	if opts.includeSet {
+		cfg.Include = opts.include
+	}
+	if opts.excludeSet {
+		cfg.Exclude = opts.exclude
+	}
+	if opts.minSizeSet {
+		cfg.MinSize = opts.minSize
+	}
+	if opts.maxSizeSet {
+		cfg.MaxSize = opts.maxSize
+	}
+
+	for i, p := range cfg.Include {
+		if _, err := filepath.Match(p, "test"); err != nil {
+			return nil, fmt.Errorf("invalid --include pattern %q (position %d): %w", p, i+1, err)
+		}
+	}
+	for i, p := range cfg.Exclude {
+		if _, err := filepath.Match(p, "test"); err != nil {
+			return nil, fmt.Errorf("invalid --exclude pattern %q (position %d): %w", p, i+1, err)
+		}
+	}
+
+	if cfg.MinSize != "" {
+		n, err := config.ParseSize(cfg.MinSize)
+		if err != nil {
+			return nil, fmt.Errorf("invalid --min-size: %w", err)
+		}
+		cfg.SetMinSizeBytes(n)
+	}
+	if cfg.MaxSize != "" {
+		n, err := config.ParseSize(cfg.MaxSize)
+		if err != nil {
+			return nil, fmt.Errorf("invalid --max-size: %w", err)
+		}
+		cfg.SetMaxSizeBytes(n)
 	}
 	if cfg.Cookies != "" {
 		expandedCookies, err := expandHomePath(cfg.Cookies)
@@ -205,6 +251,22 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 	if err != nil {
 		return globalOptions{}, err
 	}
+	include, err := flags.GetStringSlice("include")
+	if err != nil {
+		return globalOptions{}, err
+	}
+	exclude, err := flags.GetStringSlice("exclude")
+	if err != nil {
+		return globalOptions{}, err
+	}
+	minSize, err := flags.GetString("min-size")
+	if err != nil {
+		return globalOptions{}, err
+	}
+	maxSize, err := flags.GetString("max-size")
+	if err != nil {
+		return globalOptions{}, err
+	}
 	// --json implies --no-tui
 	if json {
 		noTui = true
@@ -232,6 +294,14 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 		qualitySet:       flags.Changed("quality"),
 		audioOnly:        audioOnly,
 		audioOnlySet:     flags.Changed("audio-only"),
+		include:          include,
+		includeSet:       flags.Changed("include"),
+		exclude:          exclude,
+		excludeSet:       flags.Changed("exclude"),
+		minSize:          minSize,
+		minSizeSet:       flags.Changed("min-size"),
+		maxSize:          maxSize,
+		maxSizeSet:       flags.Changed("max-size"),
 	}, nil
 }
 
@@ -297,6 +367,10 @@ func NewRootCmd() *cobra.Command {
 	root.PersistentFlags().String("cookies", "", "Netscape-format cookies file (e.g. ~/cookies.txt)")
 	root.PersistentFlags().String("quality", "", "Max YouTube resolution (2160p, 1440p, 1080p, 720p, 480p, 360p, 240p)")
 	root.PersistentFlags().String("audio-only", "", "YouTube audio only; optional format: m4a (default) or mp3")
+	root.PersistentFlags().StringSlice("include", nil, "Keep only items matching glob (repeatable, e.g. -i '*.mp4' -i '*.mkv')")
+	root.PersistentFlags().StringSlice("exclude", nil, "Skip items matching glob (repeatable)")
+	root.PersistentFlags().String("min-size", "", "Skip items smaller than size (e.g. 500K, 2M)")
+	root.PersistentFlags().String("max-size", "", "Skip items larger than size (e.g. 500M, 1G)")
 
 	root.AddCommand(
 		newYouTubeCmd(),
@@ -537,7 +611,18 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 
 	// The scraper function runs in a background goroutine.
 	scraperFn := func() ([]model.MediaItem, error) {
-		return scraper.Parse(targetURL)
+		items, err := scraper.Parse(targetURL)
+		if err != nil {
+			return nil, err
+		}
+		if cfg.HasFilters() {
+			items, summary := model.FilterItems(items, cfg.Include, cfg.Exclude, cfg.MinSizeBytes(), cfg.MaxSizeBytes())
+			fmt.Fprintf(os.Stderr, "filters: %s\n", summary)
+			if len(items) == 0 {
+				fmt.Fprintln(os.Stderr, "No items matched filters.")
+			}
+		}
+		return items, nil
 	}
 
 	slug := albumSlugFor(siteName, targetURL)
@@ -767,6 +852,18 @@ func runBatch(opts globalOptions, urls []string) error {
 		}
 	}
 
+	if cfg.HasFilters() {
+		for i := range dashAlbums {
+			dashAlbums[i].Scraper = &filterScraper{
+				inner:   dashAlbums[i].Scraper,
+				include: cfg.Include,
+				exclude: cfg.Exclude,
+				minSize: cfg.MinSizeBytes(),
+				maxSize: cfg.MaxSizeBytes(),
+			}
+		}
+	}
+
 	if opts.json {
 		return runBatchJSON(dl, dashAlbums, cfg.OutputDir, cfg.Quality, cfg.AudioOnly, os.Stdout)
 	}
@@ -825,4 +922,24 @@ func runDryRun(scraper model.Scraper, targetURL string) error {
 		fmt.Printf("%d items, %s total\n", len(items), dashboard.HumanizeBytes(totalSize))
 	}
 	return nil
+}
+
+type filterScraper struct {
+	inner            model.Scraper
+	include, exclude []string
+	minSize, maxSize int64
+}
+
+func (f *filterScraper) Name() string { return f.inner.Name() }
+
+func (f *filterScraper) Parse(url string) ([]model.MediaItem, error) {
+	items, err := f.inner.Parse(url)
+	if err != nil {
+		return nil, err
+	}
+	filtered, summary := model.FilterItems(items, f.include, f.exclude, f.minSize, f.maxSize)
+	if len(items) != len(filtered) {
+		fmt.Fprintf(os.Stderr, "filters: %s\n", summary)
+	}
+	return filtered, nil
 }

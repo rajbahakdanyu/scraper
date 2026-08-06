@@ -783,3 +783,69 @@ func TestValidQuality(t *testing.T) {
 		t.Errorf("ValidQuality(\"\") = %d, %v; want 0, true", h, ok)
 	}
 }
+
+func TestNewRootCmdHasFilterFlags(t *testing.T) {
+	root := NewRootCmd()
+	for _, name := range []string{"include", "exclude", "min-size", "max-size"} {
+		if root.PersistentFlags().Lookup(name) == nil {
+			t.Errorf("expected --%s persistent flag", name)
+		}
+	}
+}
+
+func TestLoadGlobalConfigInvalidIncludeGlob(t *testing.T) {
+	_, err := loadGlobalConfig(globalOptions{
+		include:    []string{"bad[glob"},
+		includeSet: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid --include pattern") {
+		t.Fatalf("expected invalid glob error, got %v", err)
+	}
+}
+
+func TestLoadGlobalConfigInvalidMinSize(t *testing.T) {
+	_, err := loadGlobalConfig(globalOptions{
+		minSize:    "abc",
+		minSizeSet: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid --min-size") {
+		t.Fatalf("expected invalid size error, got %v", err)
+	}
+}
+
+func TestLoadGlobalConfigIncludeOverride(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	content := "include:\n  - '*.jpg'\n"
+	if err := os.WriteFile(configPath, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadGlobalConfig(globalOptions{
+		configPath: configPath,
+		include:    []string{"*.mp4"},
+		includeSet: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Include) != 1 || cfg.Include[0] != "*.mp4" {
+		t.Errorf("expected CLI to override include, got %v", cfg.Include)
+	}
+}
+
+func TestLoadGlobalConfigParseSizeValues(t *testing.T) {
+	cfg, err := loadGlobalConfig(globalOptions{
+		minSize:    "1M",
+		minSizeSet: true,
+		maxSize:    "500M",
+		maxSizeSet: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MinSizeBytes() != 1024*1024 {
+		t.Errorf("expected 1M bytes, got %d", cfg.MinSizeBytes())
+	}
+	if cfg.MaxSizeBytes() != 500*1024*1024 {
+		t.Errorf("expected 500M bytes, got %d", cfg.MaxSizeBytes())
+	}
+}
