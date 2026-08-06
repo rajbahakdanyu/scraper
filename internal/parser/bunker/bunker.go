@@ -288,11 +288,15 @@ func (s *Scraper) getSignedMediaURL(ctx context.Context, dlURL *url.URL, fileID,
 	signReq.Header.Set("User-Agent", s.userAgent)
 	signResp, err := s.client.Do(signReq)
 	if err != nil {
-		return rawURL, nil
+		return "", fmt.Errorf("bunker: signing request: %w", err)
 	}
 	defer signResp.Body.Close()
 	if signResp.StatusCode != http.StatusOK {
-		return rawURL, nil
+		err := fmt.Errorf("bunker signing API returned HTTP %d", signResp.StatusCode)
+		if !model.IsRetryableStatus(signResp.StatusCode) {
+			return "", model.NewNonRetryable(err)
+		}
+		return "", err
 	}
 
 	var sign struct {
@@ -300,7 +304,7 @@ func (s *Scraper) getSignedMediaURL(ctx context.Context, dlURL *url.URL, fileID,
 		Ex    int64  `json:"ex"`
 	}
 	if err := json.NewDecoder(signResp.Body).Decode(&sign); err != nil {
-		return rawURL, nil
+		return "", fmt.Errorf("bunker: decode signing response: %w", err)
 	}
 
 	q := parsedURL.Query()

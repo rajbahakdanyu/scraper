@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -23,6 +24,26 @@ import (
 )
 
 type noopSleeper struct{}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+type cleanupTriggerBody struct {
+	io.ReadCloser
+	trigger func()
+	once    sync.Once
+}
+
+func (b *cleanupTriggerBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if err == io.EOF {
+		b.once.Do(b.trigger)
+	}
+	return n, err
+}
 
 func (noopSleeper) Sleep(time.Duration)                           {}
 func (noopSleeper) SleepCtx(context.Context, time.Duration) error { return nil }
@@ -1118,6 +1139,58 @@ func TestDownloadWritesChecksumSidecar(t *testing.T) {
 	wantHex := hex.EncodeToString(want[:])
 	if !strings.HasPrefix(string(data), wantHex) {
 		t.Errorf("sidecar content = %q, want it to start with %q", data, wantHex)
+	}
+}
+
+func TestDownloadCompletesWhenResumeMetadataCleanupFails(t *testing.T) {
+	var requests int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requests, 1)
+		w.Header().Set("ETag", `"cleanup-v1"`)
+		w.Write([]byte("cleanup metadata"))
+	}))
+	defer ts.Close()
+
+	dl := newTestDownloader(1, 0, "")
+	transport := http.DefaultTransport
+	item := model.MediaItem{URL: ts.URL, Title: "cleanup.bin"}
+	dest := t.TempDir()
+	resumePath := filepath.Join(dest, "cleanup.bin.part.resume.json")
+
+	dl.client = &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		resp, err := transport.RoundTrip(r)
+		if err != nil {
+			return nil, err
+		}
+		resp.Body = &cleanupTriggerBody{
+			ReadCloser: resp.Body,
+			trigger: func() {
+				if err := os.Remove(resumePath); err != nil {
+					t.Fatalf("failed to replace resume metadata: %v", err)
+				}
+				if err := os.Mkdir(resumePath, 0755); err != nil {
+					t.Fatalf("failed to create resume metadata directory: %v", err)
+				}
+				if err := os.WriteFile(filepath.Join(resumePath, "in-use"), []byte("keep"), 0644); err != nil {
+					t.Fatalf("failed to block resume metadata cleanup: %v", err)
+				}
+			},
+		}
+		return resp, nil
+	})}
+
+	finalPath, err := dl.Download(item, dest)
+	if err != nil {
+		t.Fatalf("download failed when resume metadata cleanup failed: %v", err)
+	}
+	if got := atomic.LoadInt32(&requests); got != 1 {
+		t.Fatalf("expected one download request, got %d", got)
+	}
+	if _, err := os.Stat(finalPath); err != nil {
+		t.Fatalf("expected completed file %s: %v", finalPath, err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "cleanup.bin.sha256")); err != nil {
+		t.Fatalf("expected checksum sidecar: %v", err)
 	}
 }
 

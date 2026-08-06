@@ -219,11 +219,56 @@ func TestGetSignedMediaURLRejectsNonOKSigningResponse(t *testing.T) {
 	}
 
 	resolved, err := scraper.getSignedMediaURL(context.Background(), dlURL, "123", "test.mp4")
-	if err != nil {
-		t.Fatalf("getSignedMediaURL failed: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "HTTP 201") {
+		t.Fatalf("expected signing response error containing HTTP 201, got %v", err)
 	}
-	if want := "https://cdn.example.com/storage/media/test.mp4"; resolved != want {
-		t.Fatalf("resolved URL = %q, want unsigned URL %q", resolved, want)
+	if resolved != "" {
+		t.Fatalf("resolved URL = %q, want empty URL on signing failure", resolved)
+	}
+}
+
+func TestResolveSigningServerErrorIsNotDownloaderForbidden(t *testing.T) {
+	mux := http.NewServeMux()
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	mux.HandleFunc("/a/album", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `<html><body><a href="/f/file" aria-label="download"></a></body></html>`)
+	})
+	mux.HandleFunc("/f/file", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `<html><head><title>file.mp4 | Bunkr</title></head><body><a href="%s/file/123">Download</a></body></html>`, ts.URL)
+	})
+	mux.HandleFunc("/api/_001_v2", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"mediafiles": "https://cdn.example.com",
+			"path":       "/storage/media/file.mp4",
+		})
+	})
+	mux.HandleFunc("/sign", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+
+	scraper := newTestBunkerScraper()
+	scraper.baseURL = ts.URL
+	scraper.signURL = ts.URL + "/sign"
+	items, err := scraper.Parse(context.Background(), ts.URL+"/a/album")
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+
+	resolved, err := items[0].Resolve(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "HTTP 500") {
+		t.Fatalf("expected resolver error containing HTTP 500, got %v", err)
+	}
+	if strings.Contains(err.Error(), "403") {
+		t.Fatalf("resolver error incorrectly reported downloader 403: %v", err)
+	}
+	if resolved != "" {
+		t.Fatalf("resolved URL = %q, want empty URL on signing failure", resolved)
 	}
 }
 

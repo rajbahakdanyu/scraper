@@ -298,15 +298,14 @@ func (d *Downloader) Download(item model.MediaItem, dest string) (string, error)
 			if err := os.Rename(tempPath, finalPath); err != nil {
 				return "", errors.Join(err, removeFiles(tempPath, resumePath))
 			}
-			if err := removeFiles(resumePath); err != nil {
-				return "", err
-			}
 			if !d.skipChecksums {
 				if err := fileutil.WriteChecksum(finalPath); err != nil {
 					d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed})
 					return "", fmt.Errorf("write checksum for %s: %w", finalPath, err)
 				}
 			}
+			// Resume-metadata cleanup is best-effort only.
+			_ = removeFiles(resumePath)
 			d.sendProgress(model.ProgressEvent{
 				Item:     item,
 				Status:   model.StatusCompleted,
