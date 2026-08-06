@@ -105,7 +105,7 @@ func Load(path string) (*Config, error) {
 	if cfg.OutputDir == "" {
 		cfg.OutputDir = defaultConfig().OutputDir
 	} else {
-		expanded, err := expandHomePath(cfg.OutputDir)
+		expanded, err := ExpandHomePath(cfg.OutputDir)
 		if err != nil {
 			return nil, err
 		}
@@ -121,9 +121,13 @@ func Load(path string) (*Config, error) {
 	return &cfg, nil
 }
 
-func expandHomePath(path string) (string, error) {
-	if path != "~" && !strings.HasPrefix(path, "~/") {
+// ExpandHomePath expands ~ and ~/... while rejecting unsupported ~user paths.
+func ExpandHomePath(path string) (string, error) {
+	if path == "" || path[0] != '~' {
 		return path, nil
+	}
+	if path != "~" && !strings.HasPrefix(path, "~/") {
+		return "", fmt.Errorf("cannot expand %q: ~user home directories are not supported", path)
 	}
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {

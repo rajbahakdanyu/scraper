@@ -1,4 +1,4 @@
-package netutil
+package netutil_test
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/rajbahakdanyu/scraper/internal/model"
+	"github.com/rajbahakdanyu/scraper/internal/netutil"
 )
 
 type recordingSleeper struct {
@@ -19,10 +20,12 @@ func (s *recordingSleeper) SleepCtx(_ context.Context, delay time.Duration) erro
 	return s.err
 }
 
+func (s *recordingSleeper) Sleep(time.Duration) {}
+
 func TestRetryRetriesUntilSuccess(t *testing.T) {
 	sleeper := &recordingSleeper{}
 	attempts := 0
-	err := Retry(context.Background(), 3, time.Millisecond, sleeper, func() error {
+	err := netutil.Retry(context.Background(), 3, time.Millisecond, sleeper, func() error {
 		attempts++
 		if attempts < 3 {
 			return errors.New("temporary")
@@ -41,7 +44,7 @@ func TestRetryStopsOnNonRetryableError(t *testing.T) {
 	sleeper := &recordingSleeper{}
 	attempts := 0
 	want := errors.New("permanent")
-	err := Retry(context.Background(), 3, time.Millisecond, sleeper, func() error {
+	err := netutil.Retry(context.Background(), 3, time.Millisecond, sleeper, func() error {
 		attempts++
 		return model.NewNonRetryable(want)
 	})
@@ -54,7 +57,7 @@ func TestRetryReturnsSleeperCancellation(t *testing.T) {
 	want := context.Canceled
 	sleeper := &recordingSleeper{err: want}
 	attempts := 0
-	err := Retry(context.Background(), 2, time.Millisecond, sleeper, func() error {
+	err := netutil.Retry(context.Background(), 2, time.Millisecond, sleeper, func() error {
 		attempts++
 		return errors.New("temporary")
 	})
@@ -78,7 +81,7 @@ func TestBackoffWithJitterStaysWithinBounds(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			expected := tt.base << uint(tt.attempt)
-			got := BackoffWithJitter(tt.base, tt.attempt)
+			got := netutil.BackoffWithJitter(tt.base, tt.attempt)
 			if got < expected || got > expected+expected/3 {
 				t.Fatalf("BackoffWithJitter(%s, %d) = %s, want between %s and %s", tt.base, tt.attempt, got, expected, expected+expected/3)
 			}
@@ -89,9 +92,9 @@ func TestBackoffWithJitterStaysWithinBounds(t *testing.T) {
 func TestBackoffWithJitterGrowsWithAttempt(t *testing.T) {
 	const base = 500 * time.Millisecond
 
-	previous := BackoffWithJitter(base, 0)
+	previous := netutil.BackoffWithJitter(base, 0)
 	for attempt := 1; attempt <= 5; attempt++ {
-		got := BackoffWithJitter(base, attempt)
+		got := netutil.BackoffWithJitter(base, attempt)
 		if got <= previous {
 			t.Fatalf("BackoffWithJitter(%s, %d) = %s, want greater than previous delay %s", base, attempt, got, previous)
 		}

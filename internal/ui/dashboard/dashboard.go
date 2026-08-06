@@ -897,36 +897,11 @@ func (d *Dashboard) spinnerActive() bool {
 // --- Helpers ---
 
 func HumanizeBytes(n int64) string {
-	if n < 0 {
-		return "?"
-	}
-	const u = 1024
-	if n < u {
-		return fmt.Sprintf("%dB", n)
-	}
-	div, exp := int64(u), 0
-	for n2 := n / u; n2 >= u; n2 /= u {
-		div *= u
-		exp++
-	}
-	return fmt.Sprintf("%.1f%c", float64(n)/float64(div), "KMGTPE"[exp])
+	return fileutil.HumanBytes(n)
 }
 
 func statusShort(s model.DownloadStatus) string {
-	switch s {
-	case model.StatusPending:
-		return "queued"
-	case model.StatusDownloading:
-		return "active"
-	case model.StatusCompleted:
-		return "done"
-	case model.StatusFailed:
-		return "failed"
-	case model.StatusCancelled:
-		return "cancelled"
-	default:
-		return "—"
-	}
+	return model.DownloadStatusString(s)
 }
 
 func miniBar(st itemState) string {

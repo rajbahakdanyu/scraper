@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"github.com/rajbahakdanyu/scraper/internal/netutil"
 )
 
 type FilterSummary struct {
@@ -44,7 +46,7 @@ func FilterItems(items []MediaItem, include, exclude []string, minSize, maxSize 
 
 	filtered := make([]MediaItem, 0, len(items))
 	for _, item := range items {
-		filename := extractFilename(item.URL)
+		filename := netutil.PathSlug(item.URL)
 
 		if hasInclude && !matchesAny(filename, include) {
 			s.ExcludedByGlob++
@@ -68,17 +70,6 @@ func FilterItems(items []MediaItem, include, exclude []string, minSize, maxSize 
 	}
 	s.Kept = len(filtered)
 	return filtered, s
-}
-
-func extractFilename(rawURL string) string {
-	if idx := strings.Index(rawURL, "?"); idx >= 0 {
-		rawURL = rawURL[:idx]
-	}
-	base := rawURL
-	if idx := strings.LastIndex(rawURL, "/"); idx >= 0 {
-		base = rawURL[idx+1:]
-	}
-	return base
 }
 
 func matchesAny(name string, patterns []string) bool {

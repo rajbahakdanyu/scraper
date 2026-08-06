@@ -1,6 +1,9 @@
 package model
 
-import "net/http"
+import (
+	"errors"
+	"net/http"
+)
 
 // NonRetryableError marks an error that will never succeed no matter how
 // many times it's retried.
@@ -11,6 +14,7 @@ type NonRetryableError struct {
 
 func (e *NonRetryableError) Error() string { return e.Err.Error() }
 func (e *NonRetryableError) Unwrap() error { return e.Err }
+func (e *NonRetryableError) NonRetryable() {}
 
 func NewNonRetryable(err error) *NonRetryableError {
 	return &NonRetryableError{Err: err}
@@ -30,6 +34,6 @@ func IsRetryableStatus(code int) bool {
 }
 
 func IsNonRetryable(err error) bool {
-	_, ok := err.(*NonRetryableError)
-	return ok
+	var marker interface{ NonRetryable() }
+	return errors.As(err, &marker)
 }

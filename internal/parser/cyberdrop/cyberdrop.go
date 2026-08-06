@@ -244,13 +244,5 @@ func (s *Scraper) parseAlbum(ctx context.Context, albumPageURL, slug string) ([]
 // string (e.g. a tracking parameter like "?ref=x" must not end up as part
 // of the slug).
 func extractSlug(url string) string {
-	if idx := strings.IndexByte(url, '?'); idx >= 0 {
-		url = url[:idx]
-	}
-	url = strings.TrimRight(url, "/")
-	parts := strings.Split(url, "/")
-	if len(parts) == 0 {
-		return ""
-	}
-	return parts[len(parts)-1]
+	return netutil.PathSlug(url)
 }

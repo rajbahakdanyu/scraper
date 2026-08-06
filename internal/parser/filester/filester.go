@@ -22,27 +22,6 @@ import (
 
 const defaultBaseURL = "https://filester.sh"
 
-// Sleeper is a test-injectable alternative to time.Sleep.
-type Sleeper interface {
-	Sleep(d time.Duration)
-	SleepCtx(ctx context.Context, d time.Duration) error
-}
-
-type realSleeper struct{}
-
-func (realSleeper) Sleep(d time.Duration) { time.Sleep(d) }
-
-func (realSleeper) SleepCtx(ctx context.Context, d time.Duration) error {
-	timer := time.NewTimer(d)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
-}
-
 // defaultCDNURLs mirrors the CDN_URLS list filester's own /js/file_dl.js
 // picks a random entry from when a download token response doesn't include
 // its own "server" field.
@@ -59,7 +38,7 @@ type Scraper struct {
 	userAgent string
 	baseURL   string
 	cdnURLs   []string
-	sleeper   Sleeper
+	sleeper   netutil.Sleeper
 }
 
 // NewFilesterScraper creates a new Filester scraper using the default HTTP client.
@@ -70,7 +49,7 @@ func NewFilesterScraper() *Scraper {
 		userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
 		baseURL:   defaultBaseURL,
 		cdnURLs:   defaultCDNURLs,
-		sleeper:   realSleeper{},
+		sleeper:   netutil.RealSleeper{},
 	}
 }
 
@@ -86,13 +65,13 @@ func NewFilesterScraperWithProxy(proxyURL string) (*Scraper, error) {
 		userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
 		baseURL:   defaultBaseURL,
 		cdnURLs:   defaultCDNURLs,
-		sleeper:   realSleeper{},
+		sleeper:   netutil.RealSleeper{},
 	}, nil
 }
 
 // SetSleeper replaces the delay implementation. Call this before parsing,
 // not concurrently with it.
-func (s *Scraper) SetSleeper(sleeper Sleeper) { s.sleeper = sleeper }
+func (s *Scraper) SetSleeper(sleeper netutil.Sleeper) { s.sleeper = sleeper }
 
 func (s *Scraper) SetCookies(cookies []*http.Cookie) {
 	s.client = netutil.WithCookies(s.client, cookies)

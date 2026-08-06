@@ -5,8 +5,6 @@ import (
 	"errors"
 	"math/rand"
 	"time"
-
-	"github.com/rajbahakdanyu/scraper/internal/model"
 )
 
 const (
@@ -15,10 +13,13 @@ const (
 )
 
 type Sleeper interface {
+	Sleep(time.Duration)
 	SleepCtx(context.Context, time.Duration) error
 }
 
 type RealSleeper struct{}
+
+func (RealSleeper) Sleep(delay time.Duration) { time.Sleep(delay) }
 
 func (RealSleeper) SleepCtx(ctx context.Context, delay time.Duration) error {
 	timer := time.NewTimer(delay)
@@ -48,7 +49,7 @@ func Retry(ctx context.Context, attempts int, baseDelay time.Duration, sleeper S
 		default:
 		}
 		lastErr = fn()
-		if lastErr == nil || model.IsNonRetryable(lastErr) {
+		if lastErr == nil || isNonRetryable(lastErr) {
 			return lastErr
 		}
 		if errors.Is(lastErr, context.Canceled) || errors.Is(lastErr, context.DeadlineExceeded) {
@@ -59,6 +60,15 @@ func Retry(ctx context.Context, attempts int, baseDelay time.Duration, sleeper S
 		return err
 	}
 	return lastErr
+}
+
+type nonRetryable interface {
+	NonRetryable()
+}
+
+func isNonRetryable(err error) bool {
+	var marker nonRetryable
+	return errors.As(err, &marker)
 }
 
 func BackoffWithJitter(base time.Duration, attempt int) time.Duration {

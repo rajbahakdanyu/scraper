@@ -187,7 +187,7 @@ func TestExpandHomePath(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := expandHomePath(tt.in)
+			got, err := config.ExpandHomePath(tt.in)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("expandHomePath(%q) expected an error, got %q", tt.in, got)

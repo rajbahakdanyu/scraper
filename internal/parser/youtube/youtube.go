@@ -468,23 +468,7 @@ func muxStreams(ctx context.Context, videoPath, audioPath, outputPath string, au
 	)
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		// A failure to even start ffmpeg (binary missing, not executable)
-		// is permanent — retrying the download can't install ffmpeg. An
-		// ExitError means ffmpeg ran and rejected the inputs (e.g. a
-		// truncated stream); a retry downloads fresh bytes and can
-		// succeed, so that stays retryable.
-		var exitErr *exec.ExitError
-		if !errors.As(err, &exitErr) {
-			return model.NewNonRetryable(fmt.Errorf("youtube: failed to start ffmpeg: %w", err))
-		}
-		detail := strings.TrimSpace(stderr.String())
-		if idx := strings.LastIndex(detail, "\n"); idx >= 0 {
-			detail = detail[idx+1:]
-		}
-		if detail == "" {
-			return fmt.Errorf("youtube: ffmpeg mux failed: %w", err)
-		}
-		return fmt.Errorf("youtube: ffmpeg mux failed: %w: %s", err, detail)
+		return ffmpegError("mux", err, &stderr)
 	}
 	return nil
 }
@@ -505,18 +489,24 @@ func extractAudio(ctx context.Context, srcPath, outputPath, format string) error
 	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		var exitErr *exec.ExitError
-		if !errors.As(err, &exitErr) {
-			return model.NewNonRetryable(fmt.Errorf("youtube: failed to start ffmpeg: %w", err))
-		}
-		stderrLines := strings.Split(strings.TrimSpace(stderr.String()), "\n")
-		lastLine := ""
-		if len(stderrLines) > 0 {
-			lastLine = stderrLines[len(stderrLines)-1]
-		}
-		return fmt.Errorf("youtube: ffmpeg exited with code %d: %s", exitErr.ExitCode(), lastLine)
+		return ffmpegError("extract audio", err, &stderr)
 	}
 	return nil
+}
+
+func ffmpegError(op string, err error, stderr *bytes.Buffer) error {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return model.NewNonRetryable(fmt.Errorf("youtube: failed to start ffmpeg: %w", err))
+	}
+	detail := strings.TrimSpace(stderr.String())
+	if idx := strings.LastIndex(detail, "\n"); idx >= 0 {
+		detail = detail[idx+1:]
+	}
+	if detail == "" {
+		return fmt.Errorf("youtube: ffmpeg %s failed: %w", op, err)
+	}
+	return fmt.Errorf("youtube: ffmpeg %s failed: %w: %s", op, err, detail)
 }
 
 func (s *Scraper) downloadStreamToFileProgress(ctx context.Context, video *ytdl.Video, format *ytdl.Format, path string, limiter *rate.Limiter, onProgress func(int64, int64)) error {

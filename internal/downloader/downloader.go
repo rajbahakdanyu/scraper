@@ -30,25 +30,6 @@ import (
 // trustworthy total size. Tests may temporarily reduce this value.
 var MaxUnknownFileSize int64 = 64 << 30
 
-// Sleeper is a test-injectable alternative to time.Sleep.
-type Sleeper interface {
-	Sleep(d time.Duration)
-	SleepCtx(ctx context.Context, d time.Duration) error
-}
-
-type realSleeper struct{}
-
-func (realSleeper) Sleep(d time.Duration) { time.Sleep(d) }
-
-func (realSleeper) SleepCtx(ctx context.Context, d time.Duration) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-time.After(d):
-		return nil
-	}
-}
-
 // Downloader manages concurrent media downloads with progress tracking,
 // cancellation, retry, and atomic file writes.
 type Downloader struct {
@@ -62,7 +43,7 @@ type Downloader struct {
 	sem           chan struct{}
 	skipChecksums bool
 	paths         *fileutil.PathAllocator
-	sleeper       Sleeper
+	sleeper       netutil.Sleeper
 }
 
 // NewDownloaderWithConfig creates a Downloader using settings from a config.
@@ -96,13 +77,13 @@ func NewDownloaderWithConfig(concurrency int, timeout time.Duration, userAgent, 
 		cancelMap: core.CancelMap(),
 		sem:       core.Semaphore(),
 		paths:     fileutil.NewPathAllocator(),
-		sleeper:   realSleeper{},
+		sleeper:   netutil.RealSleeper{},
 	}, nil
 }
 
 // SetSleeper replaces the delay implementation. Call this before starting
 // downloads, not concurrently with them.
-func (d *Downloader) SetSleeper(s Sleeper) { d.sleeper = s }
+func (d *Downloader) SetSleeper(s netutil.Sleeper) { d.sleeper = s }
 
 func (d *Downloader) Prepare(item model.MediaItem) {
 	d.Core.Prepare(item.Key())
@@ -231,7 +212,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) (string, error)
 		if errors.As(err, &nre) && item.Resolve != nil && !reResolved && nre.StatusCode == http.StatusForbidden {
 			reResolved = true
 			resolvedURL = ""
-			return fmt.Errorf("retry with refreshed URL: %w", err)
+			return fmt.Errorf("retry with refreshed URL: %v", err)
 		}
 		return err
 	})
