@@ -16,10 +16,12 @@ import (
 	"golang.org/x/term"
 
 	"github.com/rajbahakdanyu/scraper/internal/config"
+	"github.com/rajbahakdanyu/scraper/internal/disk"
 	"github.com/rajbahakdanyu/scraper/internal/downloader"
 	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 	"github.com/rajbahakdanyu/scraper/internal/model"
 	"github.com/rajbahakdanyu/scraper/internal/netutil"
+	"github.com/rajbahakdanyu/scraper/internal/notify"
 	"github.com/rajbahakdanyu/scraper/internal/parser/bunker"
 	"github.com/rajbahakdanyu/scraper/internal/parser/cyberdrop"
 	"github.com/rajbahakdanyu/scraper/internal/parser/filester"
@@ -63,6 +65,10 @@ type globalOptions struct {
 	minSizeSet       bool
 	maxSize          string
 	maxSizeSet       bool
+	diskCheck        bool
+	diskCheckSet     bool
+	notify           bool
+	notifySet        bool
 }
 
 // loadGlobalConfig loads the config file and applies CLI flag overrides.
@@ -123,6 +129,12 @@ func loadGlobalConfig(opts globalOptions) (*config.Config, error) {
 	}
 	if opts.maxSizeSet {
 		cfg.MaxSize = opts.maxSize
+	}
+	if opts.diskCheckSet {
+		cfg.DiskCheck = opts.diskCheck
+	}
+	if opts.notifySet {
+		cfg.Notify = opts.notify
 	}
 
 	for i, p := range cfg.Include {
@@ -267,6 +279,14 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 	if err != nil {
 		return globalOptions{}, err
 	}
+	diskCheck, err := flags.GetBool("disk-check")
+	if err != nil {
+		return globalOptions{}, err
+	}
+	notify, err := flags.GetBool("notify")
+	if err != nil {
+		return globalOptions{}, err
+	}
 	// --json implies --no-tui
 	if json {
 		noTui = true
@@ -302,6 +322,10 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 		minSizeSet:       flags.Changed("min-size"),
 		maxSize:          maxSize,
 		maxSizeSet:       flags.Changed("max-size"),
+		diskCheck:        diskCheck,
+		diskCheckSet:     flags.Changed("disk-check"),
+		notify:           notify,
+		notifySet:        flags.Changed("notify"),
 	}, nil
 }
 
@@ -371,6 +395,8 @@ func NewRootCmd() *cobra.Command {
 	root.PersistentFlags().StringSlice("exclude", nil, "Skip items matching glob (repeatable)")
 	root.PersistentFlags().String("min-size", "", "Skip items smaller than size (e.g. 500K, 2M)")
 	root.PersistentFlags().String("max-size", "", "Skip items larger than size (e.g. 500M, 1G)")
+	root.PersistentFlags().Bool("disk-check", true, "Warn if free disk space is less than estimated download size")
+	root.PersistentFlags().Bool("notify", false, "Send OS notification when downloads complete")
 
 	root.AddCommand(
 		newYouTubeCmd(),
@@ -622,6 +648,30 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 				fmt.Fprintln(os.Stderr, "No items matched filters.")
 			}
 		}
+
+		if cfg.DiskCheck && !opts.dryRun {
+			var total int64
+			unknown := 0
+			for _, it := range items {
+				if it.Size > 0 {
+					total += it.Size
+				} else {
+					unknown++
+				}
+			}
+			if total > 0 {
+				if free, err := disk.FreeSpace(cfg.OutputDir); err == nil && free < total {
+					short := total - free
+					msg := fmt.Sprintf("disk: %s free, %s needed (%s short)",
+						disk.FormatBytes(free), disk.FormatBytes(total), disk.FormatBytes(short))
+					if unknown > 0 {
+						msg += fmt.Sprintf(" (%d items with unknown size)", unknown)
+					}
+					fmt.Fprintln(os.Stderr, msg)
+				}
+			}
+		}
+
 		return items, nil
 	}
 
@@ -631,11 +681,19 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 	// bubbletea TUI would emit escape-code garbage — fall back to plain
 	// line-based output instead.
 	if opts.json {
-		return runJSON(dl, scraperFn, cfg.OutputDir, slug, siteName, targetURL, cfg.Quality, cfg.AudioOnly, os.Stdout)
+		err := runJSON(dl, scraperFn, cfg.OutputDir, slug, siteName, targetURL, cfg.Quality, cfg.AudioOnly, os.Stdout)
+		if cfg.Notify {
+			tryNotify(cfg, "Downloads complete")
+		}
+		return err
 	}
 
 	if opts.noTui || !term.IsTerminal(int(os.Stdout.Fd())) {
-		return runPlain(dl, scraperFn, cfg.OutputDir, slug, os.Stdout)
+		err := runPlain(dl, scraperFn, cfg.OutputDir, slug, os.Stdout)
+		if cfg.Notify {
+			tryNotify(cfg, "Downloads complete")
+		}
+		return err
 	}
 
 	d := dashboard.New(scraperFn, dl, cfg.OutputDir, siteName)
@@ -647,6 +705,9 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 	d.SetSendFunc(func(msg tea.Msg) { p.Send(msg) })
 
 	_, err = p.Run()
+	if cfg.Notify {
+		tryNotify(cfg, "Downloads complete")
+	}
 	return err
 }
 
@@ -865,11 +926,19 @@ func runBatch(opts globalOptions, urls []string) error {
 	}
 
 	if opts.json {
-		return runBatchJSON(dl, dashAlbums, cfg.OutputDir, cfg.Quality, cfg.AudioOnly, os.Stdout)
+		err := runBatchJSON(dl, dashAlbums, cfg.OutputDir, cfg.Quality, cfg.AudioOnly, os.Stdout)
+		if cfg.Notify {
+			tryNotify(cfg, "Downloads complete")
+		}
+		return err
 	}
 
 	if opts.noTui || !term.IsTerminal(int(os.Stdout.Fd())) {
-		return runBatchPlain(dl, dashAlbums, cfg.OutputDir, os.Stdout)
+		err := runBatchPlain(dl, dashAlbums, cfg.OutputDir, os.Stdout)
+		if cfg.Notify {
+			tryNotify(cfg, "Downloads complete")
+		}
+		return err
 	}
 
 	d := dashboard.NewBatch(dl, cfg.OutputDir, dashAlbums)
@@ -878,6 +947,9 @@ func runBatch(opts globalOptions, urls []string) error {
 	d.SetSendFunc(func(msg tea.Msg) { p.Send(msg) })
 
 	_, err = p.Run()
+	if cfg.Notify {
+		tryNotify(cfg, "Downloads complete")
+	}
 	return err
 }
 
@@ -943,4 +1015,12 @@ func (f *filterScraper) Parse(url string) ([]model.MediaItem, error) {
 		fmt.Fprintln(os.Stderr, "No items matched filters.")
 	}
 	return filtered, nil
+}
+
+func tryNotify(cfg *config.Config, summary string) {
+	if cfg.Notify {
+		if err := notify.Send(summary); err != nil {
+			fmt.Fprintf(os.Stderr, "notification: %v\n", err)
+		}
+	}
 }

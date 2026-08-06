@@ -885,3 +885,50 @@ func TestLoadGlobalConfigParseSizeValues(t *testing.T) {
 		t.Errorf("expected 500M bytes from config, got %d", cfg.MaxSizeBytes())
 	}
 }
+
+func TestNewRootCmdHasDiskCheckAndNotifyFlags(t *testing.T) {
+	root := NewRootCmd()
+	for _, name := range []string{"disk-check", "notify"} {
+		if root.PersistentFlags().Lookup(name) == nil {
+			t.Errorf("expected --%s persistent flag", name)
+		}
+	}
+}
+
+func TestLoadGlobalConfigDiskCheckOverride(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	content := "disk_check: false\n"
+	if err := os.WriteFile(configPath, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadGlobalConfig(globalOptions{
+		configPath:   configPath,
+		diskCheck:    true,
+		diskCheckSet: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.DiskCheck {
+		t.Error("expected CLI true to override config false")
+	}
+}
+
+func TestLoadGlobalConfigNotifyOverride(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	content := "notify: true\n"
+	if err := os.WriteFile(configPath, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadGlobalConfig(globalOptions{
+		configPath: configPath,
+		notify:     false,
+		notifySet:  true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Notify {
+		t.Error("expected CLI false to override config true")
+	}
+}

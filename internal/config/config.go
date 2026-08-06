@@ -50,6 +50,12 @@ type Config struct {
 	MinSize string `yaml:"min_size"`
 	// MaxSize is the maximum file size in human-readable format.
 	MaxSize string `yaml:"max_size"`
+	// DiskCheck enables the disk-space preflight warning before downloading.
+	// When true and the total estimated size exceeds free space, a warning
+	// is printed to stderr. Downloads continue regardless.
+	DiskCheck bool `yaml:"disk_check"`
+	// Notify enables OS notification when all downloads complete.
+	Notify bool `yaml:"notify"`
 
 	minSizeBytes int64 `yaml:"-"`
 	maxSizeBytes int64 `yaml:"-"`
@@ -132,6 +138,7 @@ func defaultConfig() *Config {
 		UserAgent:           "Scraper/1.0",
 		RateLimit:           "",
 		SkipChecksums:       false,
+		DiskCheck:           true,
 	}
 }
 
