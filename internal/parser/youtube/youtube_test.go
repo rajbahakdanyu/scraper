@@ -1098,7 +1098,7 @@ func TestParsePlaylistEmptyReturnsError(t *testing.T) {
 	scraper := NewYouTubeScraper()
 	fake.wire(scraper)
 	items, err := scraper.Parse(t.Context(), "https://www.youtube.com/playlist?list=PL1234567890123")
-	if err == nil && len(items) != 0 {
+	if err == nil {
 		t.Fatalf("empty playlist returned %d items without an error", len(items))
 	}
 }
