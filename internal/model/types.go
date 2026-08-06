@@ -20,10 +20,10 @@ type DownloadStatus int
 
 const (
 	StatusPending     DownloadStatus = iota
-	StatusDownloading DownloadStatus = iota
-	StatusCompleted   DownloadStatus = iota
-	StatusFailed      DownloadStatus = iota
-	StatusCancelled   DownloadStatus = iota
+	StatusDownloading
+	StatusCompleted
+	StatusFailed
+	StatusCancelled
 )
 
 // MediaItem represents a single media item to be downloaded

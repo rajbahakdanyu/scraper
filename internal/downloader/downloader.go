@@ -433,7 +433,7 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, res
 		flags |= os.O_TRUNC
 	}
 	// #nosec G304 -- tempPath is allocated beneath the configured output directory from a sanitized title.
-	out, err := os.OpenFile(tempPath, flags, 0600)
+	out, err := os.OpenFile(tempPath, flags, 0644)
 	if err != nil {
 		return err
 	}
@@ -648,7 +648,7 @@ func writeResumeMetadata(tempPath string, metadata resumeMetadata) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(resumeMetadataPath(tempPath), data, 0600)
+	return os.WriteFile(resumeMetadataPath(tempPath), data, 0644)
 }
 
 func removeFiles(paths ...string) error {

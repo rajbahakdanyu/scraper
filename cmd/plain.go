@@ -98,7 +98,7 @@ func runPlain(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error
 		if err != nil {
 			return err
 		}
-		if err := os.MkdirAll(albumDest, 0750); err != nil {
+		if err := os.MkdirAll(albumDest, 0755); err != nil {
 			return fmt.Errorf("create album directory: %w", err)
 		}
 		dest = albumDest
@@ -244,7 +244,7 @@ func runBatchPlain(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, des
 			}
 		}
 
-		if err := os.MkdirAll(a.Dest, 0750); err != nil {
+		if err := os.MkdirAll(a.Dest, 0755); err != nil {
 			fmt.Fprintf(out, "failed: create album directory: %v\n", err)
 			allErrs = append(allErrs, err)
 			continue
@@ -331,7 +331,7 @@ func runJSON(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error)
 			writeJSONLine(out, model.JSONEvent{Event: "error", URL: targetURL, Error: dErr.Error()})
 			return dErr
 		}
-		if dErr := os.MkdirAll(albumDest, 0750); dErr != nil {
+		if dErr := os.MkdirAll(albumDest, 0755); dErr != nil {
 			writeJSONLine(out, model.JSONEvent{Event: "error", URL: targetURL, Error: fmt.Sprintf("create album directory: %v", dErr)})
 			return dErr
 		}
@@ -511,7 +511,7 @@ func runBatchJSON(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, dest
 			}
 		}
 
-		if err := os.MkdirAll(a.Dest, 0750); err != nil {
+		if err := os.MkdirAll(a.Dest, 0755); err != nil {
 			writeJSONLine(out, model.JSONEvent{Event: "album_error", Site: a.Site, URL: a.URL, Slug: a.Slug, Error: fmt.Sprintf("create album directory: %v", err)})
 			allErrs = append(allErrs, err)
 			continue
