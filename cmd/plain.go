@@ -57,6 +57,14 @@ func newPlainPrinter(w io.Writer) *plainPrinter {
 	return &plainPrinter{w: w, last: map[string]string{}}
 }
 
+func watchPlainShutdown(signals <-chan os.Signal, done <-chan struct{}, shutdown func()) {
+	select {
+	case <-signals:
+		shutdown()
+	case <-done:
+	}
+}
+
 func (p *plainPrinter) event(evt model.ProgressEvent) {
 	line := progressLine(evt)
 	if line == "" {
@@ -123,13 +131,7 @@ func runPlain(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error
 	defer signal.Stop(signals)
 	watcherDone := make(chan struct{})
 	defer close(watcherDone)
-	go func() {
-		select {
-		case <-signals:
-			dl.Shutdown()
-		case <-watcherDone:
-		}
-	}()
+	go watchPlainShutdown(signals, watcherDone, dl.Shutdown)
 
 	printer := newPlainPrinter(out)
 	errs := make([]error, len(items))

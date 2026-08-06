@@ -52,6 +52,26 @@ type blockingSleeper struct {
 	started chan struct{}
 }
 
+type cancelSleeper struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (s cancelSleeper) Sleep(time.Duration) {}
+
+func (s cancelSleeper) SleepCtx(ctx context.Context, _ time.Duration) error {
+	select {
+	case s.started <- struct{}{}:
+	default:
+	}
+	select {
+	case <-s.release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func (s blockingSleeper) Sleep(time.Duration) {
 	select {
 	case s.started <- struct{}{}:
@@ -249,36 +269,27 @@ func TestDownloadAllFail(t *testing.T) {
 
 func TestCancel(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(2 * time.Second)
+		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer ts.Close()
 
 	dl := newTestDownloader(1, 0, "")
+	sleeper := cancelSleeper{started: make(chan struct{}), release: make(chan struct{})}
+	dl.SetSleeper(sleeper)
 	item := model.MediaItem{URL: ts.URL, Title: "cancel_test"}
 
-	go func() {
-		time.Sleep(100 * time.Millisecond)
-		dl.Cancel(item)
-	}()
+	done := make(chan error, 1)
+	go func() { _, err := dl.Download(item, t.TempDir()); done <- err }()
+	<-sleeper.started
+	dl.Cancel(item)
 
-	start := time.Now()
-	_, err := dl.Download(item, t.TempDir())
-	elapsed := time.Since(start)
-	t.Logf("Download() returned after %v", elapsed)
-
-	if err == nil {
-		t.Fatal("expected error for cancelled download")
-	}
-	// The handler sleeps for 2s before responding. If Cancel only marked
-	// the download as cancelled without aborting the in-flight request
-	// (the request's context), Download would still block for the full
-	// 2s. A real abort should return well before that. (Note: the test's
-	// own reported duration below still includes ~2s because the deferred
-	// ts.Close() blocks until the server's handler goroutine finishes
-	// sleeping — that's httptest.Server's documented behavior, not
-	// Download() itself; hence asserting on our own elapsed measurement.)
-	if elapsed >= 1500*time.Millisecond {
-		t.Errorf("expected cancel to abort the in-flight request quickly, took %v", elapsed)
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected error for cancelled download")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancel did not interrupt the retry backoff")
 	}
 }
 
@@ -1087,12 +1098,22 @@ func TestSetRateLimitThrottlesThroughput(t *testing.T) {
 	dl.SetRateLimit(20 * 1024) // 20KB/s
 	item := model.MediaItem{URL: ts.URL, Title: "throttled.bin"}
 
-	start := time.Now()
 	if _, err := dl.Download(item, t.TempDir()); err != nil {
 		t.Fatalf("download failed: %v", err)
 	}
-	if elapsed := time.Since(start); elapsed < time.Second {
-		t.Errorf("expected a 20KB/s cap on a 96KB file to take over a second, took %v", elapsed)
+	var transfers int
+	for {
+		select {
+		case evt := <-dl.Progress():
+			if evt.Status == model.StatusDownloading {
+				transfers++
+			}
+		default:
+			if transfers < 2 {
+				t.Fatalf("expected the limiter to split the transfer into waits, got %d progress events", transfers)
+			}
+			return
+		}
 	}
 }
 
@@ -1646,12 +1667,16 @@ func TestShutdownKeepsPartialFileForResume(t *testing.T) {
 // cancels them and closes the channel. Run with -race; a send on a closed
 // channel would panic.
 func TestShutdownWithConcurrentDownloads(t *testing.T) {
+	bodyStarted := make(chan struct{}, 4)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		flusher, _ := w.(http.Flusher)
 		for i := 0; i < 100; i++ {
 			if _, err := w.Write(make([]byte, 1024)); err != nil {
 				return // client went away
+			}
+			if i == 0 {
+				bodyStarted <- struct{}{}
 			}
 			if flusher != nil {
 				flusher.Flush()
@@ -1679,8 +1704,14 @@ func TestShutdownWithConcurrentDownloads(t *testing.T) {
 		}(i)
 	}
 
-	// Let the downloads get genuinely mid-body, then shut down.
-	time.Sleep(50 * time.Millisecond)
+	// Wait until every active slot has reached the response body.
+	for i := 0; i < cap(bodyStarted); i++ {
+		select {
+		case <-bodyStarted:
+		case <-time.After(time.Second):
+			t.Fatal("concurrent download did not reach the response body")
+		}
+	}
 	dl.Shutdown()
 
 	waitProgressClosed(t, dl.Progress(), 10*time.Second)

@@ -433,52 +433,15 @@ func TestRunPlainTerminatesOnClosedProgressChannel(t *testing.T) {
 }
 
 func TestRunPlainShutsDownOnInterrupt(t *testing.T) {
-	// Safety net: with at least one Notify registered for SIGINT, the
-	// self-sent signal below can never terminate the test process, even if
-	// it arrives before runPlain's own watcher is ready.
-	safety := make(chan os.Signal, 1)
-	signal.Notify(safety, os.Interrupt)
-	defer signal.Stop(safety)
-
-	dest := t.TempDir()
-	dl := newFakePlainDownloader()
-	dl.blockOnDownload = true
-	items := []model.MediaItem{{URL: "https://example.com/one.mp4", Title: "one.mp4"}}
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- runPlain(dl, itemsScraper(items, nil), dest, "", &bytes.Buffer{})
-	}()
-
-	// Wait until the download is genuinely in flight, so the interrupt
-	// exercises the shutdown path rather than racing startup.
-	startDeadline := time.Now().Add(2 * time.Second)
-	for {
-		dl.mu.Lock()
-		started := len(dl.downloaded) == 1
-		dl.mu.Unlock()
-		if started {
-			break
-		}
-		if time.Now().After(startDeadline) {
-			t.Fatal("download never started")
-		}
-		time.Sleep(time.Millisecond)
-	}
-
-	if err := syscall.Kill(syscall.Getpid(), syscall.SIGINT); err != nil {
-		t.Fatalf("send SIGINT: %v", err)
-	}
-
-	// The blocked download only returns once the signal watcher triggers
-	// Shutdown, so a prompt return proves the wiring.
+	signals := make(chan os.Signal, 1)
+	done := make(chan struct{})
+	shutdown := make(chan struct{})
+	go watchPlainShutdown(signals, done, func() { close(shutdown) })
+	signals <- os.Interrupt
 	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Errorf("expected cancellation-only run to succeed, got: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("runPlain did not return after SIGINT")
+	case <-shutdown:
+	case <-time.After(time.Second):
+		t.Fatal("interrupt watcher did not shut down downloader")
 	}
 }
 

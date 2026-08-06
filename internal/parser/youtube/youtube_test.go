@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -627,6 +628,8 @@ type fakeYouTube struct {
 	// in-flight cancellation tests; streamRequests counts /stream hits.
 	blockStream    bool
 	streamRequests atomic.Int32
+	streamStarted  chan struct{}
+	streamOnce     sync.Once
 }
 
 // startFakeYouTube serves every endpoint the ytdl client touches: the front
@@ -641,6 +644,7 @@ func startFakeYouTube(t *testing.T, videoID, title, content string) *fakeYouTube
 		playerResponses: make(map[string]string),
 		streamContents:  make(map[string]string),
 		streamContent:   content,
+		streamStarted:   make(chan struct{}),
 	}
 
 	var playerResponse, watchPage string
@@ -672,6 +676,7 @@ func startFakeYouTube(t *testing.T, videoID, title, content string) *fakeYouTube
 			fmt.Fprint(w, "// fake base.js; the fake stream URL has no n-parameter to decode")
 		case strings.HasPrefix(r.URL.Path, "/stream"):
 			f.streamRequests.Add(1)
+			f.streamOnce.Do(func() { close(f.streamStarted) })
 			if f.blockStream {
 				<-r.Context().Done() // hang until the client aborts
 				return
@@ -846,12 +851,10 @@ func TestDownloaderShutdownCancelsInFlightDownload(t *testing.T) {
 	go func() { _, err := d.Download(item, t.TempDir()); downloadDone <- err }()
 
 	// Wait until the stream request is genuinely in flight.
-	startDeadline := time.Now().Add(5 * time.Second)
-	for fake.streamRequests.Load() == 0 {
-		if time.Now().After(startDeadline) {
-			t.Fatal("stream request never started")
-		}
-		time.Sleep(time.Millisecond)
+	select {
+	case <-fake.streamStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("stream request never started")
 	}
 
 	start := time.Now()
