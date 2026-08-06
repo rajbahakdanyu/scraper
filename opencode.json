@@ -9,58 +9,29 @@
   "small_model": "opencode-go/gpt-5.6-luna",
 
   "agent": {
-    "architect": {
-      "mode": "all",
+    "build": {
+      "mode": "primary",
+      "model": "opencode-go/deepseek-v4-pro",
+      "description": "Default primary agent for full development, file editing, and task execution."
+    },
+    "plan": {
+      "mode": "primary",
       "model": "opencode-go/kimi-k3",
-      "description": "USE THIS FOR: SDD spec generation, task breakdown briefs, global constraints definition, and system architecture planning.",
-      "system": "You are a principal software architect specializing in Spec-Driven Development. Analyze requirements, evaluate structural edge cases, and generate clear SDD specifications and task briefs before code is modified."
+      "description": "Architectural analysis, SDD plan generation, and constraint definitions without editing files directly."
+    },
+    "general": {
+      "mode": "subagent",
+      "model": "opencode-go/gpt-5.6-luna",
+      "description": "General-purpose subagent for background execution passes, multi-step subtasks, and SDD task reviews."
     },
     "explore": {
       "mode": "subagent",
-      "model": "opencode-go/gpt-5.6-luna",
-      "description": "USE THIS FOR: Quick read-only codebase search, checking existing file paths, reading specific files, and inspecting pattern context during task preparation.",
+      "model": "opencode-go/deepseek-v4-flash",
+      "description": "Fast, read-only codebase search, file path inspection, and string matching.",
       "permissions": [
         { "action": "edit", "resource": "*", "effect": "deny" },
         { "action": "shell", "resource": "*", "effect": "deny" }
       ]
-    },
-    "reviewer": {
-      "mode": "subagent",
-      "model": "opencode-go/gpt-5.6-luna",
-      "description": "USE THIS FOR: SDD task-gate reviews, inspecting multi-file git diffs against briefs, verifying spec compliance, and security regressions without editing code.",
-      "permissions": [
-        { "action": "edit", "resource": "*", "effect": "deny" },
-        { "action": "shell", "resource": "*", "effect": "deny" }
-      ]
-    },
-    "free_coder": {
-      "mode": "all",
-      "model": "opencode/deepseek-v4-flash-free",
-      "description": "USE THIS FOR: Simple documentation edits or low-priority utility tasks when hitting rate limits."
-    },
-    "heavy": {
-      "mode": "all",
-      "model": "opencode-go/gpt-5.6-luna",
-      "description": "USE THIS FOR: Resolving complex framework deadlocks, subtle race conditions, or when standard models hit logic walls during SDD tasks."
-    }
-  },
-   
-  "command": {
-    "plan": {
-      "description": "Generate an architectural SDD blueprint before editing files",
-      "agent": "architect",
-      "template": "Create an architectural implementation plan and SDD task breakdown for: $ARGUMENTS.\nInclude impacted files, logic breakdowns, global constraints, and potential edge cases."
-    },
-    "review": {
-      "description": "Review uncommitted git diffs against SDD task briefs",
-      "agent": "reviewer",
-      "subtask": true,
-      "template": "Here are the uncommitted changes:\n!`git diff`\n\nReview these diffs for correctness, spec compliance against task briefs, security vulnerabilities, and missing test coverage."
-    },
-    "free": {
-      "description": "Run a task using zero-cost free models when rate-limited on Go",
-      "agent": "free_coder",
-      "template": "$ARGUMENTS"
     }
   }
 }
