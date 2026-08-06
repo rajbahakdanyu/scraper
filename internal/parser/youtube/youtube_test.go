@@ -617,8 +617,12 @@ func TestAudioCopyable(t *testing.T) {
 // metadata fetches.
 
 type fakeYouTube struct {
-	server      *httptest.Server
-	playerPosts atomic.Int32
+	server           *httptest.Server
+	playerPosts      atomic.Int32
+	playerResponses  map[string]string
+	streamContents   map[string]string
+	streamContent    string
+	playlistResponse string
 	// blockStream makes /stream hang until the client goes away, for
 	// in-flight cancellation tests; streamRequests counts /stream hits.
 	blockStream    bool
@@ -633,7 +637,11 @@ type fakeYouTube struct {
 // parameter).
 func startFakeYouTube(t *testing.T, videoID, title, content string) *fakeYouTube {
 	t.Helper()
-	f := &fakeYouTube{}
+	f := &fakeYouTube{
+		playerResponses: make(map[string]string),
+		streamContents:  make(map[string]string),
+		streamContent:   content,
+	}
 
 	var playerResponse, watchPage string
 	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -643,14 +651,26 @@ func startFakeYouTube(t *testing.T, videoID, title, content string) *fakeYouTube
 		case r.Method == http.MethodPost && r.URL.Path == "/youtubei/v1/player":
 			f.playerPosts.Add(1)
 			w.Header().Set("Content-Type", "application/json")
+			body, _ := io.ReadAll(r.Body)
+			for id, response := range f.playerResponses {
+				if strings.Contains(string(body), id) {
+					fmt.Fprint(w, response)
+					return
+				}
+			}
 			fmt.Fprint(w, playerResponse)
+		case r.Method == http.MethodPost && r.URL.Path == "/youtubei/v1/browse":
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, f.playlistResponse)
+		case r.Method == http.MethodGet && r.URL.Path == "/playlist":
+			fmt.Fprint(w, f.playlistResponse)
 		case r.URL.Path == "/watch":
 			fmt.Fprint(w, watchPage)
 		case strings.HasPrefix(r.URL.Path, "/embed/"):
 			fmt.Fprint(w, `<html>"jsUrl":"/s/player/fake1234/player_ias.vflset/en_US/base.js"</html>`)
 		case strings.HasPrefix(r.URL.Path, "/s/player/"):
 			fmt.Fprint(w, "// fake base.js; the fake stream URL has no n-parameter to decode")
-		case r.URL.Path == "/stream":
+		case strings.HasPrefix(r.URL.Path, "/stream"):
 			f.streamRequests.Add(1)
 			if f.blockStream {
 				<-r.Context().Done() // hang until the client aborts
@@ -658,14 +678,22 @@ func startFakeYouTube(t *testing.T, videoID, title, content string) *fakeYouTube
 			}
 			if rangeParam := r.URL.Query().Get("range"); rangeParam != "" {
 				var start, end int
-				if _, err := fmt.Sscanf(rangeParam, "%d-%d", &start, &end); err != nil || end >= len(content) {
+				streamContent := f.streamContents[r.URL.Path]
+				if streamContent == "" {
+					streamContent = f.streamContent
+				}
+				if _, err := fmt.Sscanf(rangeParam, "%d-%d", &start, &end); err != nil || end >= len(streamContent) {
 					http.Error(w, "bad range", http.StatusBadRequest)
 					return
 				}
-				fmt.Fprint(w, content[start:end+1])
+				fmt.Fprint(w, streamContent[start:end+1])
 				return
 			}
-			fmt.Fprint(w, content)
+			streamContent := f.streamContents[r.URL.Path]
+			if streamContent == "" {
+				streamContent = f.streamContent
+			}
+			fmt.Fprint(w, streamContent)
 		default:
 			http.NotFound(w, r)
 		}
@@ -678,6 +706,7 @@ func startFakeYouTube(t *testing.T, videoID, title, content string) *fakeYouTube
 		`"streamingData":{"formats":[{"itag":18,"url":%q,"mimeType":"video/mp4","bitrate":1000,`+
 		`"width":640,"height":360,"contentLength":"%d","audioChannels":2}]}}`,
 		videoID, title, f.server.URL+"/stream", len(content))
+	f.playerResponses[videoID] = playerResponse
 	watchPage = `<html><script>var ytInitialPlayerResponse = ` + playerResponse + `;</script></html>`
 	return f
 }
@@ -999,4 +1028,163 @@ func TestDownloaderFailsFastAfterShutdown(t *testing.T) {
 	if elapsed := time.Since(start); elapsed > time.Second {
 		t.Errorf("Download blocked for %v after Shutdown", elapsed)
 	}
+}
+
+func playlistJSON(entries ...string) string {
+	return fmt.Sprintf(`{"metadata":{"playlistMetadataRenderer":{"title":{"runs":[{"text":"Test Playlist"}]}}},`+
+		`"contents":{"twoColumnBrowseResultsRenderer":{"tabs":[{"tabRenderer":{"content":{"sectionListRenderer":{"contents":[`+
+		`{"itemSectionRenderer":{"contents":[{"playlistVideoListRenderer":{"contents":[%s]}}]}}`+
+		`]}}}}]}}}`, strings.Join(entries, ","))
+}
+
+func playlistEntryJSON(id, title string) string {
+	titleJSON := `"runs":[]`
+	if title != "" {
+		titleJSON = fmt.Sprintf(`"runs":[{"text":%q}]`, title)
+	}
+	return fmt.Sprintf(`{"playlistVideoRenderer":{"videoId":%q,"title":{%s},"lengthSeconds":"5"}}`, id, titleJSON)
+}
+
+func TestParsePlaylistReturnsPlayableItems(t *testing.T) {
+	fake := startFakeYouTube(t, "playlist-video-1", "unused", "unused")
+	fake.playlistResponse = playlistJSON(
+		playlistEntryJSON("playlist-video-1", "First video"),
+		playlistEntryJSON("playlist-video-2", "Second video"),
+	)
+
+	scraper := NewYouTubeScraper()
+	fake.wire(scraper)
+	items, err := scraper.Parse(t.Context(), "https://www.youtube.com/playlist?list=PL1234567890123")
+	if err != nil {
+		t.Fatalf("Parse playlist: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("Parse playlist returned %d items, want 2", len(items))
+	}
+	if items[0].Title != "First video" || items[0].URL != videoWatchURL("playlist-video-1") {
+		t.Errorf("first playlist item = %+v", items[0])
+	}
+	if items[1].Title != "Second video" || items[1].URL != videoWatchURL("playlist-video-2") {
+		t.Errorf("second playlist item = %+v", items[1])
+	}
+}
+
+func TestParsePlaylistSkipsNullEntries(t *testing.T) {
+	fake := startFakeYouTube(t, "playlist-video-3", "unused", "unused")
+	fake.playlistResponse = playlistJSON(
+		playlistEntryJSON("playlist-video-3", "Playable"),
+		`{"playlistVideoRenderer":null}`,
+		playlistEntryJSON("playlist-video-4", "Also playable"),
+	)
+
+	scraper := NewYouTubeScraper()
+	fake.wire(scraper)
+	items, err := scraper.Parse(t.Context(), "https://www.youtube.com/playlist?list=PL1234567890123")
+	if err != nil {
+		t.Fatalf("Parse playlist with null entry: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("Parse playlist returned %d items, want 2", len(items))
+	}
+}
+
+func TestParsePlaylistEmptyReturnsError(t *testing.T) {
+	fake := startFakeYouTube(t, "playlist-video-5", "unused", "unused")
+	fake.playlistResponse = playlistJSON()
+
+	scraper := NewYouTubeScraper()
+	fake.wire(scraper)
+	items, err := scraper.Parse(t.Context(), "https://www.youtube.com/playlist?list=PL1234567890123")
+	if err == nil && len(items) != 0 {
+		t.Fatalf("empty playlist returned %d items without an error", len(items))
+	}
+}
+
+func TestParsePlaylistTitleFallsBackToURL(t *testing.T) {
+	const videoID = "playlist-video-6"
+	fake := startFakeYouTube(t, videoID, "unused", "unused")
+	fake.playlistResponse = playlistJSON(playlistEntryJSON(videoID, ""))
+
+	scraper := NewYouTubeScraper()
+	fake.wire(scraper)
+	items, err := scraper.Parse(t.Context(), "https://www.youtube.com/playlist?list=PL1234567890123")
+	if err != nil {
+		t.Fatalf("Parse playlist: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("Parse playlist returned %d items, want 1", len(items))
+	}
+	if items[0].Title != items[0].URL {
+		t.Fatalf("empty title fallback = %q, want URL %q", items[0].Title, items[0].URL)
+	}
+}
+
+func TestDownloadAndMuxDownloadsSeparateStreams(t *testing.T) {
+	const videoID = "mux-video-01"
+	videoContent := "video stream bytes"
+	audioContent := "audio stream bytes"
+	fake := startFakeYouTube(t, videoID, "Muxed title", "unused")
+	fake.streamContents["/stream/video"] = videoContent
+	fake.streamContents["/stream/audio"] = audioContent
+	fake.playerResponses[videoID] = fmt.Sprintf(`{"playabilityStatus":{"status":"OK"},`+
+		`"videoDetails":{"videoId":%q,"title":"Muxed title","lengthSeconds":"5","author":"tester"},`+
+		`"streamingData":{"formats":[`+
+		`{"itag":137,"url":%q,"mimeType":"video/mp4","bitrate":1000,"width":1920,"height":1080,"contentLength":"%d"},`+
+		`{"itag":140,"url":%q,"mimeType":"audio/mp4; codecs=\"mp4a.40.2\"","bitrate":128,"audioChannels":2,"contentLength":"%d"}]}}`,
+		videoID, fake.server.URL+"/stream/video", len(videoContent), fake.server.URL+"/stream/audio", len(audioContent))
+	stubFFmpeg(t, `output=""; for arg do output="$arg"; done; printf 'predictable muxed output' > "$output"`)
+
+	scraper := NewYouTubeScraper()
+	d, err := NewDownloaderWithConfig(scraper, DownloaderConfig{Concurrency: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake.wire(scraper)
+	dest := t.TempDir()
+	path, err := d.Download(model.MediaItem{URL: videoWatchURL(videoID), Title: "Muxed title", Type: model.MediaTypeVideo}, dest)
+	if err != nil {
+		t.Fatalf("Download: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Size() == 0 {
+		t.Fatalf("muxed output %q missing or empty: stat error=%v", path, err)
+	}
+	assertDownloadedFile(t, dest, "Muxed title.mp4", "predictable muxed output")
+	present, matches, err := fileutil.VerifyChecksum(path)
+	if err != nil || !present || !matches {
+		t.Fatalf("muxed checksum verification = present %v matches %v err %v", present, matches, err)
+	}
+}
+
+func TestDownloadAudioOnlyProducesM4A(t *testing.T) {
+	const videoID = "audio-video-01"
+	audioContent := "audio-only stream bytes"
+	fake := startFakeYouTube(t, videoID, "Audio title", "unused")
+	fake.streamContents["/stream/audio"] = audioContent
+	fake.playerResponses[videoID] = fmt.Sprintf(`{"playabilityStatus":{"status":"OK"},`+
+		`"videoDetails":{"videoId":%q,"title":"Audio title","lengthSeconds":"5","author":"tester"},`+
+		`"streamingData":{"formats":[`+
+		`{"itag":140,"url":%q,"mimeType":"audio/mp4; codecs=\"mp4a.40.2\"","bitrate":128,"audioChannels":2,"contentLength":"%d"}]}}`,
+		videoID, fake.server.URL+"/stream/audio", len(audioContent))
+	stubFFmpeg(t, `output=""; for arg do output="$arg"; done; printf 'predictable audio output' > "$output"`)
+
+	scraper := NewYouTubeScraper()
+	d, err := NewDownloaderWithConfig(scraper, DownloaderConfig{Concurrency: 1, AudioOnly: "m4a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake.wire(scraper)
+	dest := t.TempDir()
+	path, err := d.Download(model.MediaItem{URL: videoWatchURL(videoID), Title: "Audio title", Type: model.MediaTypeVideo}, dest)
+	if err != nil {
+		t.Fatalf("audio-only Download: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Size() == 0 {
+		t.Fatalf("audio output %q missing or empty: stat error=%v", path, err)
+	}
+	if filepath.Ext(path) != ".m4a" {
+		t.Fatalf("audio-only output extension = %q, want .m4a", filepath.Ext(path))
+	}
+	assertDownloadedFile(t, dest, "Audio title.m4a", "predictable audio output")
 }

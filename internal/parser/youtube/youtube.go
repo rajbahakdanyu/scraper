@@ -104,7 +104,7 @@ func (s *Scraper) parsePlaylist(ctx context.Context, rawURL string) ([]model.Med
 		}
 		title := entry.Title
 		if title == "" {
-			title = entry.ID
+			title = videoWatchURL(entry.ID)
 		}
 		items = append(items, model.MediaItem{
 			URL:   videoWatchURL(entry.ID),
