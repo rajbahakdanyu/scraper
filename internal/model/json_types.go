@@ -30,8 +30,6 @@ type JSONEvent struct {
 	Size       int64  `json:"size,omitempty"`
 	Path       string `json:"path,omitempty"`
 	Status     string `json:"status,omitempty"`
-	MimeType   string `json:"mimeType,omitempty"`
-	MediaType  string `json:"type,omitempty"`
 	Error      string `json:"error,omitempty"`
 	Album      string `json:"album,omitempty"`
 	Completed  int    `json:"completed,omitempty"`
@@ -60,16 +58,12 @@ func DownloadStatusString(s DownloadStatus) string {
 	}
 }
 
-func MediaTypeString(t MediaType) string {
-	return string(t)
-}
-
 func ItemToJSONItem(item MediaItem) JSONItem {
 	return JSONItem{
 		Title:    TitleOf(item),
 		URL:      item.URL,
 		Size:     item.Size,
 		MimeType: item.MimeType,
-		Type:     MediaTypeString(item.Type),
+		Type:     string(item.Type),
 	}
 }

@@ -16,7 +16,6 @@ const (
 	ColorText    = "252" // near-white
 	ColorPanel   = "236" // dark panel bg
 	ColorPanelBd = "60"  // muted purple border
-	ColorBar     = "141" // progress bar
 )
 
 // Theme bundles all styles used across the TUI.

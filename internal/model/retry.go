@@ -1,9 +1,6 @@
 package model
 
-import (
-	"errors"
-	"net/http"
-)
+import "net/http"
 
 // NonRetryableError marks an error that will never succeed no matter how
 // many times it's retried.
@@ -31,9 +28,4 @@ func IsRetryableStatus(code int) bool {
 	default:
 		return code >= 500
 	}
-}
-
-func IsNonRetryable(err error) bool {
-	var marker interface{ NonRetryable() }
-	return errors.As(err, &marker)
 }

@@ -629,10 +629,6 @@ func commitOutput(tempPath, finalPath string, skipChecksums bool) error {
 	return nil
 }
 
-func (s *Scraper) ExtractVideoID(rawURL string) string {
-	return s.extractVideoID(rawURL)
-}
-
 // extractVideoID pulls the video ID out of a YouTube URL. It handles the
 // modern URL shapes (/watch?v=, youtu.be, /shorts/, /embed/, /live/) by
 // parsing the URL properly rather than substring-matching "v=" — the old
@@ -869,7 +865,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) (string, error)
 
 	d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusDownloading, Start: time.Now(), Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
 
-	videoID := d.scraper.ExtractVideoID(item.URL)
+	videoID := d.scraper.extractVideoID(item.URL)
 	if videoID == "" {
 		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed, Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
 		return "", fmt.Errorf("youtube: could not extract video ID from %s", item.URL)

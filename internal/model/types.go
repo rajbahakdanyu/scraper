@@ -29,13 +29,12 @@ const (
 
 // MediaItem represents a single media item to be downloaded
 type MediaItem struct {
-	ID        string    // Per-run identity used to distinguish duplicate URLs
-	URL       string    // URL of the media resource (a stable page URL when Resolve is set)
-	Title     string    // Display title of the media
-	Size      int64     // Size of the media in bytes
-	MimeType  string    // MIME type of the media
-	Type      MediaType // Type of media (video/image/etc.)
-	Thumbnail string    // URL or path to thumbnail preview
+	ID       string    // Per-run identity used to distinguish duplicate URLs
+	URL      string    // URL of the media resource (a stable page URL when Resolve is set)
+	Title    string    // Display title of the media
+	Size     int64     // Size of the media in bytes
+	MimeType string    // MIME type of the media
+	Type     MediaType // Type of media (video/image/etc.)
 	// Resolve, when non-nil, produces the final download URL lazily at
 	// download time instead of URL being that final URL. Parsers set this
 	// for signed/expiring URLs: resolving a whole album eagerly guarantees
@@ -139,7 +138,6 @@ type ProgressEvent struct {
 	Item      MediaItem      // The media item being downloaded
 	Bytes     int64          // Bytes downloaded so far
 	Total     int64          // Total size of the media
-	Speed     float64        // Current download speed in bytes/sec
 	Status    DownloadStatus // Current download status
 	Filename  string         // Target filename for the download
 	Start     time.Time      // Start time of the download

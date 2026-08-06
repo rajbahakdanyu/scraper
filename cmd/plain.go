@@ -572,12 +572,6 @@ batchLoop:
 	return model.NewPartialError("batch", allErrs)
 }
 
-// runDryRunJSON scrapes targetURL and prints a single JSON document with
-// item metadata — no downloading.
-func runDryRunJSON(scraper model.Scraper, targetURL, siteName string, out io.Writer) error {
-	return runDryRunJSONWithDiskCheck(scraper, targetURL, siteName, out, "", false)
-}
-
 func runDryRunJSONWithDiskCheck(scraper model.Scraper, targetURL, siteName string, out io.Writer, outputDir string, diskCheck bool) error {
 	items, err := scraper.Parse(context.Background(), targetURL)
 	if err != nil && len(items) == 0 {

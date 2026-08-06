@@ -339,7 +339,7 @@ func TestRunDryRunPropagatesParseError(t *testing.T) {
 
 	var err error
 	captureStdout(func() {
-		err = runDryRun(scraper, "https://example.com/a")
+		err = runDryRunWithDiskCheck(scraper, "https://example.com/a", "", false)
 	})
 	if err != wantErr {
 		t.Errorf("expected the scraper's Parse error to propagate, got: %v", err)
@@ -351,7 +351,7 @@ func TestRunDryRunNoItems(t *testing.T) {
 
 	var err error
 	out := captureStdout(func() {
-		err = runDryRun(scraper, "https://example.com/a")
+		err = runDryRunWithDiskCheck(scraper, "https://example.com/a", "", false)
 	})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -369,7 +369,7 @@ func TestRunDryRunSummarizesItems(t *testing.T) {
 
 	var err error
 	out := captureStdout(func() {
-		err = runDryRun(scraper, "https://example.com/a")
+		err = runDryRunWithDiskCheck(scraper, "https://example.com/a", "", false)
 	})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -392,7 +392,7 @@ func TestRunDryRunReportsUnknownSizes(t *testing.T) {
 
 	var err error
 	out := captureStdout(func() {
-		err = runDryRun(scraper, "https://example.com/a")
+		err = runDryRunWithDiskCheck(scraper, "https://example.com/a", "", false)
 	})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -523,7 +523,7 @@ func TestRunDryRunJSONProducesValidJSON(t *testing.T) {
 
 	var err error
 	out := captureStdout(func() {
-		err = runDryRunJSON(scraper, "https://example.com/a", "example", os.Stdout)
+		err = runDryRunJSONWithDiskCheck(scraper, "https://example.com/a", "example", os.Stdout, "", false)
 	})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -539,7 +539,7 @@ func TestRunDryRunJSONProducesValidJSON(t *testing.T) {
 func TestRunDryRunJSONEmptyItems(t *testing.T) {
 	scraper := &fakeDryRunScraper{items: nil}
 	out := captureStdout(func() {
-		_ = runDryRunJSON(scraper, "https://example.com/a", "example", os.Stdout)
+		_ = runDryRunJSONWithDiskCheck(scraper, "https://example.com/a", "example", os.Stdout, "", false)
 	})
 	if !strings.Contains(out, `"dryRun"`) && !strings.Contains(out, `"summary"`) {
 		t.Errorf("expected dry run JSON with summary, got: %q", out)

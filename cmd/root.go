@@ -686,17 +686,6 @@ func finishRun(cfg *config.Config, opts globalOptions, jsonRun, plainRun, tuiRun
 	return err
 }
 
-// batchAlbum holds a scraped album's items and metadata.
-type batchAlbum struct {
-	URL     string
-	Site    string
-	Slug    string
-	Dest    string
-	Items   []model.MediaItem
-	Err     error
-	Scraper model.Scraper
-}
-
 // collectBatchURLs gathers URLs from positional arguments, --input-file, and
 // stdin (when not a TTY and no other sources). Lines starting with "#" are
 // treated as comments and blank lines are skipped.
@@ -882,7 +871,6 @@ func runBatch(opts globalOptions, urls []string) error {
 				maxSize:   cfg.MaxSizeBytes(),
 				diskCheck: cfg.DiskCheck,
 				outputDir: cfg.OutputDir,
-				filtering: cfg.HasFilters(),
 			}
 		}
 	}
@@ -920,12 +908,6 @@ var batchGenericDownloader = func(cfg *config.Config, rateLimitBytesPerSec int64
 	return buildDownloader(nil, "generic", cfg, rateLimitBytesPerSec)
 }
 
-// runDryRun scrapes targetURL and prints the item count and total size
-// without downloading or writing anything to disk.
-func runDryRun(scraper model.Scraper, targetURL string) error {
-	return runDryRunWithDiskCheck(scraper, targetURL, "", false)
-}
-
 func runDryRunWithDiskCheck(scraper model.Scraper, targetURL, outputDir string, diskCheck bool) error {
 	fmt.Printf("Scraping %s...\n", targetURL)
 
@@ -945,10 +927,7 @@ func runDryRunWithDiskCheck(scraper model.Scraper, targetURL, outputDir string, 
 	var totalSize int64
 	var unknownSize int
 	for _, item := range items {
-		title := item.Title
-		if title == "" {
-			title = item.URL
-		}
+		title := model.TitleOf(item)
 		sizeStr := "unknown size"
 		if item.Size > 0 {
 			totalSize += item.Size
@@ -975,7 +954,6 @@ type filterScraper struct {
 	diskCheck        bool
 	outputDir        string
 	diskChecked      bool
-	filtering        bool
 }
 
 func (f *filterScraper) Name() string { return f.inner.Name() }
@@ -986,7 +964,7 @@ func (f *filterScraper) Parse(ctx context.Context, url string) ([]model.MediaIte
 		return nil, err
 	}
 	filtered := items
-	if f.filtering || len(f.include) > 0 || len(f.exclude) > 0 || f.minSize > 0 || f.maxSize > 0 {
+	if len(f.include) > 0 || len(f.exclude) > 0 || f.minSize > 0 || f.maxSize > 0 {
 		var summary model.FilterSummary
 		filtered, summary = model.FilterItems(items, f.include, f.exclude, f.minSize, f.maxSize)
 		fmt.Fprintf(os.Stderr, "filters: %s\n", summary)
