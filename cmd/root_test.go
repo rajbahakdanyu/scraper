@@ -833,19 +833,21 @@ func TestLoadGlobalConfigIncludeOverride(t *testing.T) {
 }
 
 func TestLoadGlobalConfigParseSizeValues(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	content := "min_size: 1M\nmax_size: 500M\n"
+	if err := os.WriteFile(configPath, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
 	cfg, err := loadGlobalConfig(globalOptions{
-		minSize:    "1M",
-		minSizeSet: true,
-		maxSize:    "500M",
-		maxSizeSet: true,
+		configPath: configPath,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cfg.MinSizeBytes() != 1024*1024 {
-		t.Errorf("expected 1M bytes, got %d", cfg.MinSizeBytes())
+		t.Errorf("expected 1M bytes from config, got %d", cfg.MinSizeBytes())
 	}
 	if cfg.MaxSizeBytes() != 500*1024*1024 {
-		t.Errorf("expected 500M bytes, got %d", cfg.MaxSizeBytes())
+		t.Errorf("expected 500M bytes from config, got %d", cfg.MaxSizeBytes())
 	}
 }
