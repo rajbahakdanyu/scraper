@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math/rand"
 	"net/http"
 	"net/url"
@@ -110,6 +111,11 @@ func (s *Scraper) Parse(rawURL string) ([]model.MediaItem, error) {
 		item, err := s.resolveFile(context.Background(), id, "")
 		if err != nil {
 			return nil, err
+		}
+		signedURL := item.URL
+		item.URL = fmt.Sprintf("%s/d/%s", s.baseURL, id)
+		item.Resolve = func(context.Context) (string, error) {
+			return signedURL, nil
 		}
 		return []model.MediaItem{item}, nil
 	case "f":
@@ -486,5 +492,5 @@ func (s *Scraper) fetchDoc(pageURL string) (*goquery.Document, error) {
 		return nil, err
 	}
 
-	return goquery.NewDocumentFromReader(resp.Body)
+	return goquery.NewDocumentFromReader(io.LimitReader(resp.Body, 32<<20))
 }

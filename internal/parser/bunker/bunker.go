@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"path"
@@ -327,7 +328,7 @@ func (s *Scraper) fetchDoc(pageURL string) (*goquery.Document, error) {
 		return nil, fmt.Errorf("bunker: HTTP %d for %s", resp.StatusCode, pageURL)
 	}
 
-	return goquery.NewDocumentFromReader(resp.Body)
+	return goquery.NewDocumentFromReader(io.LimitReader(resp.Body, 32<<20))
 }
 
 // resolveURL resolves an href against the page URL it was found on.

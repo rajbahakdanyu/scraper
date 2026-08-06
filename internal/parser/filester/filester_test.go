@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -423,9 +424,35 @@ func TestParseFilesterSingleFile(t *testing.T) {
 	if items[0].Title != "Sw9EGcH-name.bin" {
 		t.Errorf("unexpected title: %s", items[0].Title)
 	}
+	if items[0].URL != ts.URL+"/d/Sw9EGcH" {
+		t.Errorf("expected stable page URL, got %s", items[0].URL)
+	}
+	if strings.Contains(items[0].URL, "token=") {
+		t.Errorf("single-file page URL leaked a token: %s", items[0].URL)
+	}
+	if items[0].Resolve == nil {
+		t.Fatal("expected a resolver for the signed download URL")
+	}
 	wantURL := fmt.Sprintf("%s/v2/file-Sw9EGcH?download=true&n=Sw9EGcH-name.bin&token=tok-Sw9EGcH", ts.URL)
-	if items[0].URL != wantURL {
-		t.Errorf("expected URL %s, got %s", wantURL, items[0].URL)
+	resolved, err := items[0].Resolve(context.Background())
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if resolved != wantURL {
+		t.Errorf("expected resolved URL %s, got %s", wantURL, resolved)
+	}
+}
+
+func TestParseFilesterRejectsOversizedHTML(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, strings.Repeat("x", 32<<20+1))
+	}))
+	defer ts.Close()
+
+	scraper := newTestFilesterScraper()
+	scraper.baseURL = ts.URL
+	if _, err := scraper.Parse(ts.URL + "/f/oversized"); err == nil {
+		t.Fatal("expected oversized HTML to fail parsing")
 	}
 }
 

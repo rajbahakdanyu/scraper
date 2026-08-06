@@ -5,9 +5,24 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestGetJSONRejectsOversizedResponse(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"data":"`+strings.Repeat("x", 10<<20)+`"}`)
+	}))
+	defer ts.Close()
+
+	var result struct {
+		Data string `json:"data"`
+	}
+	if err := GetJSON(context.Background(), ts.Client(), ts.URL, "", &result); err == nil {
+		t.Fatal("expected oversized JSON response to fail decoding")
+	}
+}
 
 func TestGetJSONDecodesSuccessfulResponse(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

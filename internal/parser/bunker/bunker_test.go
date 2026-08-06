@@ -24,6 +24,19 @@ func newTestBunkerScraper() *Scraper {
 	return scraper
 }
 
+func TestParseBunkerRejectsOversizedHTML(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, strings.Repeat("x", 32<<20+1))
+	}))
+	defer ts.Close()
+
+	scraper := newTestBunkerScraper()
+	scraper.baseURL = ts.URL
+	if _, err := scraper.Parse(ts.URL); err == nil {
+		t.Fatal("expected oversized HTML to fail parsing")
+	}
+}
+
 func TestParseBunkerAlbum(t *testing.T) {
 	var apiRequests, signRequests int32
 

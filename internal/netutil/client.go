@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -38,7 +39,7 @@ func GetJSON(ctx context.Context, client *http.Client, url, userAgent string, ta
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return &HTTPStatusError{StatusCode: resp.StatusCode, URL: url}
 	}
-	if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 10<<20)).Decode(target); err != nil {
 		return fmt.Errorf("decode response: %w", err)
 	}
 	return nil
