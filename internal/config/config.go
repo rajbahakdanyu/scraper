@@ -67,8 +67,8 @@ func (c *Config) HasFilters() bool {
 	return len(c.Include) > 0 || len(c.Exclude) > 0 || c.MinSize != "" || c.MaxSize != ""
 }
 
-func (c *Config) MinSizeBytes() int64    { return c.minSizeBytes }
-func (c *Config) MaxSizeBytes() int64    { return c.maxSizeBytes }
+func (c *Config) MinSizeBytes() int64     { return c.minSizeBytes }
+func (c *Config) MaxSizeBytes() int64     { return c.maxSizeBytes }
 func (c *Config) SetMinSizeBytes(n int64) { c.minSizeBytes = n }
 func (c *Config) SetMaxSizeBytes(n int64) { c.maxSizeBytes = n }
 
