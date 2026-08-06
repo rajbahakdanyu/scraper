@@ -619,6 +619,10 @@ func runBatchJSON(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, dest
 // runDryRunJSON scrapes targetURL and prints a single JSON document with
 // item metadata — no downloading.
 func runDryRunJSON(scraper model.Scraper, targetURL, siteName string, out io.Writer) error {
+	return runDryRunJSONWithDiskCheck(scraper, targetURL, siteName, out, "", false)
+}
+
+func runDryRunJSONWithDiskCheck(scraper model.Scraper, targetURL, siteName string, out io.Writer, outputDir string, diskCheck bool) error {
 	items, err := scraper.Parse(targetURL)
 	if err != nil && len(items) == 0 {
 		data, _ := json.Marshal(map[string]interface{}{
@@ -633,6 +637,7 @@ func runDryRunJSON(scraper model.Scraper, targetURL, siteName string, out io.Wri
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
 	}
+	runDiskCheck(items, outputDir, diskCheck)
 
 	var jsonItems []model.JSONItem
 	var totalBytes int64

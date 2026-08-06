@@ -932,3 +932,11 @@ func TestLoadGlobalConfigNotifyOverride(t *testing.T) {
 		t.Error("expected CLI false to override config true")
 	}
 }
+
+func TestDiskWarningIncludesUnknownItems(t *testing.T) {
+	got := diskWarning(3*1024*1024, 1024*1024, 2)
+	want := "disk: 1.0M free, 3.0M needed (2.0M short) (2 items with unknown size)"
+	if got != want {
+		t.Fatalf("diskWarning() = %q, want %q", got, want)
+	}
+}

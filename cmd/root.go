@@ -589,9 +589,9 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 
 	if opts.dryRun {
 		if opts.json {
-			return runDryRunJSON(scraper, targetURL, siteName, os.Stdout)
+			return runDryRunJSONWithDiskCheck(scraper, targetURL, siteName, os.Stdout, cfg.OutputDir, cfg.DiskCheck)
 		}
-		return runDryRun(scraper, targetURL)
+		return runDryRunWithDiskCheck(scraper, targetURL, cfg.OutputDir, cfg.DiskCheck)
 	}
 	rateLimitBytesPerSec, err := config.ParseRateLimit(cfg.RateLimit)
 	if err != nil {
@@ -649,28 +649,7 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 			}
 		}
 
-		if cfg.DiskCheck && !opts.dryRun {
-			var total int64
-			unknown := 0
-			for _, it := range items {
-				if it.Size > 0 {
-					total += it.Size
-				} else {
-					unknown++
-				}
-			}
-			if total > 0 {
-				if free, err := disk.FreeSpace(cfg.OutputDir); err == nil && free < total {
-					short := total - free
-					msg := fmt.Sprintf("disk: %s free, %s needed (%s short)",
-						disk.FormatBytes(free), disk.FormatBytes(total), disk.FormatBytes(short))
-					if unknown > 0 {
-						msg += fmt.Sprintf(" (%d items with unknown size)", unknown)
-					}
-					fmt.Fprintln(os.Stderr, msg)
-				}
-			}
-		}
+		runDiskCheck(items, cfg.OutputDir, cfg.DiskCheck)
 
 		return items, nil
 	}
@@ -683,7 +662,7 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 	if opts.json {
 		err := runJSON(dl, scraperFn, cfg.OutputDir, slug, siteName, targetURL, cfg.Quality, cfg.AudioOnly, os.Stdout)
 		if cfg.Notify {
-			tryNotify(cfg, "Downloads complete")
+			tryNotify(cfg, "Download complete")
 		}
 		return err
 	}
@@ -691,7 +670,7 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 	if opts.noTui || !term.IsTerminal(int(os.Stdout.Fd())) {
 		err := runPlain(dl, scraperFn, cfg.OutputDir, slug, os.Stdout)
 		if cfg.Notify {
-			tryNotify(cfg, "Downloads complete")
+			tryNotify(cfg, "Download complete")
 		}
 		return err
 	}
@@ -706,7 +685,7 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 
 	_, err = p.Run()
 	if cfg.Notify {
-		tryNotify(cfg, "Downloads complete")
+		tryNotify(cfg, "Download complete")
 	}
 	return err
 }
@@ -805,7 +784,7 @@ func runBatch(opts globalOptions, urls []string) error {
 					allErrs = append(allErrs, sitErr)
 					continue
 				}
-				if jsonErr := runDryRunJSON(reg[site], u, site, os.Stdout); jsonErr != nil {
+				if jsonErr := runDryRunJSONWithDiskCheck(reg[site], u, site, os.Stdout, cfg.OutputDir, cfg.DiskCheck); jsonErr != nil {
 					allErrs = append(allErrs, jsonErr)
 				}
 			}
@@ -818,7 +797,7 @@ func runBatch(opts globalOptions, urls []string) error {
 				errs = append(errs, sitErr)
 				continue
 			}
-			if dryErr := runDryRun(reg[site], u); dryErr != nil {
+			if dryErr := runDryRunWithDiskCheck(reg[site], u, cfg.OutputDir, cfg.DiskCheck); dryErr != nil {
 				errs = append(errs, dryErr)
 			}
 		}
@@ -913,14 +892,17 @@ func runBatch(opts globalOptions, urls []string) error {
 		}
 	}
 
-	if cfg.HasFilters() {
+	if cfg.HasFilters() || cfg.DiskCheck {
 		for i := range dashAlbums {
 			dashAlbums[i].Scraper = &filterScraper{
-				inner:   dashAlbums[i].Scraper,
-				include: cfg.Include,
-				exclude: cfg.Exclude,
-				minSize: cfg.MinSizeBytes(),
-				maxSize: cfg.MaxSizeBytes(),
+				inner:     dashAlbums[i].Scraper,
+				include:   cfg.Include,
+				exclude:   cfg.Exclude,
+				minSize:   cfg.MinSizeBytes(),
+				maxSize:   cfg.MaxSizeBytes(),
+				diskCheck: cfg.DiskCheck,
+				outputDir: cfg.OutputDir,
+				filtering: cfg.HasFilters(),
 			}
 		}
 	}
@@ -928,7 +910,7 @@ func runBatch(opts globalOptions, urls []string) error {
 	if opts.json {
 		err := runBatchJSON(dl, dashAlbums, cfg.OutputDir, cfg.Quality, cfg.AudioOnly, os.Stdout)
 		if cfg.Notify {
-			tryNotify(cfg, "Downloads complete")
+			tryNotify(cfg, "Download complete")
 		}
 		return err
 	}
@@ -936,7 +918,7 @@ func runBatch(opts globalOptions, urls []string) error {
 	if opts.noTui || !term.IsTerminal(int(os.Stdout.Fd())) {
 		err := runBatchPlain(dl, dashAlbums, cfg.OutputDir, os.Stdout)
 		if cfg.Notify {
-			tryNotify(cfg, "Downloads complete")
+			tryNotify(cfg, "Download complete")
 		}
 		return err
 	}
@@ -948,7 +930,7 @@ func runBatch(opts globalOptions, urls []string) error {
 
 	_, err = p.Run()
 	if cfg.Notify {
-		tryNotify(cfg, "Downloads complete")
+		tryNotify(cfg, "Download complete")
 	}
 	return err
 }
@@ -956,6 +938,10 @@ func runBatch(opts globalOptions, urls []string) error {
 // runDryRun scrapes targetURL and prints the item count and total size
 // without downloading or writing anything to disk.
 func runDryRun(scraper model.Scraper, targetURL string) error {
+	return runDryRunWithDiskCheck(scraper, targetURL, "", false)
+}
+
+func runDryRunWithDiskCheck(scraper model.Scraper, targetURL, outputDir string, diskCheck bool) error {
 	fmt.Printf("Scraping %s...\n", targetURL)
 
 	items, err := scraper.Parse(targetURL)
@@ -969,6 +955,7 @@ func runDryRun(scraper model.Scraper, targetURL string) error {
 		fmt.Println("No items found.")
 		return nil
 	}
+	runDiskCheck(items, outputDir, diskCheck)
 
 	var totalSize int64
 	var unknownSize int
@@ -1000,6 +987,10 @@ type filterScraper struct {
 	inner            model.Scraper
 	include, exclude []string
 	minSize, maxSize int64
+	diskCheck        bool
+	outputDir        string
+	diskChecked      bool
+	filtering        bool
 }
 
 func (f *filterScraper) Name() string { return f.inner.Name() }
@@ -1009,12 +1000,51 @@ func (f *filterScraper) Parse(url string) ([]model.MediaItem, error) {
 	if err != nil {
 		return nil, err
 	}
-	filtered, summary := model.FilterItems(items, f.include, f.exclude, f.minSize, f.maxSize)
-	fmt.Fprintf(os.Stderr, "filters: %s\n", summary)
-	if len(filtered) == 0 {
-		fmt.Fprintln(os.Stderr, "No items matched filters.")
+	filtered := items
+	if f.filtering || len(f.include) > 0 || len(f.exclude) > 0 || f.minSize > 0 || f.maxSize > 0 {
+		var summary model.FilterSummary
+		filtered, summary = model.FilterItems(items, f.include, f.exclude, f.minSize, f.maxSize)
+		fmt.Fprintf(os.Stderr, "filters: %s\n", summary)
+		if len(filtered) == 0 {
+			fmt.Fprintln(os.Stderr, "No items matched filters.")
+		}
+	}
+	if f.diskCheck && !f.diskChecked {
+		f.diskChecked = true
+		runDiskCheck(filtered, f.outputDir, true)
 	}
 	return filtered, nil
+}
+
+func runDiskCheck(items []model.MediaItem, outputDir string, diskCheck bool) {
+	if !diskCheck {
+		return
+	}
+	var total int64
+	unknown := 0
+	for _, it := range items {
+		if it.Size > 0 {
+			total += it.Size
+		} else {
+			unknown++
+		}
+	}
+	if total == 0 {
+		return
+	}
+	free, err := disk.FreeSpace(outputDir)
+	if err == nil && free < total {
+		fmt.Fprintln(os.Stderr, diskWarning(total, free, unknown))
+	}
+}
+
+func diskWarning(total, free int64, unknown int) string {
+	msg := fmt.Sprintf("disk: %s free, %s needed (%s short)",
+		disk.FormatBytes(free), disk.FormatBytes(total), disk.FormatBytes(total-free))
+	if unknown > 0 {
+		msg += fmt.Sprintf(" (%d items with unknown size)", unknown)
+	}
+	return msg
 }
 
 func tryNotify(cfg *config.Config, summary string) {
