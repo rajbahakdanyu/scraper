@@ -175,7 +175,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 		cancel()
 		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled})
 		d.wg.Done()
-		return fmt.Errorf("download cancelled: %s", item.URL)
+		return &model.CancelledError{URL: item.URL}
 	}
 	d.cancelMap[item.Key()] = cancel
 	d.mu.Unlock()
@@ -192,7 +192,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 		defer func() { <-d.sem }()
 	case <-ctx.Done():
 		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled})
-		return fmt.Errorf("download cancelled: %s", item.URL)
+		return &model.CancelledError{URL: item.URL}
 	}
 
 	filename := fileutil.SanitizeFilename(item.Title)
@@ -265,7 +265,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 			select {
 			case <-ctx.Done():
 				d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled})
-				return fmt.Errorf("download cancelled: %s", item.URL)
+				return &model.CancelledError{URL: item.URL}
 			default:
 			}
 			if err := d.sleeper.SleepCtx(ctx, netutil.BackoffWithJitter(retryBaseDelay, attempt)); err != nil {
@@ -340,7 +340,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 
 	if ctx.Err() != nil {
 		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled})
-		return fmt.Errorf("download cancelled: %s", item.URL)
+		return &model.CancelledError{URL: item.URL}
 	}
 
 	var cleanupErr error

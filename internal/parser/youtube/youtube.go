@@ -912,7 +912,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 		cancel()
 		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled, Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
 		d.wg.Done()
-		return fmt.Errorf("download cancelled: %s", item.URL)
+		return &model.CancelledError{URL: item.URL}
 	}
 	d.cancelMap[item.Key()] = cancel
 	d.mu.Unlock()
@@ -929,7 +929,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 		defer func() { <-d.sem }()
 	case <-ctx.Done():
 		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled, Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
-		return fmt.Errorf("download cancelled: %s", item.URL)
+		return &model.CancelledError{URL: item.URL}
 	}
 
 	d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusDownloading, Start: time.Now(), Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
@@ -952,7 +952,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 		return nil
 	case ctx.Err() != nil:
 		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled, Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
-		return fmt.Errorf("download cancelled: %s", item.URL)
+		return &model.CancelledError{URL: item.URL}
 	default:
 		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed, Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
 		return err

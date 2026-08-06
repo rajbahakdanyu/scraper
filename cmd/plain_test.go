@@ -54,7 +54,7 @@ func (f *fakePlainDownloader) Download(item model.MediaItem, dest string) error 
 	f.mu.Unlock()
 	if block {
 		<-f.shutdownCh
-		return fmt.Errorf("download cancelled: %s", item.URL)
+		return &model.CancelledError{URL: item.URL}
 	}
 	for _, evt := range f.scripted[item.URL] {
 		evt.Item = item

@@ -418,7 +418,7 @@ func runJSON(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error)
 		realItems++
 		path := paths[item.Key()]
 		if errs[i] != nil {
-			if isCancelledError(errs[i]) {
+			if model.IsCancelled(errs[i]) {
 				writeJSONLine(out, model.JSONEvent{
 					Event:     "item",
 					Title:     itemTitle(item),
@@ -570,7 +570,7 @@ func runBatchJSON(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, dest
 			path := paths[item.Key()]
 			pathsMu.Unlock()
 			if errs[i] != nil {
-				if isCancelledError(errs[i]) {
+				if model.IsCancelled(errs[i]) {
 					writeJSONLine(out, model.JSONEvent{
 						Event:     "item",
 						Title:     itemTitle(item),
@@ -702,8 +702,4 @@ func itemTitle(item model.MediaItem) string {
 		return item.Title
 	}
 	return item.URL
-}
-
-func isCancelledError(err error) bool {
-	return strings.Contains(err.Error(), "cancelled") || strings.Contains(err.Error(), "canceled")
 }

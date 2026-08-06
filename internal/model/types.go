@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -58,6 +59,15 @@ type PermanentError struct{ Err error }
 
 func (e *PermanentError) Error() string { return e.Err.Error() }
 func (e *PermanentError) Unwrap() error { return e.Err }
+
+type CancelledError struct{ URL string }
+
+func (e *CancelledError) Error() string { return "download cancelled: " + e.URL }
+
+func IsCancelled(err error) bool {
+	var ce *CancelledError
+	return errors.As(err, &ce)
+}
 
 func (m MediaItem) Key() string {
 	if m.ID != "" {

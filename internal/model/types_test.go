@@ -48,6 +48,33 @@ func TestPermanentError(t *testing.T) {
 	}
 }
 
+func TestCancelledError(t *testing.T) {
+	err := &CancelledError{URL: "https://example.com/video.mp4"}
+	if got, want := err.Error(), "download cancelled: https://example.com/video.mp4"; got != want {
+		t.Fatalf("CancelledError.Error() = %q, want %q", got, want)
+	}
+}
+
+func TestIsCancelled(t *testing.T) {
+	base := &CancelledError{URL: "https://example.com/video.mp4"}
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "CancelledError", err: base, want: true},
+		{name: "ordinary error", err: fmt.Errorf("download cancelled: unrelated text"), want: false},
+		{name: "wrapped CancelledError", err: fmt.Errorf("download failed: %w", base), want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsCancelled(tt.err); got != tt.want {
+				t.Errorf("IsCancelled(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestPartialErrorFiltersNilErrors(t *testing.T) {
 	first := errors.New("first")
 	err := NewPartialError("album", []error{nil, first, nil})
