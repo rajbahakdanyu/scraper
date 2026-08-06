@@ -778,7 +778,7 @@ func runBatch(opts globalOptions, urls []string) error {
 		return err
 	}
 
-	reg, err := scraperRegistry(cfg.Proxy, cfg.ParsedCookies())
+	reg, err := batchScraperRegistry(cfg.Proxy, cfg.ParsedCookies())
 	if err != nil {
 		return err
 	}
@@ -838,18 +838,8 @@ func runBatch(opts globalOptions, urls []string) error {
 	// the incremental scrape chain can call the right parser.
 	dashAlbums := make([]dashboard.DashAlbumURL, 0, len(urls))
 	if hasYouTube {
-		scraper := youtube.NewYouTubeScraper()
-		ytDl, err := youtube.NewDownloaderWithConfig(scraper, youtube.DownloaderConfig{
-			Concurrency:  cfg.ConcurrentDownloads,
-			Timeout:      cfg.Timeout,
-			UserAgent:    cfg.UserAgent,
-			RateLimit:    rateLimitBytesPerSec,
-			SkipChecksum: cfg.SkipChecksums,
-			ProxyURL:     cfg.Proxy,
-			Cookies:      cfg.ParsedCookies(),
-			Quality:      cfg.Quality,
-			AudioOnly:    cfg.AudioOnly,
-		})
+		scraper := batchYouTubeScraper()
+		ytDl, err := batchYouTubeDownloader(scraper, cfg, rateLimitBytesPerSec)
 		if err != nil {
 			return fmt.Errorf("youtube downloader: %w", err)
 		}
@@ -870,18 +860,10 @@ func runBatch(opts globalOptions, urls []string) error {
 			})
 		}
 	} else {
-		genericDl, err := downloader.NewDownloaderWithConfig(
-			cfg.ConcurrentDownloads,
-			cfg.Timeout,
-			cfg.UserAgent,
-			cfg.Proxy,
-			cfg.ParsedCookies(),
-		)
+		genericDl, err := batchGenericDownloader(cfg, rateLimitBytesPerSec)
 		if err != nil {
 			return fmt.Errorf("downloader: %w", err)
 		}
-		genericDl.SetRateLimit(rateLimitBytesPerSec)
-		genericDl.SetSkipChecksums(cfg.SkipChecksums)
 		dl = genericDl
 		defer dl.Shutdown()
 		for _, u := range urls {
@@ -943,6 +925,46 @@ func runBatch(opts globalOptions, urls []string) error {
 		tryNotify(cfg, "Download complete")
 	}
 	return err
+}
+
+var batchScraperRegistry = scraperRegistry
+
+var batchYouTubeScraper = func() model.Scraper {
+	return youtube.NewYouTubeScraper()
+}
+
+var batchYouTubeDownloader = func(scraper model.Scraper, cfg *config.Config, rateLimitBytesPerSec int64) (dashboard.Downloader, error) {
+	ytScraper, ok := scraper.(*youtube.Scraper)
+	if !ok {
+		return nil, fmt.Errorf("unexpected YouTube scraper type %T", scraper)
+	}
+	return youtube.NewDownloaderWithConfig(ytScraper, youtube.DownloaderConfig{
+		Concurrency:  cfg.ConcurrentDownloads,
+		Timeout:      cfg.Timeout,
+		UserAgent:    cfg.UserAgent,
+		RateLimit:    rateLimitBytesPerSec,
+		SkipChecksum: cfg.SkipChecksums,
+		ProxyURL:     cfg.Proxy,
+		Cookies:      cfg.ParsedCookies(),
+		Quality:      cfg.Quality,
+		AudioOnly:    cfg.AudioOnly,
+	})
+}
+
+var batchGenericDownloader = func(cfg *config.Config, rateLimitBytesPerSec int64) (dashboard.Downloader, error) {
+	dl, err := downloader.NewDownloaderWithConfig(
+		cfg.ConcurrentDownloads,
+		cfg.Timeout,
+		cfg.UserAgent,
+		cfg.Proxy,
+		cfg.ParsedCookies(),
+	)
+	if err != nil {
+		return nil, err
+	}
+	dl.SetRateLimit(rateLimitBytesPerSec)
+	dl.SetSkipChecksums(cfg.SkipChecksums)
+	return dl, nil
 }
 
 // runDryRun scrapes targetURL and prints the item count and total size

@@ -13,8 +13,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/rajbahakdanyu/scraper/internal/config"
 	"github.com/rajbahakdanyu/scraper/internal/model"
 	"github.com/rajbahakdanyu/scraper/internal/parser/youtube"
+	"github.com/rajbahakdanyu/scraper/internal/ui/dashboard"
 )
 
 // fakeDryRunScraper is a minimal model.Scraper for exercising runDryRun
@@ -542,6 +544,113 @@ func TestRunDryRunJSONEmptyItems(t *testing.T) {
 	if !strings.Contains(out, `"dryRun"`) && !strings.Contains(out, `"summary"`) {
 		t.Errorf("expected dry run JSON with summary, got: %q", out)
 	}
+}
+
+func TestRunBatchRejectsMixedYouTubeAndGenericSites(t *testing.T) {
+	restoreBatchFactories(t)
+	batchScraperRegistry = func(string, []*http.Cookie) (map[string]model.Scraper, error) {
+		return map[string]model.Scraper{
+			"youtube":   &fakeDryRunScraper{},
+			"cyberdrop": &fakeDryRunScraper{},
+		}, nil
+	}
+
+	err := runBatch(globalOptions{configPath: filepath.Join(t.TempDir(), "missing.yaml")}, []string{
+		"https://youtube.com/watch?v=abc",
+		"https://cyberdrop.cr/a/album",
+	})
+	if err == nil || !strings.Contains(err.Error(), "same site type") {
+		t.Fatalf("expected mixed-site rejection, got %v", err)
+	}
+}
+
+func TestRunBatchDryRunJSONLoopsOverURLs(t *testing.T) {
+	restoreBatchFactories(t)
+	fake := &fakeDryRunScraper{items: []model.MediaItem{{URL: "https://example.com/item", Title: "item"}}}
+	batchScraperRegistry = func(string, []*http.Cookie) (map[string]model.Scraper, error) {
+		return map[string]model.Scraper{"cyberdrop": fake}, nil
+	}
+
+	var err error
+	out := captureStdout(func() {
+		err = runBatch(globalOptions{
+			configPath: filepath.Join(t.TempDir(), "missing.yaml"),
+			dryRun:     true,
+			json:       true,
+		}, []string{
+			"https://cyberdrop.cr/a/one",
+			"https://cyberdrop.cr/a/two",
+		})
+	})
+	if err != nil {
+		t.Fatalf("expected dry-run batch to succeed, got %v", err)
+	}
+	if strings.Count(out, `"dryRun"`) != 2 {
+		t.Fatalf("expected one JSON dry-run document per URL, got %d:\n%s", strings.Count(out, `"dryRun"`), out)
+	}
+	if !strings.Contains(out, "one") || !strings.Contains(out, "two") || !strings.Contains(out, "item") {
+		t.Fatalf("expected both URLs and item output, got %q", out)
+	}
+}
+
+func TestRunBatchSelectsDownloaderBySiteAndWiresDestinations(t *testing.T) {
+	restoreBatchFactories(t)
+	genericScraper := &fakeDryRunScraper{items: []model.MediaItem{{URL: "https://cyberdrop.cr/item", Title: "generic"}}}
+	youtubeScraper := &fakeDryRunScraper{items: []model.MediaItem{{URL: "https://youtube.com/item", Title: "youtube"}}}
+	batchScraperRegistry = func(string, []*http.Cookie) (map[string]model.Scraper, error) {
+		return map[string]model.Scraper{"cyberdrop": genericScraper}, nil
+	}
+
+	var genericCalls, youtubeCalls int
+	var genericDL, youtubeDL *fakePlainDownloader
+	batchGenericDownloader = func(*config.Config, int64) (dashboard.Downloader, error) {
+		genericCalls++
+		genericDL = newFakePlainDownloader()
+		return genericDL, nil
+	}
+	batchYouTubeScraper = func() model.Scraper { return youtubeScraper }
+	batchYouTubeDownloader = func(model.Scraper, *config.Config, int64) (dashboard.Downloader, error) {
+		youtubeCalls++
+		youtubeDL = newFakePlainDownloader()
+		return youtubeDL, nil
+	}
+
+	base := t.TempDir()
+	if err := runBatch(globalOptions{configPath: filepath.Join(t.TempDir(), "missing.yaml"), noTui: true}, []string{"https://cyberdrop.cr/a/album"}); err != nil {
+		t.Fatalf("generic batch failed: %v", err)
+	}
+	if genericCalls != 1 || youtubeCalls != 0 {
+		t.Fatalf("generic batch selected wrong downloader: generic=%d youtube=%d", genericCalls, youtubeCalls)
+	}
+	if len(genericDL.dests) != 1 || !strings.HasSuffix(genericDL.dests[0], filepath.Join("album")) {
+		t.Fatalf("generic batch destination = %v, want album slug under output", genericDL.dests)
+	}
+
+	batchScraperRegistry = func(string, []*http.Cookie) (map[string]model.Scraper, error) {
+		return map[string]model.Scraper{"youtube": youtubeScraper}, nil
+	}
+	if err := runBatch(globalOptions{configPath: filepath.Join(t.TempDir(), "missing.yaml"), noTui: true, output: base, outputSet: true}, []string{"https://youtube.com/watch?v=abc"}); err != nil {
+		t.Fatalf("youtube batch failed: %v", err)
+	}
+	if youtubeCalls != 1 || genericCalls != 1 {
+		t.Fatalf("youtube batch selected wrong downloader: generic=%d youtube=%d", genericCalls, youtubeCalls)
+	}
+	if len(youtubeDL.dests) != 1 || !strings.HasSuffix(youtubeDL.dests[0], filepath.Join("watch")) {
+		t.Fatalf("youtube batch destination = %v, want watch slug under output", youtubeDL.dests)
+	}
+}
+
+func restoreBatchFactories(t *testing.T) {
+	oldRegistry := batchScraperRegistry
+	oldGeneric := batchGenericDownloader
+	oldYouTubeScraper := batchYouTubeScraper
+	oldYouTube := batchYouTubeDownloader
+	t.Cleanup(func() {
+		batchScraperRegistry = oldRegistry
+		batchGenericDownloader = oldGeneric
+		batchYouTubeScraper = oldYouTubeScraper
+		batchYouTubeDownloader = oldYouTube
+	})
 }
 
 func TestNewRootCmdHasProxyFlag(t *testing.T) {

@@ -769,3 +769,73 @@ func TestRunBatchJSONWithFailedAlbum(t *testing.T) {
 		t.Errorf("expected album_error event, got:\n%s", buf.String())
 	}
 }
+
+func TestRunBatchPlainPrintsAlbumSections(t *testing.T) {
+	dl := newFakePlainDownloader()
+	scraper := &fakeBatchJSONScraper{items: []model.MediaItem{{URL: "https://example.com/item", Title: "item"}}}
+	albums := []dashboard.DashAlbumURL{
+		{URL: "https://example.com/one", Slug: "one", Dest: t.TempDir(), Scraper: scraper},
+		{URL: "https://example.com/two", Slug: "two", Dest: t.TempDir(), Scraper: scraper},
+	}
+
+	var out bytes.Buffer
+	if err := runBatchPlain(dl, albums, t.TempDir(), &out); err != nil {
+		t.Fatalf("runBatchPlain failed: %v", err)
+	}
+	for _, slug := range []string{"[one]", "[two]"} {
+		if !strings.Contains(out.String(), slug) {
+			t.Errorf("expected section header %q, got:\n%s", slug, out.String())
+		}
+	}
+}
+
+func TestRunBatchPlainReportsScrapeFailures(t *testing.T) {
+	dl := newFakePlainDownloader()
+	scrapeErr := errors.New("parse error")
+	albums := []dashboard.DashAlbumURL{{
+		URL:     "https://example.com/fail",
+		Slug:    "fail",
+		Dest:    t.TempDir(),
+		Scraper: &fakeBatchJSONScraper{err: scrapeErr},
+	}}
+
+	var out bytes.Buffer
+	err := runBatchPlain(dl, albums, t.TempDir(), &out)
+	if err == nil {
+		t.Fatal("expected a partial batch error")
+	}
+	if !strings.Contains(out.String(), "failed: parse error") {
+		t.Errorf("expected per-album scrape failure line, got:\n%s", out.String())
+	}
+	var partial *model.PartialError
+	if !errors.As(err, &partial) || len(partial.Errors) != 1 || !errors.Is(partial, scrapeErr) {
+		t.Fatalf("expected partial error containing scrape error, got %v", err)
+	}
+}
+
+func TestRunBatchPlainReturnsPartialErrorAfterMixedAlbumResults(t *testing.T) {
+	dl := newFakePlainDownloader()
+	scrapeErr := errors.New("second album failed")
+	albums := []dashboard.DashAlbumURL{
+		{
+			URL:     "https://example.com/good",
+			Slug:    "good",
+			Dest:    t.TempDir(),
+			Scraper: &fakeBatchJSONScraper{items: []model.MediaItem{{URL: "https://example.com/item", Title: "item"}}},
+		},
+		{URL: "https://example.com/bad", Slug: "bad", Dest: t.TempDir(), Scraper: &fakeBatchJSONScraper{err: scrapeErr}},
+	}
+
+	var out bytes.Buffer
+	err := runBatchPlain(dl, albums, t.TempDir(), &out)
+	if err == nil {
+		t.Fatal("expected a partial batch error")
+	}
+	if !strings.Contains(out.String(), "[good]") || !strings.Contains(out.String(), "[bad]") {
+		t.Fatalf("expected both album sections, got:\n%s", out.String())
+	}
+	var partial *model.PartialError
+	if !errors.As(err, &partial) || len(partial.Errors) != 1 || !errors.Is(partial, scrapeErr) {
+		t.Fatalf("expected one scrape failure in partial error, got %v", err)
+	}
+}
