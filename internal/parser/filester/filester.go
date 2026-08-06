@@ -23,6 +23,15 @@ import (
 
 const defaultBaseURL = "https://filester.sh"
 
+// Sleeper is a test-injectable alternative to time.Sleep.
+type Sleeper interface {
+	Sleep(d time.Duration)
+}
+
+type realSleeper struct{}
+
+func (realSleeper) Sleep(d time.Duration) { time.Sleep(d) }
+
 // defaultCDNURLs mirrors the CDN_URLS list filester's own /js/file_dl.js
 // picks a random entry from when a download token response doesn't include
 // its own "server" field.
@@ -39,6 +48,7 @@ type Scraper struct {
 	userAgent string
 	baseURL   string
 	cdnURLs   []string
+	sleeper   Sleeper
 }
 
 // NewFilesterScraper creates a new Filester scraper using the default HTTP client.
@@ -49,6 +59,7 @@ func NewFilesterScraper() *Scraper {
 		userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
 		baseURL:   defaultBaseURL,
 		cdnURLs:   defaultCDNURLs,
+		sleeper:   realSleeper{},
 	}
 }
 
@@ -64,8 +75,13 @@ func NewFilesterScraperWithProxy(proxyURL string) (*Scraper, error) {
 		userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
 		baseURL:   defaultBaseURL,
 		cdnURLs:   defaultCDNURLs,
+		sleeper:   realSleeper{},
 	}, nil
 }
+
+// SetSleeper replaces the delay implementation. Call this before parsing,
+// not concurrently with it.
+func (s *Scraper) SetSleeper(sleeper Sleeper) { s.sleeper = sleeper }
 
 func (s *Scraper) SetCookies(cookies []*http.Cookie) {
 	s.client = netutil.WithCookies(s.client, cookies)
@@ -171,7 +187,7 @@ func (s *Scraper) parseFolder(id string) ([]model.MediaItem, error) {
 
 	for page := 1; page <= total; page++ {
 		if page > 1 {
-			time.Sleep(pageFetchDelay)
+			s.sleeper.Sleep(pageFetchDelay)
 		}
 
 		entries, pageTotal, err := s.fetchFolderPage(id, page)
@@ -268,7 +284,7 @@ func (s *Scraper) fetchFolderPage(id string, page int) (entries []folderEntry, p
 	}
 
 	for attempt := 1; attempt < maxPageRetries; attempt++ {
-		time.Sleep(netutil.BackoffWithJitter(pageRetryBaseDelay, attempt-1))
+		s.sleeper.Sleep(netutil.BackoffWithJitter(pageRetryBaseDelay, attempt-1))
 
 		doc, ferr := s.fetchDoc(pageURL)
 		if ferr != nil {
@@ -334,8 +350,9 @@ func (s *Scraper) resolveFile(ctx context.Context, slug, knownName string) (mode
 			select {
 			case <-ctx.Done():
 				return model.MediaItem{}, ctx.Err()
-			case <-time.After(netutil.BackoffWithJitter(resolveRetryBaseDelay, attempt-1)):
+			default:
 			}
+			s.sleeper.Sleep(netutil.BackoffWithJitter(resolveRetryBaseDelay, attempt-1))
 		}
 		item, err := s.resolveFileOnce(ctx, slug, knownName)
 		if err == nil {

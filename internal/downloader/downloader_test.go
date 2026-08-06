@@ -21,9 +21,14 @@ import (
 	"github.com/rajbahakdanyu/scraper/internal/netutil"
 )
 
+type noopSleeper struct{}
+
+func (noopSleeper) Sleep(time.Duration) {}
+
 func newTestDownloader(concurrency int, timeout time.Duration, userAgent string) *Downloader {
 	dl, _ := NewDownloaderWithConfig(concurrency, timeout, userAgent, "", nil)
 	dl.client = &http.Client{}
+	dl.SetSleeper(noopSleeper{})
 	return dl
 }
 

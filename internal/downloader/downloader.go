@@ -34,6 +34,15 @@ const (
 	minRateLimitBurst = 32 * 1024
 )
 
+// Sleeper is a test-injectable alternative to time.Sleep.
+type Sleeper interface {
+	Sleep(d time.Duration)
+}
+
+type realSleeper struct{}
+
+func (realSleeper) Sleep(d time.Duration) { time.Sleep(d) }
+
 // Downloader manages concurrent media downloads with progress tracking,
 // cancellation, retry, and atomic file writes.
 type Downloader struct {
@@ -48,6 +57,7 @@ type Downloader struct {
 	limiter       *rate.Limiter
 	skipChecksums bool
 	paths         *fileutil.PathAllocator
+	sleeper       Sleeper
 	// wg tracks in-flight Download calls. Shutdown closes the progress
 	// channel only after wg drains, so a sendProgress can never hit a
 	// closed channel. shuttingDown (guarded by mu) makes post-Shutdown
@@ -87,8 +97,13 @@ func NewDownloaderWithConfig(concurrency int, timeout time.Duration, userAgent, 
 		cancelled: make(map[string]struct{}),
 		sem:       make(chan struct{}, concurrency),
 		paths:     fileutil.NewPathAllocator(),
+		sleeper:   realSleeper{},
 	}, nil
 }
+
+// SetSleeper replaces the delay implementation. Call this before starting
+// downloads, not concurrently with them.
+func (d *Downloader) SetSleeper(s Sleeper) { d.sleeper = s }
 
 func (d *Downloader) Prepare(item model.MediaItem) {
 	d.mu.Lock()
@@ -236,8 +251,9 @@ func (d *Downloader) Download(item model.MediaItem, dest string) error {
 			case <-ctx.Done():
 				d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled})
 				return fmt.Errorf("download cancelled: %s", item.URL)
-			case <-time.After(netutil.BackoffWithJitter(retryBaseDelay, attempt)):
+			default:
 			}
+			d.sleeper.Sleep(netutil.BackoffWithJitter(retryBaseDelay, attempt))
 		}
 
 		if item.Resolve != nil && resolvedURL == "" {

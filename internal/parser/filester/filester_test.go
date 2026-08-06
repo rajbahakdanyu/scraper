@@ -10,13 +10,19 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/rajbahakdanyu/scraper/internal/model"
 )
 
+type noopSleeper struct{}
+
+func (noopSleeper) Sleep(time.Duration) {}
+
 func newTestFilesterScraper() *Scraper {
 	scraper := NewFilesterScraper()
 	scraper.client = &http.Client{}
+	scraper.SetSleeper(noopSleeper{})
 	return scraper
 }
 
