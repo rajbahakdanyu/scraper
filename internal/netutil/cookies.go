@@ -13,6 +13,9 @@ import (
 )
 
 func ParseNetscapeCookies(path string) ([]*http.Cookie, error) {
+	if fi, err := os.Stat(path); err == nil && fi.Mode().Perm()&0077 != 0 {
+		fmt.Fprintf(os.Stderr, "warning: cookies file %q has group or other permissions (%04o)\n", path, fi.Mode().Perm())
+	}
 	// #nosec G304 -- reading an explicitly user-selected local cookies file is intended behavior.
 	f, err := os.Open(path)
 	if err != nil {

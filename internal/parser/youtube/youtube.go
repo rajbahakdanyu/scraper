@@ -284,7 +284,11 @@ func (s *Scraper) downloadAudioOnly(ctx context.Context, video *ytdl.Video, vide
 	if audioFormat == "mp3" {
 		ext = "mp3"
 	}
-	finalPath := paths.Claim(filepath.Join(dest, fileutil.SanitizeFilename(title)+"."+ext), owner)
+	finalPath := safeOutputPath(dest, title)
+	if ext != "mp4" {
+		finalPath = strings.TrimSuffix(finalPath, filepath.Ext(finalPath)) + "." + ext
+	}
+	finalPath = paths.Claim(finalPath, owner)
 	skip, err := prepareOutput(finalPath, skipChecksums)
 	if err != nil {
 		return err
@@ -320,7 +324,11 @@ func (s *Scraper) downloadStreamDirect(ctx context.Context, video *ytdl.Video, f
 	if strings.Contains(format.MimeType, "webm") {
 		ext = "webm"
 	}
-	finalPath := paths.Claim(filepath.Join(dest, fileutil.SanitizeFilename(title)+"."+ext), owner)
+	finalPath := safeOutputPath(dest, title)
+	if ext != "mp4" {
+		finalPath = strings.TrimSuffix(finalPath, filepath.Ext(finalPath)) + "." + ext
+	}
+	finalPath = paths.Claim(finalPath, owner)
 	skip, err := prepareOutput(finalPath, skipChecksums)
 	if err != nil {
 		return err
@@ -690,7 +698,11 @@ func videoWatchURL(videoID string) string {
 // and the sanitized title happens to start with "-", ffmpeg's argument
 // parser can never misread the muxed output path as a flag.
 func safeOutputPath(dest, title string) string {
-	p := filepath.Join(dest, fileutil.SanitizeFilename(title)+".mp4")
+	filename := fileutil.SanitizeFilename(title)
+	if filepath.Ext(title) == "" {
+		filename += ".mp4"
+	}
+	p := filepath.Join(dest, filename)
 	if abs, err := filepath.Abs(p); err == nil {
 		return abs
 	}

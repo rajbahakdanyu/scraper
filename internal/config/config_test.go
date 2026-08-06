@@ -1,11 +1,32 @@
 package config
 
 import (
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
+
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	fn()
+	_ = w.Close()
+	os.Stderr = old
+	output, err := io.ReadAll(r)
+	_ = r.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(output)
+}
 
 func TestLoadConfig(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -36,6 +57,36 @@ user_agent: TestAgent/1.0
 	}
 	if cfg.UserAgent != "TestAgent/1.0" {
 		t.Errorf("expected TestAgent/1.0, got %s", cfg.UserAgent)
+	}
+}
+
+func TestLoadWarnsForGroupOrOtherReadableConfig(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte("output_dir: /tmp/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	stderr := captureStderr(t, func() {
+		if _, err := Load(configPath); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(stderr, "permissions") {
+		t.Fatalf("expected permissions warning, got %q", stderr)
+	}
+}
+
+func TestLoadDoesNotWarnForPrivateConfig(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte("output_dir: /tmp/test\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	stderr := captureStderr(t, func() {
+		if _, err := Load(configPath); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("expected no permissions warning, got %q", stderr)
 	}
 }
 

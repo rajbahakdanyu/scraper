@@ -1,14 +1,35 @@
 package netutil
 
 import (
+	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
+
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	fn()
+	_ = w.Close()
+	os.Stderr = old
+	output, err := io.ReadAll(r)
+	_ = r.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(output)
+}
 
 func TestParseNetscapeCookiesValid(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "cookies.txt")
@@ -30,6 +51,21 @@ func TestParseNetscapeCookiesValid(t *testing.T) {
 	}
 	if cookies[1].Name != "token" || cookies[1].Value != "xyz789" {
 		t.Errorf("cookie 1: got %s=%s, want token=xyz789", cookies[1].Name, cookies[1].Value)
+	}
+}
+
+func TestParseNetscapeCookiesWarnsForGroupOrOtherReadableFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cookies.txt")
+	if err := os.WriteFile(path, []byte(""), 0644); err != nil {
+		t.Fatal(err)
+	}
+	stderr := captureStderr(t, func() {
+		if _, err := ParseNetscapeCookies(path); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(stderr, "permissions") {
+		t.Fatalf("expected permissions warning, got %q", stderr)
 	}
 }
 

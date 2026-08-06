@@ -26,12 +26,16 @@ func darwinNotify(summary string) error {
 	if _, err := exec.LookPath("osascript"); err != nil {
 		return nil
 	}
-	script := fmt.Sprintf(`display notification %q with title "scraper"`, summary)
+	script := fmt.Sprintf(`display notification %q with title "scraper"`, sanitizeNotificationSummary(summary))
 	cmd := exec.Command("osascript", "-e", script)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("notification: osascript failed: %v (%s)", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+func sanitizeNotificationSummary(summary string) string {
+	return strings.NewReplacer(`"`, `'`, `\`, `'`).Replace(summary)
 }
 
 func linuxNotify(summary string) error {

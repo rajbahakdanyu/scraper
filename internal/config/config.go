@@ -82,6 +82,9 @@ func Load(path string) (*Config, error) {
 	if path == "" {
 		path = getDefaultConfigPath()
 	}
+	if fi, err := os.Stat(path); err == nil && fi.Mode().Perm()&0077 != 0 {
+		fmt.Fprintf(os.Stderr, "warning: config file %q has group or other permissions (%04o)\n", path, fi.Mode().Perm())
+	}
 
 	// #nosec G304 -- reading an explicitly user-selected local config path is intended behavior.
 	data, err := os.ReadFile(path)

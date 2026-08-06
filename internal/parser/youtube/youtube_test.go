@@ -114,6 +114,13 @@ func TestSafeOutputPathHasMP4Extension(t *testing.T) {
 	}
 }
 
+func TestSafeOutputPathDoesNotDuplicateMP4Extension(t *testing.T) {
+	got := safeOutputPath("/tmp/downloads", "My Video.mp4")
+	if filepath.Base(got) != "My Video.mp4" {
+		t.Fatalf("safeOutputPath(...) base = %q, want %q", filepath.Base(got), "My Video.mp4")
+	}
+}
+
 func TestExtractPlaylistID(t *testing.T) {
 	tests := []struct {
 		url  string

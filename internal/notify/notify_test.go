@@ -36,3 +36,16 @@ func TestSendEmptySummary(t *testing.T) {
 		t.Logf("Send with empty summary: %v", err)
 	}
 }
+
+func TestSanitizeNotificationSummary(t *testing.T) {
+	if got := sanitizeNotificationSummary(`Download "complete\now`); got != "Download 'complete'now" {
+		t.Fatalf("sanitized summary = %q", got)
+	}
+}
+
+func TestSanitizeNotificationSummaryLeavesCleanText(t *testing.T) {
+	const summary = "Download complete"
+	if got := sanitizeNotificationSummary(summary); got != summary {
+		t.Fatalf("clean summary changed to %q", got)
+	}
+}
