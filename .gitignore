@@ -19,3 +19,9 @@ go.work.sum
 
 # Superpowers working files
 /.superpowers/
+
+# Release artifacts
+/dist/
+*.part
+*.resume.json
+*.sha256

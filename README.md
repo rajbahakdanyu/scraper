@@ -94,9 +94,9 @@ text lines as items are scraped and downloaded:
 ```
 
 `-j, --json` outputs JSON Lines instead — one JSON event per line
-(`album_start`, `item`, `summary`, `error`); it implies `--no-tui`. Combined
+(`album_start`, `album_error`, `item`, `summary`, `error`); it implies `--no-tui`. Combined
 with `--dry-run`, it emits a single JSON document describing the albums
-(URLs, items, sizes) with no download:
+(URLs, items, sizes) with no download (batch mode emits one document per URL):
 
 ```bash
 ./scraper -j --dry-run https://filester.sh/f/FOLDER_ID
@@ -130,14 +130,15 @@ subfolder named after the album ID:
 ```
 
 Single files (e.g. CyberDrop `/f/` links or Filester `/d/` links) download
-directly to the output directory.
+directly to the output directory (or, in batch mode, into a slug subfolder
+per URL — same as albums).
 
 ### Flags
 
 | Flag             | Default | Description                                  |
 |------------------|---------|-----------------------------------------------|
-| `-u, --url`      | (none)  | Content URL (alternative to positional arg)  |
-| `-o, --output`   | `.`     | Output directory                             |
+| `-u, --url`      | (none)  | Content URL (alternative to positional arg; subcommand-only) |
+| `-o, --output`   | `~/Downloads` | Output directory (config default)                   |
 | `--concurrent`   | `5`     | Maximum concurrent downloads                 |
 | `--config`       | (none)  | Config file path (default: `~/.scraper.yaml`)|
 | `-i, --input-file`| (none) | Read URLs from a file, one per line (batch mode) |
@@ -147,6 +148,15 @@ directly to the output directory.
 | `--no-tui`       | `false` | Disable the terminal UI; print plain text output |
 | `-j, --json`     | `false` | Output JSON Lines (one event per line); implies `--no-tui` |
 | `--proxy`        | (none)  | HTTP/S proxy URL for all requests (e.g. `http://proxy:8080`) |
+| `--cookies`      | (none)  | Netscape-format cookies file for HTTP requests |
+| `--quality`      | (auto)  | Maximum YouTube quality (`2160p`, `1080p`, `720p`, `480p`, `360p`) |
+| `--audio-only`   | `false` | Download audio tracks only (no video)                     |
+| `--include`      | (none)  | Glob pattern(s) to filter items (e.g. `*.mp4,*.png`)      |
+| `--exclude`      | (none)  | Glob pattern(s) to exclude items                          |
+| `--min-size`     | (none)  | Minimum file size (e.g. `1K`, `10M`)                      |
+| `--max-size`     | (none)  | Maximum file size                                         |
+| `--disk-check`   | `true`  | Check free space before downloading                       |
+| `--notify`       | `false` | Send desktop notification when download completes         |
 
 Additional subcommands:
 
@@ -170,7 +180,7 @@ source <(./scraper completion zsh)
 | `enter`         | Show the error for a failed item |
 | `r`             | Retry the selected failed item   |
 | `c`             | Cancel the selected item          |
-| `q`, `ctrl+c`   | Quit                              |
+| `q`, `esc`, `ctrl+c` | Quit                           |
 
 ## Configuration
 
@@ -184,6 +194,15 @@ user_agent: "Scraper/1.0"
 rate_limit: 2M
 skip_checksums: false
 proxy: http://proxy:8080
+cookies: ~/.scraper-cookies.txt
+quality: "1080p"
+audio_only: false
+include: ["*.mp4", "*.mkv"]
+exclude: ["*.txt"]
+min_size: "1M"
+max_size: "10G"
+disk_check: true
+notify: false
 ```
 
 CLI flags override config file values. `--proxy`/`proxy` routes every

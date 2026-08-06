@@ -17,6 +17,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          cache: true
 
       - name: Check formatting
         run: |
@@ -35,6 +36,15 @@ jobs:
 
       - name: Build
         run: go build ./...
+
+      - name: Vulnerability check
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+      - name: Module integrity
+        run: |
+          go mod verify
+          go mod tidy
+          git diff --exit-code go.mod go.sum
 
       - name: Test
         run: go test -race ./...
