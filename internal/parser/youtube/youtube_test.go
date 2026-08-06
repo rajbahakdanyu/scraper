@@ -121,6 +121,13 @@ func TestSafeOutputPathDoesNotDuplicateMP4Extension(t *testing.T) {
 	}
 }
 
+func TestSafeOutputPathAddsMP4ForDotContainingTitle(t *testing.T) {
+	got := safeOutputPath("/tmp/downloads", "Mr. Brightside")
+	if !strings.HasSuffix(got, ".mp4") {
+		t.Fatalf("safeOutputPath(...) = %q, want an .mp4 suffix", got)
+	}
+}
+
 func TestExtractPlaylistID(t *testing.T) {
 	tests := []struct {
 		url  string

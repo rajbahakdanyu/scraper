@@ -699,7 +699,7 @@ func videoWatchURL(videoID string) string {
 // parser can never misread the muxed output path as a flag.
 func safeOutputPath(dest, title string) string {
 	filename := fileutil.SanitizeFilename(title)
-	if filepath.Ext(title) == "" {
+	if !strings.HasSuffix(strings.ToLower(title), ".mp4") {
 		filename += ".mp4"
 	}
 	p := filepath.Join(dest, filename)
