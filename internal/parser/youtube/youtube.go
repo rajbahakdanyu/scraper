@@ -53,9 +53,9 @@ func (s *Scraper) Name() string {
 // parameter. Quality is resolved lazily at download time (see
 // selectBestFormats), not here, so parsing a large playlist doesn't have
 // to pre-resolve the formats of every video up front.
-func (s *Scraper) Parse(rawURL string) ([]model.MediaItem, error) {
+func (s *Scraper) Parse(ctx context.Context, rawURL string) ([]model.MediaItem, error) {
 	if ExtractPlaylistID(rawURL) != "" {
-		return s.parsePlaylist(rawURL)
+		return s.parsePlaylist(ctx, rawURL)
 	}
 
 	videoID := s.extractVideoID(rawURL)
@@ -63,7 +63,7 @@ func (s *Scraper) Parse(rawURL string) ([]model.MediaItem, error) {
 		return nil, fmt.Errorf("youtube: could not extract video ID from URL")
 	}
 
-	video, err := s.video.GetVideoContext(context.Background(), videoID)
+	video, err := s.video.GetVideoContext(ctx, videoID)
 	if err != nil {
 		return nil, fmt.Errorf("youtube: failed to fetch video info: %w", err)
 	}
@@ -91,8 +91,8 @@ func (s *Scraper) Parse(rawURL string) ([]model.MediaItem, error) {
 // entries only carry ID/title/author metadata (per GetPlaylistContext's own
 // docs), not format info, so each item's Size is left at 0 (unknown) here;
 // it's known once the video is actually resolved at download time.
-func (s *Scraper) parsePlaylist(rawURL string) ([]model.MediaItem, error) {
-	playlist, err := s.video.GetPlaylistContext(context.Background(), rawURL)
+func (s *Scraper) parsePlaylist(ctx context.Context, rawURL string) ([]model.MediaItem, error) {
+	playlist, err := s.video.GetPlaylistContext(ctx, rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("youtube: failed to fetch playlist info: %w", err)
 	}

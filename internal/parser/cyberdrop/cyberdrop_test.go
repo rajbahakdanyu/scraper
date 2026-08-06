@@ -53,7 +53,7 @@ func TestParseFile(t *testing.T) {
 	scraper := newTestCyberDropScraper()
 	scraper.baseURL = ts.URL
 
-	items, err := scraper.Parse(ts.URL + "/f/T5LPyd5Sa9HkZ")
+	items, err := scraper.Parse(context.Background(), ts.URL+"/f/T5LPyd5Sa9HkZ")
 	if err != nil {
 		t.Fatalf("Parse failed: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestParseFileNotFound(t *testing.T) {
 	scraper := newTestCyberDropScraper()
 	scraper.baseURL = ts.URL
 
-	_, err := scraper.Parse(ts.URL + "/f/missing")
+	_, err := scraper.Parse(context.Background(), ts.URL+"/f/missing")
 	if err == nil {
 		t.Error("expected error for missing file")
 	}
@@ -126,7 +126,7 @@ func TestParseFileRejectsMalformedAuthURL(t *testing.T) {
 
 	scraper := newTestCyberDropScraper()
 	scraper.baseURL = ts.URL
-	if _, err := scraper.Parse(ts.URL + "/f/bad-auth"); err == nil {
+	if _, err := scraper.Parse(context.Background(), ts.URL+"/f/bad-auth"); err == nil {
 		t.Fatal("expected malformed auth_url error")
 	}
 }
@@ -141,7 +141,7 @@ func TestParseFileRejectsPrivateAuthURL(t *testing.T) {
 
 	scraper := newTestCyberDropScraper()
 	scraper.baseURL = ts.URL
-	if _, err := scraper.Parse(ts.URL + "/f/private-auth"); err == nil {
+	if _, err := scraper.Parse(context.Background(), ts.URL+"/f/private-auth"); err == nil {
 		t.Fatal("expected private auth_url to be rejected")
 	}
 }
@@ -185,7 +185,7 @@ func TestParseAlbum(t *testing.T) {
 	scraper := newTestCyberDropScraper()
 	scraper.baseURL = ts.URL
 
-	items, err := scraper.Parse(ts.URL + "/a/abc123")
+	items, err := scraper.Parse(context.Background(), ts.URL+"/a/abc123")
 	if err != nil {
 		t.Fatalf("Parse failed: %v", err)
 	}
@@ -256,7 +256,7 @@ func TestParseAlbumMakesNoPerFileRequests(t *testing.T) {
 	scraper := newTestCyberDropScraper()
 	scraper.baseURL = ts.URL
 
-	items, err := scraper.Parse(ts.URL + "/a/big")
+	items, err := scraper.Parse(context.Background(), ts.URL+"/a/big")
 	if err != nil {
 		t.Fatalf("Parse failed: %v", err)
 	}
@@ -313,7 +313,7 @@ func TestParseAlbumDefersResolutionFailures(t *testing.T) {
 	scraper := newTestCyberDropScraper()
 	scraper.baseURL = ts.URL
 
-	items, err := scraper.Parse(ts.URL + "/a/mixed")
+	items, err := scraper.Parse(context.Background(), ts.URL+"/a/mixed")
 	if err != nil {
 		t.Fatalf("lazy Parse must not fail on deferred resolution errors, got: %v", err)
 	}
@@ -366,7 +366,7 @@ func TestResolve404IsPermanentNotRetried(t *testing.T) {
 	scraper := newTestCyberDropScraper()
 	scraper.baseURL = ts.URL
 
-	items, err := scraper.Parse(ts.URL + "/a/gone")
+	items, err := scraper.Parse(context.Background(), ts.URL+"/a/gone")
 	if err != nil {
 		t.Fatalf("Parse failed: %v", err)
 	}
@@ -410,7 +410,7 @@ func TestResolve500IsTransientNotPermanent(t *testing.T) {
 	scraper := newTestCyberDropScraper()
 	scraper.baseURL = ts.URL
 
-	items, err := scraper.Parse(ts.URL + "/a/blip")
+	items, err := scraper.Parse(context.Background(), ts.URL+"/a/blip")
 	if err != nil {
 		t.Fatalf("Parse failed: %v", err)
 	}
@@ -452,7 +452,7 @@ func TestParseAlbumResolversAllFail(t *testing.T) {
 	scraper := newTestCyberDropScraper()
 	scraper.baseURL = ts.URL
 
-	items, err := scraper.Parse(ts.URL + "/a/dead")
+	items, err := scraper.Parse(context.Background(), ts.URL+"/a/dead")
 	if err != nil {
 		t.Fatalf("lazy Parse returns listed items without resolving them, got: %v", err)
 	}

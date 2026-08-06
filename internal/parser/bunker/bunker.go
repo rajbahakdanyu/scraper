@@ -89,14 +89,14 @@ func permanentIfNotRetryable(signedURL string, err error) (string, error) {
 // file page to get the dl.bunkr.cr link. The final signed CDN download URL
 // (API + signing service) is NOT resolved at parse time — signatures carry
 // an expiry, so each item's Resolve func signs lazily at download time.
-func (s *Scraper) Parse(albumURL string) ([]model.MediaItem, error) {
+func (s *Scraper) Parse(ctx context.Context, albumURL string) ([]model.MediaItem, error) {
 	// Strip query params — ?advanced=1 switches to JS-rendered mode
 	// which doesn't have server-side file links in the HTML.
 	if idx := strings.Index(albumURL, "?"); idx >= 0 {
 		albumURL = albumURL[:idx]
 	}
 
-	doc, err := s.fetchDoc(albumURL)
+	doc, err := s.fetchDoc(ctx, albumURL)
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +127,7 @@ func (s *Scraper) Parse(albumURL string) ([]model.MediaItem, error) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			item, err := s.parseFilePage(u)
+			item, err := s.parseFilePage(ctx, u)
 			items[idx] = item
 			errs[idx] = err
 		}(i, fileURL)
@@ -141,6 +141,9 @@ func (s *Scraper) Parse(albumURL string) ([]model.MediaItem, error) {
 		}
 	}
 
+	if ctx.Err() != nil {
+		return result, ctx.Err()
+	}
 	if len(result) == 0 {
 		return nil, fmt.Errorf("bunker: could not extract any download URLs: %w", model.NewPartialError("bunker album", errs))
 	}
@@ -152,8 +155,8 @@ func (s *Scraper) Parse(albumURL string) ([]model.MediaItem, error) {
 // and the file's title — the stable metadata. The signed CDN URL itself is
 // deferred to the item's Resolve func: the API + signing exchange runs at
 // download time so the signature can't expire sitting in the queue.
-func (s *Scraper) parseFilePage(fileURL string) (model.MediaItem, error) {
-	doc, err := s.fetchDoc(fileURL)
+func (s *Scraper) parseFilePage(ctx context.Context, fileURL string) (model.MediaItem, error) {
+	doc, err := s.fetchDoc(ctx, fileURL)
 	if err != nil {
 		return model.MediaItem{}, err
 	}
@@ -311,8 +314,8 @@ func (s *Scraper) getSignedMediaURL(ctx context.Context, dlURL *url.URL, fileID,
 	return parsedURL.String(), nil
 }
 
-func (s *Scraper) fetchDoc(pageURL string) (*goquery.Document, error) {
-	req, err := http.NewRequest("GET", pageURL, nil)
+func (s *Scraper) fetchDoc(ctx context.Context, pageURL string) (*goquery.Document, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", pageURL, nil)
 	if err != nil {
 		return nil, err
 	}

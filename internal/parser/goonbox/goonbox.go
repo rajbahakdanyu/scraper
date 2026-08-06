@@ -60,7 +60,7 @@ func (s *Scraper) Name() string {
 	return "goonbox"
 }
 
-func (s *Scraper) Parse(albumURL string) ([]model.MediaItem, error) {
+func (s *Scraper) Parse(ctx context.Context, albumURL string) ([]model.MediaItem, error) {
 	albumID := extractAlbumID(albumURL)
 	if albumID == "" {
 		return nil, fmt.Errorf("goonbox: could not extract album ID from URL: %s", albumURL)
@@ -88,8 +88,8 @@ func (s *Scraper) Parse(albumURL string) ([]model.MediaItem, error) {
 			} `json:"pagination"`
 		}
 
-		if err := netutil.GetJSON(context.Background(), s.client, url, s.userAgent, &result); err != nil {
-			return nil, err
+		if err := netutil.GetJSON(ctx, s.client, url, s.userAgent, &result); err != nil {
+			return items, err
 		}
 
 		for _, img := range result.Images {

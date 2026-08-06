@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -636,8 +637,8 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 	}
 
 	// The scraper function runs in a background goroutine.
-	scraperFn := func() ([]model.MediaItem, error) {
-		items, err := scraper.Parse(targetURL)
+	scraperFn := func(ctx context.Context) ([]model.MediaItem, error) {
+		items, err := scraper.Parse(ctx, targetURL)
 		if err != nil {
 			return nil, err
 		}
@@ -660,7 +661,9 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 	// bubbletea TUI would emit escape-code garbage — fall back to plain
 	// line-based output instead.
 	if opts.json {
-		err := runJSON(dl, scraperFn, cfg.OutputDir, slug, siteName, targetURL, cfg.Quality, cfg.AudioOnly, os.Stdout)
+		err := runJSON(dl, func() ([]model.MediaItem, error) {
+			return scraperFn(context.Background())
+		}, cfg.OutputDir, slug, siteName, targetURL, cfg.Quality, cfg.AudioOnly, os.Stdout)
 		if cfg.Notify {
 			tryNotify(cfg, "Download complete")
 		}
@@ -668,7 +671,9 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 	}
 
 	if opts.noTui || !term.IsTerminal(int(os.Stdout.Fd())) {
-		err := runPlain(dl, scraperFn, cfg.OutputDir, slug, os.Stdout)
+		err := runPlain(dl, func() ([]model.MediaItem, error) {
+			return scraperFn(context.Background())
+		}, cfg.OutputDir, slug, os.Stdout)
 		if cfg.Notify {
 			tryNotify(cfg, "Download complete")
 		}
@@ -944,7 +949,7 @@ func runDryRun(scraper model.Scraper, targetURL string) error {
 func runDryRunWithDiskCheck(scraper model.Scraper, targetURL, outputDir string, diskCheck bool) error {
 	fmt.Printf("Scraping %s...\n", targetURL)
 
-	items, err := scraper.Parse(targetURL)
+	items, err := scraper.Parse(context.Background(), targetURL)
 	if err != nil && len(items) == 0 {
 		return err
 	}
@@ -995,8 +1000,8 @@ type filterScraper struct {
 
 func (f *filterScraper) Name() string { return f.inner.Name() }
 
-func (f *filterScraper) Parse(url string) ([]model.MediaItem, error) {
-	items, err := f.inner.Parse(url)
+func (f *filterScraper) Parse(ctx context.Context, url string) ([]model.MediaItem, error) {
+	items, err := f.inner.Parse(ctx, url)
 	if err != nil {
 		return nil, err
 	}

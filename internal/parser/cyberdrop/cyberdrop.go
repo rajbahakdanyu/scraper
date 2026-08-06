@@ -95,16 +95,16 @@ func classifyAPIError(err error, message string, args ...interface{}) error {
 // expire, so an item queued behind a long album download would hold a
 // stale signature. Instead each item carries a Resolve func that performs
 // the signed-URL exchange lazily at download time (and again on a 403).
-func (s *Scraper) Parse(url string) ([]model.MediaItem, error) {
+func (s *Scraper) Parse(ctx context.Context, url string) ([]model.MediaItem, error) {
 	slug := extractSlug(url)
 	if slug == "" {
 		return nil, fmt.Errorf("cyberdrop: could not extract slug from URL: %s", url)
 	}
 
 	if strings.Contains(url, "/a/") || strings.Contains(url, "/album/") {
-		return s.parseAlbum(url, slug)
+		return s.parseAlbum(ctx, url, slug)
 	}
-	item, err := s.parseFile(context.Background(), url, slug)
+	item, err := s.parseFile(ctx, url, slug)
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +188,7 @@ func (s *Scraper) parseFile(ctx context.Context, pageURL, slug string) (model.Me
 // item's Resolve func performs that file's full info+auth exchange at
 // download time, so a resolution failure surfaces per item then, not as a
 // parse-time PartialError.
-func (s *Scraper) parseAlbum(albumPageURL, slug string) ([]model.MediaItem, error) {
+func (s *Scraper) parseAlbum(ctx context.Context, albumPageURL, slug string) ([]model.MediaItem, error) {
 	albumURL := fmt.Sprintf("%s/album/%s", s.baseURL, slug)
 
 	var album struct {
@@ -199,7 +199,7 @@ func (s *Scraper) parseAlbum(albumPageURL, slug string) ([]model.MediaItem, erro
 			Type string `json:"type"`
 		} `json:"files"`
 	}
-	if err := netutil.GetJSON(context.Background(), s.client, albumURL, s.userAgent, &album); err != nil {
+	if err := netutil.GetJSON(ctx, s.client, albumURL, s.userAgent, &album); err != nil {
 		return nil, err
 	}
 

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -627,8 +628,10 @@ type fakeBatchJSONScraper struct {
 	err   error
 }
 
-func (f *fakeBatchJSONScraper) Name() string                                { return "fake" }
-func (f *fakeBatchJSONScraper) Parse(url string) ([]model.MediaItem, error) { return f.items, f.err }
+func (f *fakeBatchJSONScraper) Name() string { return "fake" }
+func (f *fakeBatchJSONScraper) Parse(ctx context.Context, url string) ([]model.MediaItem, error) {
+	return f.items, f.err
+}
 
 func TestRunBatchJSONProducesJSONLines(t *testing.T) {
 	fd := newFakePlainDownloader()

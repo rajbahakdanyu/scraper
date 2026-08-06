@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -203,6 +204,9 @@ drain:
 // serially, prints a section header, and downloads every item while
 // reporting progress via a shared download queue.
 func runBatchPlain(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, destRoot string, out io.Writer) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	abort := make(chan struct{})
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(signals)
@@ -211,6 +215,8 @@ func runBatchPlain(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, des
 	go func() {
 		select {
 		case <-signals:
+			close(abort)
+			cancel()
 			dl.Shutdown()
 		case <-watcherDone:
 		}
@@ -241,7 +247,13 @@ func runBatchPlain(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, des
 	}()
 
 	var allErrs []error
+batchLoop:
 	for albumIdx, a := range albums {
+		select {
+		case <-abort:
+			break batchLoop
+		default:
+		}
 		header := fmt.Sprintf("[%s]", a.Slug)
 		printCh <- "\n"
 		printCh <- fmt.Sprintf("%s\n", strings.Repeat("─", len(header)))
@@ -249,7 +261,7 @@ func runBatchPlain(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, des
 		printCh <- fmt.Sprintf("%s\n", strings.Repeat("─", len(header)))
 
 		printCh <- fmt.Sprintf("Scraping %s...\n", a.URL)
-		items, err := a.Scraper.Parse(a.URL)
+		items, err := a.Scraper.Parse(ctx, a.URL)
 		if err != nil && len(items) == 0 {
 			printCh <- fmt.Sprintf("failed: %v\n", err)
 			allErrs = append(allErrs, err)
@@ -498,6 +510,9 @@ func runJSON(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error)
 // runBatchJSON downloads items from multiple albums serially, printing JSON
 // Lines events to out as each album's items finish.
 func runBatchJSON(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, destRoot string, quality, audioOnly string, out io.Writer) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	abort := make(chan struct{})
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(signals)
@@ -506,6 +521,8 @@ func runBatchJSON(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, dest
 	go func() {
 		select {
 		case <-signals:
+			close(abort)
+			cancel()
 			dl.Shutdown()
 		case <-watcherDone:
 		}
@@ -529,9 +546,15 @@ func runBatchJSON(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, dest
 	var allErrs []error
 	var grandCompleted, grandFailed, grandCancelled int
 	var grandTotalItems int
+batchLoop:
 	for albumIdx, a := range albums {
+		select {
+		case <-abort:
+			break batchLoop
+		default:
+		}
 		fmt.Fprintf(os.Stderr, "Scraping %s...\n", a.URL)
-		items, err := a.Scraper.Parse(a.URL)
+		items, err := a.Scraper.Parse(ctx, a.URL)
 		if err != nil && len(items) == 0 {
 			writeJSONLine(out, model.JSONEvent{Event: "album_error", Site: a.Site, URL: a.URL, Slug: a.Slug, Error: err.Error()})
 			allErrs = append(allErrs, err)
@@ -663,7 +686,7 @@ func runDryRunJSON(scraper model.Scraper, targetURL, siteName string, out io.Wri
 }
 
 func runDryRunJSONWithDiskCheck(scraper model.Scraper, targetURL, siteName string, out io.Writer, outputDir string, diskCheck bool) error {
-	items, err := scraper.Parse(targetURL)
+	items, err := scraper.Parse(context.Background(), targetURL)
 	if err != nil && len(items) == 0 {
 		data, _ := json.Marshal(map[string]interface{}{
 			"dryRun": true,

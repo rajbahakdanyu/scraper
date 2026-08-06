@@ -99,7 +99,7 @@ func (s *Scraper) Name() string {
 }
 
 // Parse handles both folder URLs (/f/<id>) and single-file URLs (/d/<slug>).
-func (s *Scraper) Parse(rawURL string) ([]model.MediaItem, error) {
+func (s *Scraper) Parse(ctx context.Context, rawURL string) ([]model.MediaItem, error) {
 	kind, id := extractKindAndID(rawURL)
 	switch kind {
 	case "d":
@@ -108,7 +108,7 @@ func (s *Scraper) Parse(rawURL string) ([]model.MediaItem, error) {
 		// item's Title must carry the real extension for the downloader's
 		// filename), and a queue of one starts downloading immediately so
 		// the signature can't expire in the queue.
-		item, err := s.resolveFile(context.Background(), id, "")
+		item, err := s.resolveFile(ctx, id, "")
 		if err != nil {
 			return nil, err
 		}
@@ -119,7 +119,7 @@ func (s *Scraper) Parse(rawURL string) ([]model.MediaItem, error) {
 		}
 		return []model.MediaItem{item}, nil
 	case "f":
-		return s.parseFolder(id)
+		return s.parseFolder(ctx, id)
 	default:
 		return nil, fmt.Errorf("filester: unrecognized URL format: %s", rawURL)
 	}
@@ -186,21 +186,28 @@ const (
 // moment one page hiccupped). Once the real page count is known, every
 // page is retried a few times and, failing that, skipped rather than
 // aborting the rest of the scan.
-func (s *Scraper) parseFolder(id string) ([]model.MediaItem, error) {
+func (s *Scraper) parseFolder(ctx context.Context, id string) ([]model.MediaItem, error) {
 	var allEntries []folderEntry
 	var partialErrs []error
 	total := 1
 
 	for page := 1; page <= total; page++ {
+		if err := ctx.Err(); err != nil {
+			return itemsFromEntries(allEntries, s), err
+		}
 		if page > 1 {
-			s.sleeper.Sleep(pageFetchDelay)
+			select {
+			case <-ctx.Done():
+				return itemsFromEntries(allEntries, s), ctx.Err()
+			case <-time.After(pageFetchDelay):
+			}
 		}
 
-		entries, pageTotal, err := s.fetchFolderPage(id, page)
+		entries, pageTotal, err := s.fetchFolderPage(ctx, id, page)
 
 		if page == 1 {
 			if err != nil {
-				return nil, err
+				return itemsFromEntries(allEntries, s), err
 			}
 			if pageTotal > total {
 				total = pageTotal
@@ -210,6 +217,9 @@ func (s *Scraper) parseFolder(id string) ([]model.MediaItem, error) {
 			// We already know the real page count from page 1's total,
 			// so skip it rather than truncating everything after it.
 			partialErrs = append(partialErrs, fmt.Errorf("page %d: %w", page, err))
+			if ctx.Err() != nil {
+				return itemsFromEntries(allEntries, s), ctx.Err()
+			}
 			continue
 		}
 
@@ -220,6 +230,11 @@ func (s *Scraper) parseFolder(id string) ([]model.MediaItem, error) {
 		return nil, fmt.Errorf("filester: no files found in folder %s", id)
 	}
 
+	items := itemsFromEntries(allEntries, s)
+	return items, model.NewPartialError("filester folder", partialErrs)
+}
+
+func itemsFromEntries(allEntries []folderEntry, s *Scraper) []model.MediaItem {
 	items := make([]model.MediaItem, 0, len(allEntries))
 	for _, e := range allEntries {
 		entry := e
@@ -255,7 +270,7 @@ func (s *Scraper) parseFolder(id string) ([]model.MediaItem, error) {
 		})
 	}
 
-	return items, model.NewPartialError("filester folder", partialErrs)
+	return items
 }
 
 // fetchFolderPage fetches one page of a folder listing. A genuine fetch
@@ -268,10 +283,10 @@ func (s *Scraper) parseFolder(id string) ([]model.MediaItem, error) {
 // momentary blip) shouldn't be mistaken for having reached the end of the
 // album — that's exactly what previously caused large albums to be
 // silently truncated partway through with no error at all.
-func (s *Scraper) fetchFolderPage(id string, page int) (entries []folderEntry, pageTotal int, err error) {
+func (s *Scraper) fetchFolderPage(ctx context.Context, id string, page int) (entries []folderEntry, pageTotal int, err error) {
 	pageURL := fmt.Sprintf("%s/f/%s?page=%d", s.baseURL, id, page)
 
-	doc, err := s.fetchDoc(pageURL)
+	doc, err := s.fetchDoc(ctx, pageURL)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -290,9 +305,13 @@ func (s *Scraper) fetchFolderPage(id string, page int) (entries []folderEntry, p
 	}
 
 	for attempt := 1; attempt < maxPageRetries; attempt++ {
-		s.sleeper.Sleep(netutil.BackoffWithJitter(pageRetryBaseDelay, attempt-1))
+		select {
+		case <-ctx.Done():
+			return nil, pageTotal, ctx.Err()
+		case <-time.After(netutil.BackoffWithJitter(pageRetryBaseDelay, attempt-1)):
+		}
 
-		doc, ferr := s.fetchDoc(pageURL)
+		doc, ferr := s.fetchDoc(ctx, pageURL)
 		if ferr != nil {
 			var nre *model.NonRetryableError
 			if errors.As(ferr, &nre) {
@@ -471,8 +490,8 @@ func (s *Scraper) resolveFileOnce(ctx context.Context, slug, knownName string) (
 	}, nil
 }
 
-func (s *Scraper) fetchDoc(pageURL string) (*goquery.Document, error) {
-	req, err := http.NewRequest("GET", pageURL, nil)
+func (s *Scraper) fetchDoc(ctx context.Context, pageURL string) (*goquery.Document, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", pageURL, nil)
 	if err != nil {
 		return nil, err
 	}

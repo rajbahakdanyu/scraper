@@ -81,7 +81,7 @@ func TestParseFilesterFolder(t *testing.T) {
 	scraper := newTestFilesterScraper()
 	scraper.baseURL = ts.URL
 
-	items, err := scraper.Parse(ts.URL + "/f/testid")
+	items, err := scraper.Parse(context.Background(), ts.URL+"/f/testid")
 	if err != nil {
 		t.Fatalf("Parse failed: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestParseFilesterFolderResolverClassifiesPermanentErrors(t *testing.T) {
 	scraper := newTestFilesterScraper()
 	scraper.baseURL = ts.URL
 
-	items, err := scraper.Parse(ts.URL + "/f/gone")
+	items, err := scraper.Parse(context.Background(), ts.URL+"/f/gone")
 	if err != nil {
 		t.Fatalf("Parse failed: %v", err)
 	}
@@ -206,7 +206,7 @@ func TestParseFilesterFolderResolverRetriesTransientErrors(t *testing.T) {
 	scraper := newTestFilesterScraper()
 	scraper.baseURL = ts.URL
 
-	items, err := scraper.Parse(ts.URL + "/f/flaky")
+	items, err := scraper.Parse(context.Background(), ts.URL+"/f/flaky")
 	if err != nil {
 		t.Fatalf("Parse failed: %v", err)
 	}
@@ -252,7 +252,7 @@ func TestParseFilesterFolderPagination(t *testing.T) {
 	scraper.baseURL = ts.URL
 	scraper.cdnURLs = []string{ts.URL}
 
-	items, err := scraper.Parse(ts.URL + "/f/multi")
+	items, err := scraper.Parse(context.Background(), ts.URL+"/f/multi")
 	if err != nil {
 		t.Fatalf("Parse failed: %v", err)
 	}
@@ -304,7 +304,7 @@ func TestParseFilesterFolderRecoversFromTransientEmptyPage(t *testing.T) {
 	scraper.baseURL = ts.URL
 	scraper.cdnURLs = []string{ts.URL}
 
-	items, err := scraper.Parse(ts.URL + "/f/flaky")
+	items, err := scraper.Parse(context.Background(), ts.URL+"/f/flaky")
 	if err != nil {
 		t.Fatalf("Parse failed: %v", err)
 	}
@@ -343,7 +343,7 @@ func TestParseFilesterFolderSkipsPermanentlyEmptyPage(t *testing.T) {
 	scraper.baseURL = ts.URL
 	scraper.cdnURLs = []string{ts.URL}
 
-	items, err := scraper.Parse(ts.URL + "/f/partial")
+	items, err := scraper.Parse(context.Background(), ts.URL+"/f/partial")
 	var partialErr *model.PartialError
 	if !errors.As(err, &partialErr) {
 		t.Fatalf("expected partial-result warning, got: %v", err)
@@ -390,7 +390,7 @@ func TestParseFilesterFolderPermanentPageErrorNotRetried(t *testing.T) {
 	scraper.baseURL = ts.URL
 	scraper.cdnURLs = []string{ts.URL}
 
-	items, err := scraper.Parse(ts.URL + "/f/gone")
+	items, err := scraper.Parse(context.Background(), ts.URL+"/f/gone")
 	var partialErr *model.PartialError
 	if !errors.As(err, &partialErr) {
 		t.Fatalf("expected partial-result warning, got: %v", err)
@@ -414,7 +414,7 @@ func TestParseFilesterSingleFile(t *testing.T) {
 	scraper.baseURL = ts.URL
 	scraper.cdnURLs = []string{ts.URL}
 
-	items, err := scraper.Parse(ts.URL + "/d/Sw9EGcH")
+	items, err := scraper.Parse(context.Background(), ts.URL+"/d/Sw9EGcH")
 	if err != nil {
 		t.Fatalf("Parse failed: %v", err)
 	}
@@ -451,7 +451,7 @@ func TestParseFilesterRejectsOversizedHTML(t *testing.T) {
 
 	scraper := newTestFilesterScraper()
 	scraper.baseURL = ts.URL
-	items, err := scraper.Parse(ts.URL + "/f/oversized")
+	items, err := scraper.Parse(context.Background(), ts.URL+"/f/oversized")
 	if err == nil || len(items) != 0 {
 		t.Fatalf("expected link truncated by HTML limit, items=%d err=%v", len(items), err)
 	}
@@ -466,7 +466,7 @@ func TestParseFilesterFolderNotFound(t *testing.T) {
 	scraper := newTestFilesterScraper()
 	scraper.baseURL = ts.URL
 
-	if _, err := scraper.Parse(ts.URL + "/f/missing"); err == nil {
+	if _, err := scraper.Parse(context.Background(), ts.URL+"/f/missing"); err == nil {
 		t.Error("expected error for missing folder")
 	}
 }
@@ -487,7 +487,7 @@ func TestParseFilesterSingleFileNotFoundNotRetried(t *testing.T) {
 	scraper := newTestFilesterScraper()
 	scraper.baseURL = ts.URL
 
-	if _, err := scraper.Parse(ts.URL + "/d/missing"); err == nil {
+	if _, err := scraper.Parse(context.Background(), ts.URL+"/d/missing"); err == nil {
 		t.Fatal("expected error for missing file")
 	}
 	if n := atomic.LoadInt32(&tokenRequests); n != 1 {
@@ -510,7 +510,7 @@ func TestParseFilesterSingleFileMalformedTokenNotRetried(t *testing.T) {
 	scraper := newTestFilesterScraper()
 	scraper.baseURL = ts.URL
 
-	if _, err := scraper.Parse(ts.URL + "/d/garbage"); err == nil {
+	if _, err := scraper.Parse(context.Background(), ts.URL+"/d/garbage"); err == nil {
 		t.Fatal("expected error for malformed token response")
 	}
 	if n := atomic.LoadInt32(&tokenRequests); n != 1 {
@@ -533,7 +533,7 @@ func TestParseFilesterSingleFileIncompleteTokenNotRetried(t *testing.T) {
 	scraper := newTestFilesterScraper()
 	scraper.baseURL = ts.URL
 
-	if _, err := scraper.Parse(ts.URL + "/d/incomplete"); err == nil {
+	if _, err := scraper.Parse(context.Background(), ts.URL+"/d/incomplete"); err == nil {
 		t.Fatal("expected error for incomplete token response")
 	}
 	if n := atomic.LoadInt32(&tokenRequests); n != 1 {
@@ -562,7 +562,7 @@ func TestParseFilesterSingleFileRetriesTransientServerError(t *testing.T) {
 	scraper.baseURL = ts.URL
 	scraper.cdnURLs = []string{ts.URL}
 
-	items, err := scraper.Parse(ts.URL + "/d/flaky")
+	items, err := scraper.Parse(context.Background(), ts.URL+"/d/flaky")
 	if err != nil {
 		t.Fatalf("expected transient 500 to be retried successfully, got: %v", err)
 	}
@@ -594,7 +594,7 @@ func TestParseFilesterSingleFileRetriesRateLimit(t *testing.T) {
 	scraper.baseURL = ts.URL
 	scraper.cdnURLs = []string{ts.URL}
 
-	items, err := scraper.Parse(ts.URL + "/d/limited")
+	items, err := scraper.Parse(context.Background(), ts.URL+"/d/limited")
 	if err != nil {
 		t.Fatalf("expected transient 429 to be retried successfully, got: %v", err)
 	}
@@ -608,7 +608,7 @@ func TestParseFilesterSingleFileRetriesRateLimit(t *testing.T) {
 
 func TestParseFilesterUnrecognizedURL(t *testing.T) {
 	scraper := newTestFilesterScraper()
-	if _, err := scraper.Parse("https://filester.sh/faq"); err == nil {
+	if _, err := scraper.Parse(context.Background(), "https://filester.sh/faq"); err == nil {
 		t.Error("expected error for unrecognized URL format")
 	}
 }

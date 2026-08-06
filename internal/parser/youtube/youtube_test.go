@@ -83,7 +83,7 @@ func TestExtractVideoID(t *testing.T) {
 
 func TestParseInvalidURL(t *testing.T) {
 	scraper := NewYouTubeScraper()
-	_, err := scraper.Parse("https://www.youtube.com/")
+	_, err := scraper.Parse(context.Background(), "https://www.youtube.com/")
 	if err == nil {
 		t.Fatal("expected error for URL without video ID")
 	}
@@ -721,7 +721,7 @@ func TestParseThenDownloadFetchesVideoInfoOnce(t *testing.T) {
 	d, _ := NewDownloaderWithConfig(scraper, DownloaderConfig{Concurrency: 1})
 	fake.wire(scraper)
 
-	items, err := scraper.Parse("https://www.youtube.com/watch?v=" + videoID)
+	items, err := scraper.Parse(context.Background(), "https://www.youtube.com/watch?v="+videoID)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}

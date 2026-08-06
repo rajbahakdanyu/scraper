@@ -78,8 +78,8 @@ func (m MediaItem) Key() string {
 
 // Scraper interface defines the contract for site-specific scraping logic
 type Scraper interface {
-	Name() string                          // Returns the logical name of the scraper
-	Parse(url string) ([]MediaItem, error) // Parses the URL and extracts media items
+	Name() string                                               // Returns the logical name of the scraper
+	Parse(ctx context.Context, url string) ([]MediaItem, error) // Parses the URL and extracts media items
 }
 
 type PartialError struct {

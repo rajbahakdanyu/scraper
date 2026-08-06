@@ -37,7 +37,7 @@ func TestParseBunkerRejectsOversizedHTML(t *testing.T) {
 
 	scraper := newTestBunkerScraper()
 	scraper.baseURL = ts.URL
-	items, err := scraper.Parse(ts.URL)
+	items, err := scraper.Parse(context.Background(), ts.URL)
 	if err == nil || len(items) != 0 {
 		t.Fatalf("expected link truncated by HTML limit, items=%d err=%v", len(items), err)
 	}
@@ -89,7 +89,7 @@ func TestParseBunkerAlbum(t *testing.T) {
 	scraper := newTestBunkerScraper()
 	scraper.baseURL = ts.URL
 	scraper.signURL = ts.URL + "/sign"
-	items, err := scraper.Parse(ts.URL + "/a/test123")
+	items, err := scraper.Parse(context.Background(), ts.URL+"/a/test123")
 	if err != nil {
 		t.Fatalf("Parse failed: %v", err)
 	}
@@ -168,7 +168,7 @@ func TestResolve404IsPermanentNotRetried(t *testing.T) {
 	scraper := newTestBunkerScraper()
 	scraper.baseURL = ts.URL
 
-	items, err := scraper.Parse(ts.URL + "/a/album")
+	items, err := scraper.Parse(context.Background(), ts.URL+"/a/album")
 	if err != nil {
 		t.Fatalf("Parse failed: %v", err)
 	}
@@ -365,7 +365,7 @@ func TestParseBunkerAlbumHrefResolution(t *testing.T) {
 				scraper.client = ts.Client()
 			}
 
-			items, err := scraper.Parse(ts.URL + "/a/album")
+			items, err := scraper.Parse(context.Background(), ts.URL+"/a/album")
 			if err != nil {
 				t.Fatalf("Parse failed: %v", err)
 			}
@@ -398,7 +398,7 @@ func TestParseBunkerAlbumNoLinks(t *testing.T) {
 
 	scraper := newTestBunkerScraper()
 	scraper.baseURL = ts.URL
-	_, err := scraper.Parse(ts.URL + "/a/test")
+	_, err := scraper.Parse(context.Background(), ts.URL+"/a/test")
 	if err == nil {
 		t.Error("expected error for album with no file links")
 	}

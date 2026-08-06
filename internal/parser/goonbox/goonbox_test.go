@@ -2,6 +2,7 @@
 package goonbox
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -49,7 +50,7 @@ func TestParseGoonBoxAlbum(t *testing.T) {
 	scraper := newTestGoonBoxScraper()
 	scraper.baseURL = ts.URL
 
-	items, err := scraper.Parse(ts.URL + "/a/testid")
+	items, err := scraper.Parse(context.Background(), ts.URL+"/a/testid")
 	if err != nil {
 		t.Fatalf("Parse failed: %v", err)
 	}
@@ -79,7 +80,7 @@ func TestParseGoonBoxAlbumNotFound(t *testing.T) {
 	scraper := newTestGoonBoxScraper()
 	scraper.baseURL = ts.URL
 
-	_, err := scraper.Parse(ts.URL + "/a/missing")
+	_, err := scraper.Parse(context.Background(), ts.URL+"/a/missing")
 	if err == nil {
 		t.Error("expected error for missing album")
 	}
@@ -89,7 +90,7 @@ func TestParseGoonBoxRejectsMalformedRequestURL(t *testing.T) {
 	scraper := newTestGoonBoxScraper()
 	scraper.baseURL = "://bad-base-url"
 
-	if _, err := scraper.Parse("https://goonbox.cr/a/testid"); err == nil {
+	if _, err := scraper.Parse(context.Background(), "https://goonbox.cr/a/testid"); err == nil {
 		t.Fatal("expected malformed request URL error")
 	}
 }
@@ -107,7 +108,7 @@ func TestParseGoonBoxRejectsPrivateImageURL(t *testing.T) {
 
 	scraper := newTestGoonBoxScraper()
 	scraper.baseURL = ts.URL
-	if _, err := scraper.Parse(ts.URL + "/a/private"); err == nil {
+	if _, err := scraper.Parse(context.Background(), ts.URL+"/a/private"); err == nil {
 		t.Fatal("expected private image URL to be rejected")
 	}
 }
@@ -144,7 +145,7 @@ func TestParseGoonBoxAlbumPagination(t *testing.T) {
 	scraper := newTestGoonBoxScraper()
 	scraper.baseURL = ts.URL
 
-	items, err := scraper.Parse(ts.URL + "/a/multi")
+	items, err := scraper.Parse(context.Background(), ts.URL+"/a/multi")
 	if err != nil {
 		t.Fatalf("Parse failed: %v", err)
 	}
@@ -184,7 +185,7 @@ func TestParseGoonBoxAlbumPaginationCapped(t *testing.T) {
 	scraper := newTestGoonBoxScraper()
 	scraper.baseURL = ts.URL
 
-	items, err := scraper.Parse(ts.URL + "/a/hostile")
+	items, err := scraper.Parse(context.Background(), ts.URL+"/a/hostile")
 	if err != nil {
 		t.Fatalf("expected no error when the page cap is hit, got: %v", err)
 	}
@@ -219,7 +220,7 @@ func TestParseGoonBoxAlbumSkipsUnsafeImageURLs(t *testing.T) {
 	scraper := newTestGoonBoxScraper()
 	scraper.baseURL = ts.URL
 
-	items, err := scraper.Parse(ts.URL + "/a/mixed")
+	items, err := scraper.Parse(context.Background(), ts.URL+"/a/mixed")
 	var partialErr *model.PartialError
 	if !errors.As(err, &partialErr) {
 		t.Fatalf("expected partial-result warning, got: %v", err)
@@ -254,7 +255,7 @@ func TestParseGoonBoxAlbumAllUnsafeImageURLs(t *testing.T) {
 	scraper := newTestGoonBoxScraper()
 	scraper.baseURL = ts.URL
 
-	items, err := scraper.Parse(ts.URL + "/a/allunsafe")
+	items, err := scraper.Parse(context.Background(), ts.URL+"/a/allunsafe")
 	if err == nil {
 		t.Fatal("expected error when every image URL is unsafe")
 	}

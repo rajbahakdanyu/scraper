@@ -2,6 +2,7 @@
 package dashboard
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -80,7 +81,7 @@ type Dashboard struct {
 	site     string
 	phase    phase
 
-	scraperFn  func() ([]model.MediaItem, error)
+	scraperFn  func(context.Context) ([]model.MediaItem, error)
 	loadingErr string
 
 	sendFunc  func(tea.Msg)
@@ -90,6 +91,8 @@ type Dashboard struct {
 	batchURLs      []DashAlbumURL
 	batchIdx       int
 	batchRemaining int
+	scrapeCtx      context.Context
+	cancelScrape   context.CancelFunc
 
 	inspectMsg string
 }
@@ -97,7 +100,7 @@ type Dashboard struct {
 // Futuristic logo — clean, minimal
 const logo = "◢◤  SCRAPER  ◢◤"
 
-func New(scraperFn func() ([]model.MediaItem, error), dl Downloader, dest string, site string) *Dashboard {
+func New(scraperFn func(context.Context) ([]model.MediaItem, error), dl Downloader, dest string, site string) *Dashboard {
 	columns := []table.Column{
 		{Title: "", Width: 2},
 		{Title: "FILE", Width: 42},
@@ -126,6 +129,7 @@ func New(scraperFn func() ([]model.MediaItem, error), dl Downloader, dest string
 		phase:      phaseLoading,
 		scraperFn:  scraperFn,
 	}
+	d.scrapeCtx, d.cancelScrape = context.WithCancel(context.Background())
 	return d
 }
 
@@ -176,6 +180,7 @@ func NewBatch(dl Downloader, destRoot string, urls []DashAlbumURL) *Dashboard {
 		batchURLs:      urls,
 		batchRemaining: len(urls),
 	}
+	d.scrapeCtx, d.cancelScrape = context.WithCancel(context.Background())
 	return d
 }
 
@@ -208,7 +213,7 @@ type batchScrapeMsg struct {
 
 func (d *Dashboard) startScrape() tea.Cmd {
 	return func() tea.Msg {
-		items, err := d.scraperFn()
+		items, err := d.scraperFn(d.scrapeCtx)
 		return scrapeResultMsg{items: items, err: err}
 	}
 }
@@ -219,7 +224,7 @@ func (d *Dashboard) startNextScrape() tea.Cmd {
 			return batchScrapeMsg{idx: -1}
 		}
 		album := d.batchURLs[d.batchIdx]
-		items, err := album.Scraper.Parse(album.URL)
+		items, err := album.Scraper.Parse(d.scrapeCtx, album.URL)
 		return batchScrapeMsg{album: album, idx: d.batchIdx, items: items, err: err}
 	}
 }
@@ -278,6 +283,9 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "ctrl+c", "esc":
 			d.quitting = true
+			if d.cancelScrape != nil {
+				d.cancelScrape()
+			}
 			if d.downloader != nil {
 				// Cancel in-flight downloads and close the progress
 				// channel (drainProgress's range loop then exits).

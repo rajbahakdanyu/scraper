@@ -2,12 +2,14 @@
 package dashboard
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -49,8 +51,8 @@ func (f *fakeDownloader) Progress() <-chan model.ProgressEvent {
 	return f.ch
 }
 
-func instantItems(items []model.MediaItem) func() ([]model.MediaItem, error) {
-	return func() ([]model.MediaItem, error) {
+func instantItems(items []model.MediaItem) func(context.Context) ([]model.MediaItem, error) {
+	return func(context.Context) ([]model.MediaItem, error) {
 		return items, nil
 	}
 }
@@ -136,7 +138,7 @@ func TestDashboardYouTubeUsesBatchFlow(t *testing.T) {
 }
 
 func TestDashboardLoadingError(t *testing.T) {
-	d := New(func() ([]model.MediaItem, error) {
+	d := New(func(context.Context) ([]model.MediaItem, error) {
 		return nil, nil
 	}, nil, t.TempDir(), "test")
 
@@ -221,6 +223,27 @@ func TestDashboardQuitShutsDownDownloader(t *testing.T) {
 			t.Errorf("key %q: expected Shutdown to be called once, got %d", key.String(), fd.shutdowns)
 		}
 		fd.mu.Unlock()
+	}
+}
+
+func TestDashboardQuitCancelsPendingScrape(t *testing.T) {
+	started := make(chan struct{})
+	cancelled := make(chan struct{})
+	d := New(func(ctx context.Context) ([]model.MediaItem, error) {
+		close(started)
+		<-ctx.Done()
+		close(cancelled)
+		return nil, ctx.Err()
+	}, nil, t.TempDir(), "test")
+
+	go d.startScrape()()
+	<-started
+	d.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+
+	select {
+	case <-cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("pending scrape was not cancelled on quit")
 	}
 }
 
