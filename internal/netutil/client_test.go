@@ -227,3 +227,32 @@ func TestNewPublicClientWithProxyInvalidURLFailsFast(t *testing.T) {
 		t.Fatal("expected error for invalid proxy URL")
 	}
 }
+
+func TestPublicClientWithProxyBlocksPrivateTarget(t *testing.T) {
+	client, err := NewPublicClientWithProxy(time.Second, "http://127.0.0.1:1")
+	if err != nil {
+		t.Fatalf("NewPublicClientWithProxy failed: %v", err)
+	}
+
+	if _, err := client.Get("http://169.254.169.254/"); err == nil || !strings.Contains(err.Error(), "not public") {
+		t.Fatalf("private target error = %v, want not public error", err)
+	}
+}
+
+func TestPublicClientRejectsHTTPSDowngradeRedirect(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://example.com/", http.StatusFound)
+	}))
+	defer server.Close()
+
+	client, err := NewPublicClient(time.Second, server.URL)
+	if err != nil {
+		t.Fatalf("NewPublicClient failed: %v", err)
+	}
+	transport := client.Transport.(*http.Transport)
+	transport.TLSClientConfig = server.Client().Transport.(*http.Transport).TLSClientConfig
+
+	if _, err := client.Get(server.URL); err == nil || !strings.Contains(err.Error(), "https-to-http") {
+		t.Fatalf("HTTPS downgrade error = %v, want https-to-http error", err)
+	}
+}

@@ -169,17 +169,17 @@ func newPublicClient(timeout, responseHeaderTimeout, readTimeout time.Duration, 
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
 	if proxyURL != "" {
-		// Note: when a proxy is configured, the custom DialContext's SSRF
-		// guard only sees the proxy host, not the ultimate target.  The
-		// target URL passes through the proxy unvalidated.  This is an
-		// accepted tradeoff — the proxy is assumed trusted — and should
-		// be revisited if the threat model changes to include untrusted
-		// proxies.
 		u, err := url.Parse(proxyURL)
 		if err != nil {
 			return nil, fmt.Errorf("invalid proxy URL %q: %w", proxyURL, err)
 		}
-		transport.Proxy = http.ProxyURL(u)
+		proxy := http.ProxyURL(u)
+		transport.Proxy = func(req *http.Request) (*url.URL, error) {
+			if err := policy.ValidateURL(req.URL.String()); err != nil {
+				return nil, err
+			}
+			return proxy(req)
+		}
 	}
 	transport.ResponseHeaderTimeout = responseHeaderTimeout
 	transport.DialContext = policy.dialContext(&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}, readTimeout)
@@ -191,7 +191,13 @@ func newPublicClient(timeout, responseHeaderTimeout, readTimeout time.Duration, 
 			if len(via) >= 10 {
 				return fmt.Errorf("stopped after 10 redirects")
 			}
-			return policy.ValidateURL(req.URL.String())
+			if err := policy.ValidateURL(req.URL.String()); err != nil {
+				return err
+			}
+			if len(via) > 0 && via[len(via)-1].URL.Scheme == "https" && req.URL.Scheme == "http" {
+				return fmt.Errorf("https-to-http redirect denied for %q", req.URL.String())
+			}
+			return nil
 		},
 	}, nil
 }
