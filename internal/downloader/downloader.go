@@ -31,9 +31,12 @@ const (
 	// configure, regardless of how low the requested rate is. It just needs
 	// to comfortably cover a single io.Copy read chunk so WaitN never
 	// rejects a read outright for exceeding the burst size.
-	minRateLimitBurst  = 32 * 1024
-	maxUnknownFileSize = 64 << 30
+	minRateLimitBurst = 32 * 1024
 )
+
+// MaxUnknownFileSize bounds downloads whose response does not provide a
+// trustworthy total size. Tests may temporarily reduce this value.
+var MaxUnknownFileSize int64 = 64 << 30
 
 // Sleeper is a test-injectable alternative to time.Sleep.
 type Sleeper interface {
@@ -494,14 +497,15 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, res
 
 	var source io.Reader = pr
 	var unknownSizeLimit *io.LimitedReader
-	if total <= 0 {
-		unknownSizeLimit = &io.LimitedReader{R: pr, N: maxUnknownFileSize}
+	unknownSize := total <= 0 || (existing > 0 && resp.ContentLength < 0)
+	if unknownSize {
+		unknownSizeLimit = &io.LimitedReader{R: pr, N: MaxUnknownFileSize}
 		source = unknownSizeLimit
 	}
-	_, copyErr := io.Copy(out, source)
+	copiedBytes, copyErr := io.Copy(out, source)
 	closeErr := out.Close()
-	if unknownSizeLimit != nil && unknownSizeLimit.N == 0 {
-		err := model.NewNonRetryable(fmt.Errorf("download exceeds maximum unknown file size of %d bytes", maxUnknownFileSize))
+	if unknownSizeLimit != nil && copiedBytes >= MaxUnknownFileSize {
+		err := model.NewNonRetryable(fmt.Errorf("download exceeds maximum unknown file size of %d bytes", MaxUnknownFileSize))
 		return errors.Join(err, closeErr)
 	}
 	if copyErr != nil {

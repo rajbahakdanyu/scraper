@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -88,6 +89,38 @@ func TestDownload(t *testing.T) {
 	tempPath := finalPath + ".part"
 	if _, err := os.Stat(tempPath); !os.IsNotExist(err) {
 		t.Error("expected .part temp file to be cleaned up")
+	}
+}
+
+func TestDownloadUnknownLengthExceedsCapDiscardsPartial(t *testing.T) {
+	oldMax := MaxUnknownFileSize
+	MaxUnknownFileSize = 1024
+	defer func() { MaxUnknownFileSize = oldMax }()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.(http.Flusher).Flush()
+		_, _ = w.Write(bytes.Repeat([]byte("x"), 2048))
+	}))
+	defer ts.Close()
+
+	dl := newTestDownloader(1, 0, "")
+	dest := t.TempDir()
+	item := model.MediaItem{URL: ts.URL, Title: "too-large.bin"}
+	err := dl.Download(item, dest)
+	if err == nil {
+		t.Fatal("expected unknown-length download to exceed the cap")
+	}
+	var nre *model.NonRetryableError
+	if !errors.As(err, &nre) {
+		t.Fatalf("expected non-retryable cap error, got %T: %v", err, err)
+	}
+	for _, path := range []string{
+		filepath.Join(dest, "too-large.bin"),
+		filepath.Join(dest, "too-large.bin.part"),
+	} {
+		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+			t.Errorf("expected capped download artifact %s to be removed, stat error: %v", path, statErr)
+		}
 	}
 }
 

@@ -25,15 +25,21 @@ func newTestBunkerScraper() *Scraper {
 }
 
 func TestParseBunkerRejectsOversizedHTML(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.WriteString(w, strings.Repeat("x", 32<<20+1))
-	}))
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, strings.Repeat("x", 32<<20)+`<a href="/f/file" aria-label="download"></a>`)
+	})
+	mux.HandleFunc("/f/file", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `<title>file.bin | Bunkr</title><a href="/file/123">Download</a>`)
+	})
+	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
 	scraper := newTestBunkerScraper()
 	scraper.baseURL = ts.URL
-	if _, err := scraper.Parse(ts.URL); err == nil {
-		t.Fatal("expected oversized HTML to fail parsing")
+	items, err := scraper.Parse(ts.URL)
+	if err == nil || len(items) != 0 {
+		t.Fatalf("expected link truncated by HTML limit, items=%d err=%v", len(items), err)
 	}
 }
 
