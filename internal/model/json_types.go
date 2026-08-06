@@ -65,12 +65,8 @@ func MediaTypeString(t MediaType) string {
 }
 
 func ItemToJSONItem(item MediaItem) JSONItem {
-	title := item.Title
-	if title == "" {
-		title = item.URL
-	}
 	return JSONItem{
-		Title:    title,
+		Title:    TitleOf(item),
 		URL:      item.URL,
 		Size:     item.Size,
 		MimeType: item.MimeType,

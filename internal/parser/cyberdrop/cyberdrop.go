@@ -60,23 +60,6 @@ func (s *Scraper) Name() string {
 	return "cyberdrop"
 }
 
-// permanentIfNotRetryable translates a permanent resolve-API failure (a
-// 4xx other than 408/429 — e.g. the file is gone upstream) into a
-// model.PermanentError so the downloader fails the item immediately
-// instead of retrying with backoff. Transient failures (5xx, 408, 429,
-// network errors) pass through unwrapped and keep the downloader's retry
-// behavior.
-func permanentIfNotRetryable(signedURL string, err error) (string, error) {
-	if err == nil {
-		return signedURL, nil
-	}
-	var nre *model.NonRetryableError
-	if errors.As(err, &nre) {
-		return "", &model.PermanentError{Err: err}
-	}
-	return "", err
-}
-
 func classifyAPIError(err error, message string, args ...interface{}) error {
 	var statusErr *netutil.HTTPStatusError
 	if !errors.As(err, &statusErr) {
@@ -178,7 +161,8 @@ func (s *Scraper) parseFile(ctx context.Context, pageURL, slug string) (model.Me
 		MimeType: info.Type,
 		Type:     model.MediaTypeForName(title),
 		Resolve: func(ctx context.Context) (string, error) {
-			return permanentIfNotRetryable(s.fetchSignedURL(ctx, info.AuthURL, slug))
+			signedURL, err := s.fetchSignedURL(ctx, info.AuthURL, slug)
+			return signedURL, model.WrapPermanent(err)
 		},
 	}, nil
 }
@@ -230,9 +214,10 @@ func (s *Scraper) parseAlbum(ctx context.Context, albumPageURL, slug string) ([]
 			Resolve: func(ctx context.Context) (string, error) {
 				info, err := s.fetchFileInfo(ctx, fileSlug)
 				if err != nil {
-					return permanentIfNotRetryable("", err)
+					return "", model.WrapPermanent(err)
 				}
-				return permanentIfNotRetryable(s.fetchSignedURL(ctx, info.AuthURL, fileSlug))
+				signedURL, err := s.fetchSignedURL(ctx, info.AuthURL, fileSlug)
+				return signedURL, model.WrapPermanent(err)
 			},
 		})
 	}

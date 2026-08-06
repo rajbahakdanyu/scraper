@@ -33,6 +33,15 @@ func TestMediaItemFields(t *testing.T) {
 	}
 }
 
+func TestTitleOfFallsBackToURL(t *testing.T) {
+	if got := TitleOf(MediaItem{Title: "named", URL: "https://example.com/file"}); got != "named" {
+		t.Fatalf("TitleOf() = %q, want named", got)
+	}
+	if got := TitleOf(MediaItem{URL: "https://example.com/file"}); got != "https://example.com/file" {
+		t.Fatalf("TitleOf() fallback = %q, want URL", got)
+	}
+}
+
 func TestPermanentError(t *testing.T) {
 	inner := errors.New("file deleted upstream")
 	err := error(&PermanentError{Err: inner})
@@ -45,6 +54,20 @@ func TestPermanentError(t *testing.T) {
 	var pe *PermanentError
 	if !errors.As(fmt.Errorf("resolve signed URL: %w", err), &pe) {
 		t.Error("PermanentError should be discoverable through wrapping")
+	}
+}
+
+func TestWrapPermanent(t *testing.T) {
+	inner := NewNonRetryable(errors.New("permanent"))
+	wrapped := WrapPermanent(inner)
+	var permanent *PermanentError
+	if !errors.As(wrapped, &permanent) {
+		t.Fatalf("WrapPermanent() returned %T, want PermanentError", wrapped)
+	}
+
+	transient := errors.New("transient")
+	if got := WrapPermanent(transient); got != transient {
+		t.Fatalf("WrapPermanent() changed transient error")
 	}
 }
 

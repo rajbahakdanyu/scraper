@@ -60,6 +60,17 @@ type PermanentError struct{ Err error }
 func (e *PermanentError) Error() string { return e.Err.Error() }
 func (e *PermanentError) Unwrap() error { return e.Err }
 
+func WrapPermanent(err error) error {
+	if err == nil {
+		return nil
+	}
+	var nonRetryable *NonRetryableError
+	if errors.As(err, &nonRetryable) {
+		return &PermanentError{Err: err}
+	}
+	return err
+}
+
 type CancelledError struct{ URL string }
 
 func (e *CancelledError) Error() string { return "download cancelled: " + e.URL }
@@ -74,6 +85,21 @@ func (m MediaItem) Key() string {
 		return m.ID
 	}
 	return m.URL
+}
+
+func TitleOf(item MediaItem) string {
+	if item.Title != "" {
+		return item.Title
+	}
+	return item.URL
+}
+
+func AssignIDs(items []MediaItem, prefix string) {
+	for i := range items {
+		if items[i].ID == "" {
+			items[i].ID = fmt.Sprintf("%s%d:%s", prefix, i, items[i].URL)
+		}
+	}
 }
 
 // Scraper interface defines the contract for site-specific scraping logic

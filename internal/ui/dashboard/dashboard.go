@@ -344,10 +344,9 @@ func (d *Dashboard) handleScrapeResult(msg scrapeResultMsg) (tea.Model, tea.Cmd)
 	}
 
 	d.states = make([]itemState, len(msg.items))
-	for i, it := range msg.items {
-		if it.ID == "" {
-			it.ID = fmt.Sprintf("%d:%s", i, it.URL)
-		}
+	for i := range msg.items {
+		model.AssignIDs(msg.items[i:i+1], fmt.Sprintf("%d:", i))
+		it := msg.items[i]
 		d.states[i] = itemState{item: it, status: model.StatusPending, total: it.Size}
 	}
 
@@ -460,10 +459,9 @@ func (d *Dashboard) handleBatchScrape(msg batchScrapeMsg) (tea.Model, tea.Cmd) {
 	}
 	d.states = append(d.states, headerState)
 
-	for i, it := range msg.items {
-		if it.ID == "" {
-			it.ID = fmt.Sprintf("%d:%d:%s", d.batchIdx-1, i, it.URL)
-		}
+	for i := range msg.items {
+		model.AssignIDs(msg.items[i:i+1], fmt.Sprintf("%d:%d:", d.batchIdx-1, i))
+		it := msg.items[i]
 		st := itemState{
 			item:  it,
 			total: it.Size,

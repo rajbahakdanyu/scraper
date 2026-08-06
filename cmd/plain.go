@@ -21,10 +21,7 @@ import (
 // output. It returns "" for events that print nothing (pending, cancelled,
 // and failed — the real error surfaces when Download returns).
 func progressLine(evt model.ProgressEvent) string {
-	title := evt.Item.Title
-	if title == "" {
-		title = evt.Item.URL
-	}
+	title := model.TitleOf(evt.Item)
 	switch evt.Status {
 	case model.StatusDownloading:
 		if evt.Total <= 0 {
@@ -57,12 +54,97 @@ func newPlainPrinter(w io.Writer) *plainPrinter {
 	return &plainPrinter{w: w, last: map[string]string{}}
 }
 
+func watchSignals(dl dashboard.Downloader) <-chan struct{} {
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	done := make(chan struct{})
+	go func() {
+		defer signal.Stop(signals)
+		<-signals
+		defer func() { _ = recover() }()
+		dl.Shutdown()
+		close(done)
+	}()
+	return done
+}
+
 func watchPlainShutdown(signals <-chan os.Signal, done <-chan struct{}, shutdown func()) {
 	select {
 	case <-signals:
 		shutdown()
 	case <-done:
 	}
+}
+
+func downloadAll(dl dashboard.Downloader, items []model.MediaItem, dest string) []error {
+	errs, _ := downloadAllWithPaths(dl, items, dest)
+	return errs
+}
+
+func downloadAllWithPaths(dl dashboard.Downloader, items []model.MediaItem, dest string) ([]error, map[string]string) {
+	errs := make([]error, len(items))
+	paths := make(map[string]string)
+	var pathsMu sync.Mutex
+	var wg sync.WaitGroup
+	for i, item := range items {
+		if item.URL == "" {
+			continue
+		}
+		dl.Prepare(item)
+		wg.Add(1)
+		go func(i int, item model.MediaItem) {
+			defer wg.Done()
+			path, err := dl.Download(item, dest)
+			errs[i] = err
+			if path != "" {
+				pathsMu.Lock()
+				paths[item.Key()] = path
+				pathsMu.Unlock()
+			}
+		}(i, item)
+	}
+	wg.Wait()
+	return errs, paths
+}
+
+func assignIDs(items []model.MediaItem, prefix string) {
+	model.AssignIDs(items, prefix)
+}
+
+func writeItemResult(out io.Writer, items []model.MediaItem, errs []error, paths map[string]string, album, quality, audioOnly string) (completed, failed, cancelled, total int, totalBytes int64) {
+	for i, item := range items {
+		if item.URL == "" {
+			continue
+		}
+		total++
+		status := model.StatusCompleted
+		var itemErr error
+		if errs[i] != nil {
+			itemErr = errs[i]
+			if model.IsCancelled(itemErr) {
+				status = model.StatusCancelled
+				cancelled++
+			} else {
+				status = model.StatusFailed
+				failed++
+			}
+		} else {
+			completed++
+			if item.Size > 0 {
+				totalBytes += item.Size
+			}
+		}
+		event := model.JSONEvent{
+			Event: "item", Title: model.TitleOf(item), Size: item.Size,
+			Path: paths[item.Key()], Status: model.DownloadStatusString(status),
+			Album: album, Quality: quality, AudioOnly: audioOnly,
+		}
+		if itemErr != nil && status == model.StatusFailed {
+			event.Error = itemErr.Error()
+		}
+		writeJSONLine(out, event)
+	}
+	return
 }
 
 func (p *plainPrinter) event(evt model.ProgressEvent) {
@@ -96,11 +178,7 @@ func runPlain(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error
 	}
 
 	// Mirror the dashboard: positional IDs keep duplicate URLs distinct.
-	for i := range items {
-		if items[i].ID == "" {
-			items[i].ID = fmt.Sprintf("%d:%s", i, items[i].URL)
-		}
-	}
+	assignIDs(items, "")
 
 	// Mirror the dashboard: albums download into a slug subfolder.
 	if len(items) > 1 && slug != "" {
@@ -126,30 +204,13 @@ func runPlain(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error
 	// closes, which ends the consumer loop below. signal.Notify runs here
 	// (not inside the watcher goroutine) so no signal can arrive before the
 	// handler is registered.
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(signals)
-	watcherDone := make(chan struct{})
-	defer close(watcherDone)
-	go watchPlainShutdown(signals, watcherDone, dl.Shutdown)
+	_ = watchSignals(dl)
 
 	printer := newPlainPrinter(out)
 	errs := make([]error, len(items))
 	downloadsDone := make(chan struct{})
 	go func() {
-		var wg sync.WaitGroup
-		for i, item := range items {
-			if item.URL == "" {
-				continue
-			}
-			dl.Prepare(item)
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				_, errs[i] = dl.Download(item, dest)
-			}()
-		}
-		wg.Wait()
+		errs = downloadAll(dl, items, dest)
 		close(downloadsDone)
 	}()
 
@@ -189,10 +250,7 @@ drain:
 		if errs[i] == nil {
 			continue
 		}
-		title := item.Title
-		if title == "" {
-			title = item.URL
-		}
+		title := model.TitleOf(item)
 		if model.IsCancelled(errs[i]) {
 			fmt.Fprintf(out, "interrupted: %s\n", title)
 			continue
@@ -210,19 +268,11 @@ func runBatchPlain(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, des
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	abort := make(chan struct{})
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(signals)
-	watcherDone := make(chan struct{})
-	defer close(watcherDone)
+	signalDone := watchSignals(dl)
 	go func() {
-		select {
-		case <-signals:
-			close(abort)
-			cancel()
-			dl.Shutdown()
-		case <-watcherDone:
-		}
+		<-signalDone
+		close(abort)
+		cancel()
 	}()
 
 	printer := newPlainPrinter(out)
@@ -284,11 +334,7 @@ batchLoop:
 
 		printCh <- fmt.Sprintf("%d items, downloading to %s\n", len(items), a.Dest)
 
-		for i := range items {
-			if items[i].ID == "" {
-				items[i].ID = fmt.Sprintf("%d:%d:%s", albumIdx, i, items[i].URL)
-			}
-		}
+		assignIDs(items, fmt.Sprintf("%d:", albumIdx))
 
 		if err := os.MkdirAll(a.Dest, 0755); err != nil {
 			printCh <- fmt.Sprintf("failed: create album directory: %v\n", err)
@@ -309,21 +355,9 @@ batchLoop:
 		}
 
 		downloadsDone := make(chan struct{})
-		errs := make([]error, len(items))
+		var errs []error
 		go func() {
-			var wg sync.WaitGroup
-			for i, item := range items {
-				if item.URL == "" {
-					continue
-				}
-				dl.Prepare(item)
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					_, errs[i] = dl.Download(item, a.Dest)
-				}()
-			}
-			wg.Wait()
+			errs = downloadAll(dl, items, a.Dest)
 			close(downloadsDone)
 		}()
 
@@ -333,10 +367,7 @@ batchLoop:
 			if errs[i] == nil {
 				continue
 			}
-			title := item.Title
-			if title == "" {
-				title = item.URL
-			}
+			title := model.TitleOf(item)
 			printCh <- fmt.Sprintf("failed %s: %v\n", title, errs[i])
 		}
 		if partialErr := model.NewPartialError("album", errs); partialErr != nil {
@@ -345,7 +376,12 @@ batchLoop:
 	}
 
 	close(printCh)
-	dl.Shutdown()
+	select {
+	case <-abort:
+	case <-signalDone:
+	default:
+		dl.Shutdown()
+	}
 	<-progressDone
 
 	return model.NewPartialError("batch", allErrs)
@@ -378,11 +414,7 @@ func runJSON(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error)
 		return nil
 	}
 
-	for i := range items {
-		if items[i].ID == "" {
-			items[i].ID = fmt.Sprintf("%d:%s", i, items[i].URL)
-		}
-	}
+	assignIDs(items, "")
 
 	if len(items) > 1 && slug != "" {
 		albumDest, dErr := fileutil.SafeJoin(dest, slug)
@@ -399,21 +431,8 @@ func runJSON(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error)
 
 	writeJSONLine(out, model.JSONEvent{Event: "album_start", Site: site, URL: targetURL, Slug: slug, Total: len(items)})
 
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(signals)
-	watcherDone := make(chan struct{})
-	defer close(watcherDone)
-	go func() {
-		select {
-		case <-signals:
-			dl.Shutdown()
-		case <-watcherDone:
-		}
-	}()
+	signalDone := watchSignals(dl)
 
-	paths := make(map[string]string)
-	var pathsMu sync.Mutex
 	progressDone := make(chan struct{})
 	go func() {
 		for range dl.Progress() {
@@ -421,88 +440,23 @@ func runJSON(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error)
 		close(progressDone)
 	}()
 
-	errs := make([]error, len(items))
+	var errs []error
+	var paths map[string]string
 	downloadsDone := make(chan struct{})
 	go func() {
-		var wg sync.WaitGroup
-		for i, item := range items {
-			if item.URL == "" {
-				continue
-			}
-			dl.Prepare(item)
-			wg.Add(1)
-			go func(idx int, it model.MediaItem) {
-				defer wg.Done()
-				p, err := dl.Download(it, dest)
-				errs[idx] = err
-				if p != "" {
-					pathsMu.Lock()
-					paths[it.Key()] = p
-					pathsMu.Unlock()
-				}
-			}(i, item)
-		}
-		wg.Wait()
+		errs, paths = downloadAllWithPaths(dl, items, dest)
 		close(downloadsDone)
 	}()
 
 	<-downloadsDone
-	dl.Shutdown()
+	select {
+	case <-signalDone:
+	default:
+		dl.Shutdown()
+	}
 	<-progressDone
 
-	var completed, failed, cancelled int
-	var totalBytes int64
-	realItems := 0
-	for i, item := range items {
-		if item.URL == "" {
-			continue
-		}
-		realItems++
-		path := paths[item.Key()]
-		if errs[i] != nil {
-			if model.IsCancelled(errs[i]) {
-				writeJSONLine(out, model.JSONEvent{
-					Event:     "item",
-					Title:     itemTitle(item),
-					Size:      item.Size,
-					Path:      path,
-					Status:    model.DownloadStatusString(model.StatusCancelled),
-					Album:     slug,
-					Quality:   quality,
-					AudioOnly: audioOnly,
-				})
-				cancelled++
-			} else {
-				writeJSONLine(out, model.JSONEvent{
-					Event:     "item",
-					Title:     itemTitle(item),
-					Size:      item.Size,
-					Path:      path,
-					Status:    model.DownloadStatusString(model.StatusFailed),
-					Album:     slug,
-					Error:     errs[i].Error(),
-					Quality:   quality,
-					AudioOnly: audioOnly,
-				})
-				failed++
-			}
-			continue
-		}
-		writeJSONLine(out, model.JSONEvent{
-			Event:     "item",
-			Title:     itemTitle(item),
-			Size:      item.Size,
-			Path:      path,
-			Status:    model.DownloadStatusString(model.StatusCompleted),
-			Album:     slug,
-			Quality:   quality,
-			AudioOnly: audioOnly,
-		})
-		completed++
-		if item.Size > 0 {
-			totalBytes += item.Size
-		}
-	}
+	completed, failed, cancelled, realItems, totalBytes := writeItemResult(out, items, errs, paths, slug, quality, audioOnly)
 
 	writeJSONLine(out, model.JSONEvent{
 		Event:      "summary",
@@ -522,24 +476,14 @@ func runBatchJSON(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, dest
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	abort := make(chan struct{})
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(signals)
-	watcherDone := make(chan struct{})
-	defer close(watcherDone)
+	signalDone := watchSignals(dl)
 	go func() {
-		select {
-		case <-signals:
-			close(abort)
-			cancel()
-			dl.Shutdown()
-		case <-watcherDone:
-		}
+		<-signalDone
+		close(abort)
+		cancel()
 	}()
 
 	progress := dl.Progress()
-	paths := make(map[string]string)
-	var pathsMu sync.Mutex
 	progressDone := make(chan struct{})
 	go func() {
 		for range progress {
@@ -577,11 +521,7 @@ batchLoop:
 			continue
 		}
 
-		for i := range items {
-			if items[i].ID == "" {
-				items[i].ID = fmt.Sprintf("%d:%d:%s", albumIdx, i, items[i].URL)
-			}
-		}
+		assignIDs(items, fmt.Sprintf("%d:", albumIdx))
 
 		if err := os.MkdirAll(a.Dest, 0755); err != nil {
 			writeJSONLine(out, model.JSONEvent{Event: "album_error", Site: a.Site, URL: a.URL, Slug: a.Slug, Error: fmt.Sprintf("create album directory: %v", err)})
@@ -592,83 +532,16 @@ batchLoop:
 		writeJSONLine(out, model.JSONEvent{Event: "album_start", Site: a.Site, URL: a.URL, Slug: a.Slug, Total: len(items)})
 
 		downloadsDone := make(chan struct{})
-		errs := make([]error, len(items))
+		var errs []error
+		var paths map[string]string
 		go func() {
-			var wg sync.WaitGroup
-			for i, item := range items {
-				if item.URL == "" {
-					continue
-				}
-				dl.Prepare(item)
-				wg.Add(1)
-				go func(i int, item model.MediaItem) {
-					defer wg.Done()
-					path, err := dl.Download(item, a.Dest)
-					errs[i] = err
-					if err == nil {
-						pathsMu.Lock()
-						paths[item.Key()] = path
-						pathsMu.Unlock()
-					}
-				}(i, item)
-			}
-			wg.Wait()
+			errs, paths = downloadAllWithPaths(dl, items, a.Dest)
 			close(downloadsDone)
 		}()
 
 		<-downloadsDone
 
-		var completed, failed, cancelled int
-		albumReal := 0
-		for i, item := range items {
-			if item.URL == "" {
-				continue
-			}
-			albumReal++
-			pathsMu.Lock()
-			path := paths[item.Key()]
-			pathsMu.Unlock()
-			if errs[i] != nil {
-				if model.IsCancelled(errs[i]) {
-					writeJSONLine(out, model.JSONEvent{
-						Event:     "item",
-						Title:     itemTitle(item),
-						Size:      item.Size,
-						Path:      path,
-						Status:    model.DownloadStatusString(model.StatusCancelled),
-						Album:     a.Slug,
-						Quality:   quality,
-						AudioOnly: audioOnly,
-					})
-					cancelled++
-				} else {
-					writeJSONLine(out, model.JSONEvent{
-						Event:     "item",
-						Title:     itemTitle(item),
-						Size:      item.Size,
-						Path:      path,
-						Status:    model.DownloadStatusString(model.StatusFailed),
-						Album:     a.Slug,
-						Error:     errs[i].Error(),
-						Quality:   quality,
-						AudioOnly: audioOnly,
-					})
-					failed++
-				}
-				continue
-			}
-			writeJSONLine(out, model.JSONEvent{
-				Event:     "item",
-				Title:     itemTitle(item),
-				Size:      item.Size,
-				Path:      path,
-				Status:    model.DownloadStatusString(model.StatusCompleted),
-				Album:     a.Slug,
-				Quality:   quality,
-				AudioOnly: audioOnly,
-			})
-			completed++
-		}
+		completed, failed, cancelled, albumReal, _ := writeItemResult(out, items, errs, paths, a.Slug, quality, audioOnly)
 
 		grandCompleted += completed
 		grandFailed += failed
@@ -680,7 +553,12 @@ batchLoop:
 		}
 	}
 
-	dl.Shutdown()
+	select {
+	case <-abort:
+	case <-signalDone:
+	default:
+		dl.Shutdown()
+	}
 	<-progressDone
 
 	writeJSONLine(out, model.JSONEvent{
@@ -754,11 +632,4 @@ func runDryRunJSONWithDiskCheck(scraper model.Scraper, targetURL, siteName strin
 	}
 	fmt.Fprintln(out, string(data))
 	return nil
-}
-
-func itemTitle(item model.MediaItem) string {
-	if item.Title != "" {
-		return item.Title
-	}
-	return item.URL
 }

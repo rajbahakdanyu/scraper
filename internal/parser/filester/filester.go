@@ -358,7 +358,7 @@ func (s *Scraper) resolveFile(ctx context.Context, slug, knownName string) (mode
 		return err
 	})
 	if err != nil {
-		return model.MediaItem{}, err
+		return model.MediaItem{}, model.WrapPermanent(err)
 	}
 	return item, nil
 }

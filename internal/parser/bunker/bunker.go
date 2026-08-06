@@ -66,23 +66,6 @@ func (s *Scraper) Name() string {
 	return "bunker"
 }
 
-// permanentIfNotRetryable translates a permanent resolve-API failure (a
-// 4xx other than 408/429 — e.g. the file is gone upstream) into a
-// model.PermanentError so the downloader fails the item immediately
-// instead of retrying with backoff. Transient failures (5xx, 408, 429,
-// network errors) pass through unwrapped and keep the downloader's retry
-// behavior.
-func permanentIfNotRetryable(signedURL string, err error) (string, error) {
-	if err == nil {
-		return signedURL, nil
-	}
-	var nre *model.NonRetryableError
-	if errors.As(err, &nre) {
-		return "", &model.PermanentError{Err: err}
-	}
-	return "", err
-}
-
 // Parse fetches a Bunker album page, extracts file links, and visits each
 // file page to get the dl.bunkr.cr link. The final signed CDN download URL
 // (API + signing service) is NOT resolved at parse time — signatures carry
@@ -219,7 +202,8 @@ func (s *Scraper) parseFilePage(ctx context.Context, fileURL string) (model.Medi
 		MimeType: "application/octet-stream",
 		Type:     model.MediaTypeForName(title),
 		Resolve: func(ctx context.Context) (string, error) {
-			return permanentIfNotRetryable(s.getSignedMediaURL(ctx, dlURL, fileID, title))
+			signedURL, err := s.getSignedMediaURL(ctx, dlURL, fileID, title)
+			return signedURL, model.WrapPermanent(err)
 		},
 	}, nil
 }
