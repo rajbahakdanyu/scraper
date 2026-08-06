@@ -14,14 +14,17 @@ type FilterSummary struct {
 }
 
 func (s FilterSummary) String() string {
-	parts := []string{fmt.Sprintf("%d/%d items", s.Kept, s.Total)}
+	var exclusionParts []string
 	if s.ExcludedByGlob > 0 {
-		parts = append(parts, fmt.Sprintf("%d excluded by glob", s.ExcludedByGlob))
+		exclusionParts = append(exclusionParts, fmt.Sprintf("%d excluded by glob", s.ExcludedByGlob))
 	}
 	if s.ExcludedBySize > 0 {
-		parts = append(parts, fmt.Sprintf("%d excluded by size", s.ExcludedBySize))
+		exclusionParts = append(exclusionParts, fmt.Sprintf("%d excluded by size", s.ExcludedBySize))
 	}
-	return strings.Join(parts, ", ")
+	if len(exclusionParts) > 0 {
+		return fmt.Sprintf("%d/%d items (%s)", s.Kept, s.Total, strings.Join(exclusionParts, ", "))
+	}
+	return fmt.Sprintf("%d/%d items", s.Kept, s.Total)
 }
 
 func FilterItems(items []MediaItem, include, exclude []string, minSize, maxSize int64) ([]MediaItem, FilterSummary) {

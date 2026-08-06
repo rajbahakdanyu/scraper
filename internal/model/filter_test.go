@@ -129,9 +129,19 @@ func TestFilterItemsGlobNoMatch(t *testing.T) {
 }
 
 func TestFilterSummaryString(t *testing.T) {
-	s := FilterSummary{Total: 10, Kept: 7, ExcludedByGlob: 2, ExcludedBySize: 1}
-	str := s.String()
-	if str == "" {
-		t.Error("expected non-empty string")
+	tests := []struct {
+		s        FilterSummary
+		expected string
+	}{
+		{FilterSummary{Total: 5, Kept: 5}, "5/5 items"},
+		{FilterSummary{Total: 10, Kept: 7, ExcludedByGlob: 3}, "7/10 items (3 excluded by glob)"},
+		{FilterSummary{Total: 10, Kept: 7, ExcludedBySize: 3}, "7/10 items (3 excluded by size)"},
+		{FilterSummary{Total: 10, Kept: 7, ExcludedByGlob: 2, ExcludedBySize: 1}, "7/10 items (2 excluded by glob, 1 excluded by size)"},
+	}
+	for _, tt := range tests {
+		got := tt.s.String()
+		if got != tt.expected {
+			t.Errorf("FilterSummary%+v.String() = %q, want %q", tt.s, got, tt.expected)
+		}
 	}
 }
