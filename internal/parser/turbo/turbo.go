@@ -93,15 +93,17 @@ func (s *Scraper) parseAlbum(ctx context.Context, rawURL string) ([]model.MediaI
 
 		var size int64
 		if sizeStr != "" {
-			fmt.Sscanf(sizeStr, "%d", &size)
+			if n, _ := fmt.Sscanf(sizeStr, "%d", &size); n != 1 {
+				size = 0
+			}
 		}
 
 		items = append(items, model.MediaItem{
-			URL:      fmt.Sprintf("%s/d/%s", s.baseURL, fileID),
-			Title:    fileName,
-			Size:     size,
-			Type:     model.MediaTypeForName(fileName),
-			Resolve:  s.resolveFile(ctx, fileID),
+			URL:     fmt.Sprintf("%s/d/%s", s.baseURL, fileID),
+			Title:   fileName,
+			Size:    size,
+			Type:    model.MediaTypeForName(fileName),
+			Resolve: s.resolveFile(ctx, fileID),
 		})
 	})
 
@@ -143,7 +145,9 @@ func (s *Scraper) parseFile(ctx context.Context, rawURL string) ([]model.MediaIt
 	var size int64
 	sizeText := doc.Find("#fileSizeBytes").Text()
 	if sizeText != "" {
-		fmt.Sscanf(strings.ReplaceAll(sizeText, ",", ""), "%d", &size)
+		if n, _ := fmt.Sscanf(strings.ReplaceAll(sizeText, ",", ""), "%d", &size); n != 1 {
+			size = 0
+		}
 	}
 
 	return []model.MediaItem{{

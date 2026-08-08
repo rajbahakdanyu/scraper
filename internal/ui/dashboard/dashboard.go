@@ -88,9 +88,9 @@ type Dashboard struct {
 	scraperFn  func(context.Context) ([]model.MediaItem, error)
 	loadingErr string
 
-	albumSlug        string
-	progressMu       sync.Mutex
-	pending          map[string]model.ProgressEvent
+	albumSlug         string
+	progressMu        sync.Mutex
+	pending           map[string]model.ProgressEvent
 	refreshTickActive bool
 
 	batchMode      bool

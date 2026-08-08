@@ -533,10 +533,10 @@ var siteDomains = map[string][]string{
 		"bunkr.is", "bunkr.to", "bunkr.ru", "bunkr.black", "bunkr.red",
 		"bunkr.ph", "bunkr.site", "bunkr.fi", "bunkr.pk", "bunkr.ac",
 	},
-	"goonbox":  {"goonbox.cr", "goonbox.to"},
-	"filester": {"filester.sh", "filester.me"},
+	"goonbox":    {"goonbox.cr", "goonbox.to"},
+	"filester":   {"filester.sh", "filester.me"},
 	"pixeldrain": {"pixeldrain.com"},
-	"turbo": {"turbo.cr"},
+	"turbo":      {"turbo.cr"},
 }
 
 // detectSite guesses which scraper module handles rawURL based on its host,
