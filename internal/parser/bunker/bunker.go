@@ -77,6 +77,16 @@ func (s *Scraper) Parse(ctx context.Context, albumURL string) ([]model.MediaItem
 		albumURL = albumURL[:idx]
 	}
 
+	// Single file URLs (/f/ID or /file/ID) — parse directly
+	// instead of going through the album page scraper.
+	if strings.Contains(albumURL, "/f/") || strings.Contains(albumURL, "/file/") {
+		item, err := s.parseFilePage(ctx, albumURL)
+		if err != nil {
+			return nil, err
+		}
+		return []model.MediaItem{item}, nil
+	}
+
 	doc, err := s.fetchDoc(ctx, albumURL)
 	if err != nil {
 		return nil, err

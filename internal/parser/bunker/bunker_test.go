@@ -448,3 +448,46 @@ func TestParseBunkerAlbumNoLinks(t *testing.T) {
 		t.Error("expected error for album with no file links")
 	}
 }
+
+func TestParseBunkerSingleFile(t *testing.T) {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/f/singlefile", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprintf(w, `<html><head><title>test video.mp4 | Bunkr</title></head><body>
+<a href="https://bunkr.cr/file/61567">Download</a></body></html>`)
+	})
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	scraper := newTestBunkerScraper()
+
+	items, err := scraper.Parse(context.Background(), ts.URL+"/f/singlefile")
+	if err != nil {
+		t.Fatalf("Parse single file /f/ID failed: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if items[0].Title != "test video.mp4" {
+		t.Errorf("expected title 'test video.mp4', got %q", items[0].Title)
+	}
+	if items[0].Resolve == nil {
+		t.Fatal("expected Resolve func for lazy signed-URL resolution")
+	}
+}
+
+func TestParseBunkerSingleFileNotFound(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	scraper := newTestBunkerScraper()
+
+	_, err := scraper.Parse(context.Background(), ts.URL+"/f/missing")
+	if err == nil {
+		t.Error("expected error for missing single file")
+	}
+}
