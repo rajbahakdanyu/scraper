@@ -3,14 +3,12 @@ package styles
 
 import "github.com/charmbracelet/lipgloss"
 
-// Color palette — cyberpunk neon on dark
+// Color palette — subdued on dark
 const (
-	ColorAccent  = "141" // purple
-	ColorCyan    = "51"  // bright cyan
-	ColorPink    = "213" // hot pink
-	ColorGreen   = "84"  // neon green
-	ColorRed     = "203" // coral red
-	ColorYellow  = "221" // soft yellow
+	ColorAccent  = "99"  // muted violet
+	ColorCyan    = "37"  // steel blue
+	ColorGreen   = "71"  // muted green
+	ColorRed     = "131" // muted crimson
 	ColorMuted   = "240" // dark gray
 	ColorDim     = "244" // medium gray
 	ColorText    = "252" // near-white
@@ -22,10 +20,8 @@ const (
 type Theme struct {
 	Accent    lipgloss.Style
 	Cyan      lipgloss.Style
-	Pink      lipgloss.Style
 	Success   lipgloss.Style
 	Error     lipgloss.Style
-	Warning   lipgloss.Style
 	Muted     lipgloss.Style
 	Dim       lipgloss.Style
 	Bright    lipgloss.Style
@@ -42,10 +38,8 @@ func DefaultTheme() Theme {
 	return Theme{
 		Accent:  lipgloss.NewStyle().Foreground(lipgloss.Color(ColorAccent)).Bold(true),
 		Cyan:    lipgloss.NewStyle().Foreground(lipgloss.Color(ColorCyan)),
-		Pink:    lipgloss.NewStyle().Foreground(lipgloss.Color(ColorPink)).Bold(true),
 		Success: lipgloss.NewStyle().Foreground(lipgloss.Color(ColorGreen)).Bold(true),
 		Error:   lipgloss.NewStyle().Foreground(lipgloss.Color(ColorRed)).Bold(true),
-		Warning: lipgloss.NewStyle().Foreground(lipgloss.Color(ColorYellow)),
 		Muted:   lipgloss.NewStyle().Foreground(lipgloss.Color(ColorMuted)),
 		Dim:     lipgloss.NewStyle().Foreground(lipgloss.Color(ColorDim)),
 		Bright:  lipgloss.NewStyle().Foreground(lipgloss.Color(ColorText)).Bold(true),
