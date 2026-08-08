@@ -781,7 +781,7 @@ func (d *Dashboard) refreshRows() {
 				}
 			}
 			styled := d.theme.Cyan.Bold(true).Render(headerText)
-			d.rows[i] = table.Row{styled, "", "", ""}
+			d.rows[i] = table.Row{"", styled, "", ""}
 			continue
 		}
 

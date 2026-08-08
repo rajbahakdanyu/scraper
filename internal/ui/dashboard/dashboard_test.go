@@ -967,3 +967,27 @@ func TestProgressAppliedViaRefreshTick(t *testing.T) {
 		t.Errorf("expected status downloading, got %v", d.states[0].status)
 	}
 }
+
+func TestHeaderRowRenderedInVisibleColumn(t *testing.T) {
+	urls := []DashAlbumURL{
+		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/test", Slug: "test", Dest: "/tmp/test"},
+	}
+	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 10)}
+	d := NewBatch(fd, "/tmp", urls)
+
+	items := []model.MediaItem{
+		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100},
+	}
+	msg := batchScrapeMsg{album: urls[0], idx: 0, items: items}
+	d.handleBatchScrape(msg)
+	d.refreshRows()
+
+	// Header row (index 0) must have its styled text in column 1 (FILE column),
+	// not column 0 (the 2-char-wide mark column) where it would be invisible.
+	if d.rows[0][0] != "" {
+		t.Errorf("header row column 0 should be empty, got %q", d.rows[0][0])
+	}
+	if d.rows[0][1] == "" {
+		t.Error("header row column 1 must contain the styled header text")
+	}
+}
