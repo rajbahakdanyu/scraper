@@ -531,7 +531,7 @@ var siteDomains = map[string][]string{
 	"bunker": {
 		"bunkr.cr", "bunkr.su", "bunkrr.su", "bunkr.si", "bunkr.la",
 		"bunkr.is", "bunkr.to", "bunkr.ru", "bunkr.black", "bunkr.red",
-		"bunkr.ph", "bunkr.site", "bunkr.fi", "bunkr.pk",
+		"bunkr.ph", "bunkr.site", "bunkr.fi", "bunkr.pk", "bunkr.ac",
 	},
 	"goonbox":  {"goonbox.cr", "goonbox.to"},
 	"filester": {"filester.sh", "filester.me"},
