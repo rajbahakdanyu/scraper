@@ -27,6 +27,7 @@ import (
 	"github.com/rajbahakdanyu/scraper/internal/parser/cyberdrop"
 	"github.com/rajbahakdanyu/scraper/internal/parser/filester"
 	"github.com/rajbahakdanyu/scraper/internal/parser/goonbox"
+	"github.com/rajbahakdanyu/scraper/internal/parser/pixeldrain"
 	"github.com/rajbahakdanyu/scraper/internal/parser/youtube"
 	"github.com/rajbahakdanyu/scraper/internal/ui/dashboard"
 )
@@ -407,6 +408,7 @@ func NewRootCmd() *cobra.Command {
 		newSiteCmd("bunker <url>", "Scrape and download Bunker content", "bunker", func() model.Scraper { return bunker.NewBunkerScraper() }),
 		newSiteCmd("goonbox <url>", "Scrape and download a GoonBox album", "goonbox", func() model.Scraper { return goonbox.NewGoonBoxScraper() }),
 		newSiteCmd("filester <url>", "Scrape and download a Filester file or folder", "filester", func() model.Scraper { return filester.NewFilesterScraper() }),
+		newSiteCmd("pixeldrain <url>", "Scrape and download a Pixeldrain list or single file", "pixeldrain", func() model.Scraper { return pixeldrain.NewPixeldrainScraper() }),
 		&cobra.Command{
 			Use:   "version",
 			Short: "Print the version",
@@ -459,6 +461,7 @@ func scraperRegistry(proxyURL string, cookies []*http.Cookie) (map[string]model.
 		{"bunker", func() model.Scraper { return bunker.NewBunkerScraper() }, func(c []*http.Cookie) model.Scraper { return bunker.NewBunkerScraperWithCookies(c) }, func(p string) (model.Scraper, error) { return bunker.NewBunkerScraperWithProxy(p) }},
 		{"goonbox", func() model.Scraper { return goonbox.NewGoonBoxScraper() }, func(c []*http.Cookie) model.Scraper { return goonbox.NewGoonBoxScraperWithCookies(c) }, func(p string) (model.Scraper, error) { return goonbox.NewGoonBoxScraperWithProxy(p) }},
 		{"filester", func() model.Scraper { return filester.NewFilesterScraper() }, func(c []*http.Cookie) model.Scraper { return filester.NewFilesterScraperWithCookies(c) }, func(p string) (model.Scraper, error) { return filester.NewFilesterScraperWithProxy(p) }},
+		{"pixeldrain", func() model.Scraper { return pixeldrain.NewPixeldrainScraper() }, func(c []*http.Cookie) model.Scraper { return pixeldrain.NewPixeldrainScraperWithCookies(c) }, func(p string) (model.Scraper, error) { return pixeldrain.NewPixeldrainScraperWithProxy(p) }},
 	}
 	for _, constructors := range constructors {
 		var scraper model.Scraper
@@ -529,6 +532,7 @@ var siteDomains = map[string][]string{
 	},
 	"goonbox":  {"goonbox.cr", "goonbox.to"},
 	"filester": {"filester.sh", "filester.me"},
+	"pixeldrain": {"pixeldrain.com"},
 }
 
 // detectSite guesses which scraper module handles rawURL based on its host,
@@ -551,7 +555,7 @@ func detectSite(rawURL string) (string, error) {
 			}
 		}
 	}
-	return "", fmt.Errorf("could not auto-detect a site for %q (available: youtube, cyberdrop, bunker, goonbox, filester)", rawURL)
+	return "", fmt.Errorf("could not auto-detect a site for %q (available: youtube, cyberdrop, bunker, goonbox, filester, pixeldrain)", rawURL)
 }
 
 // runWithScraper launches the TUI immediately. The scraper runs in the
