@@ -863,3 +863,107 @@ func TestStaleFailedProgressDoesNotCorruptRetry(t *testing.T) {
 		t.Fatal("stale StatusFailed progress event corrupted a retried item")
 	}
 }
+
+func TestRefreshTickReArmsWhileDownloadsActive(t *testing.T) {
+	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 10)}
+	items := []model.MediaItem{
+		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100},
+	}
+	d := New(instantItems(items), fd, t.TempDir(), "cyberdrop")
+	d.Update(scrapeResultMsg{items: items})
+
+	// Ensure a download is active (still pending/downloading)
+	if !d.spinnerActive() {
+		t.Fatal("expected spinner active while download is pending")
+	}
+
+	_, cmd := d.Update(refreshTickMsg{})
+	if cmd == nil {
+		t.Fatal("expected refresh tick to re-arm while downloads are active")
+	}
+}
+
+func TestRefreshTickStopsWhenIdle(t *testing.T) {
+	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 10)}
+	items := []model.MediaItem{
+		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100},
+	}
+	d := New(instantItems(items), fd, t.TempDir(), "cyberdrop")
+	d.Update(scrapeResultMsg{items: items})
+
+	// Mark the download complete so spinnerActive returns false.
+	d.applyDone(downloadDoneMsg{key: d.states[0].item.Key()})
+	if d.spinnerActive() {
+		t.Fatal("expected spinner inactive after all downloads done")
+	}
+
+	// Start the tick chain.
+	d.ensureRefreshTicker()
+	if !d.refreshTickActive {
+		t.Fatal("expected refreshTickActive after ensureRefreshTicker")
+	}
+
+	// Tick fires — no downloads active and no pending progress.
+	_, cmd := d.Update(refreshTickMsg{})
+	if cmd != nil {
+		t.Fatal("expected refresh tick to stop when idle")
+	}
+	if d.refreshTickActive {
+		t.Fatal("expected refreshTickActive to be cleared when tick stops")
+	}
+}
+
+func TestEnsureRefreshTickerIsIdempotent(t *testing.T) {
+	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 10)}
+	items := []model.MediaItem{
+		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100},
+	}
+	d := New(instantItems(items), fd, t.TempDir(), "cyberdrop")
+	// Bypass handleScrapeResult (which calls ensureRefreshTicker) so we
+	// can test idempotency from a clean state.
+	d.states = []itemState{{item: items[0], status: model.StatusPending, total: items[0].Size}}
+	d.phase = phaseDownload
+
+	cmd1 := d.ensureRefreshTicker()
+	if cmd1 == nil {
+		t.Fatal("first ensureRefreshTicker should return a command")
+	}
+
+	cmd2 := d.ensureRefreshTicker()
+	if cmd2 != nil {
+		t.Fatal("second ensureRefreshTicker should return nil (idempotent)")
+	}
+}
+
+func TestProgressAppliedViaRefreshTick(t *testing.T) {
+	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 10)}
+	items := []model.MediaItem{
+		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100},
+	}
+	d := New(instantItems(items), fd, t.TempDir(), "cyberdrop")
+	d.Update(scrapeResultMsg{items: items})
+
+	// Simulate drainProgress having populated the pending map.
+	d.progressMu.Lock()
+	d.pending = map[string]model.ProgressEvent{
+		d.states[0].item.Key(): {
+			Item:   d.states[0].item,
+			Bytes:  42,
+			Total:  100,
+			Status: model.StatusDownloading,
+		},
+	}
+	d.progressMu.Unlock()
+
+	_, cmd := d.Update(refreshTickMsg{})
+	if cmd == nil {
+		t.Fatal("expected tick to re-arm while download active")
+	}
+
+	if d.states[0].bytes != 42 {
+		t.Errorf("expected progress applied via tick, got bytes=%d", d.states[0].bytes)
+	}
+	if d.states[0].status != model.StatusDownloading {
+		t.Errorf("expected status downloading, got %v", d.states[0].status)
+	}
+}

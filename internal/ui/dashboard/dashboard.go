@@ -88,11 +88,10 @@ type Dashboard struct {
 	scraperFn  func(context.Context) ([]model.MediaItem, error)
 	loadingErr string
 
-	sendFunc       func(tea.Msg)
-	albumSlug      string
-	progressMu     sync.Mutex
-	pending        map[string]model.ProgressEvent
-	refreshPending bool
+	albumSlug        string
+	progressMu       sync.Mutex
+	pending          map[string]model.ProgressEvent
+	refreshTickActive bool
 
 	batchMode      bool
 	batchURLs      []DashAlbumURL
@@ -138,10 +137,6 @@ func New(scraperFn func(context.Context) ([]model.MediaItem, error), dl Download
 	}
 	d.scrapeCtx, d.cancelScrape = context.WithCancel(context.Background())
 	return d
-}
-
-func (d *Dashboard) SetSendFunc(send func(tea.Msg)) {
-	d.sendFunc = send
 }
 
 // SetAlbumSlug stores the URL slug for creating album subfolders.
@@ -202,7 +197,7 @@ func (d *Dashboard) Init() tea.Cmd {
 // --- Messages ---
 
 type progressMsg model.ProgressEvent
-type refreshMsg struct{}
+type refreshTickMsg struct{}
 type downloadDoneMsg struct {
 	key string
 	err error
@@ -325,10 +320,14 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		d.refreshRows()
 		return d, nil
 
-	case refreshMsg:
+	case refreshTickMsg:
 		d.applyPendingProgress()
 		d.refreshRows()
-		return d, tea.Tick(time.Second/15, func(t time.Time) tea.Msg { return refreshMsg{} })
+		if d.spinnerActive() || d.hasPending() {
+			return d, tea.Tick(time.Second/15, func(t time.Time) tea.Msg { return refreshTickMsg{} })
+		}
+		d.refreshTickActive = false
+		return d, nil
 
 	case downloadDoneMsg:
 		d.applyDone(msg)
@@ -408,20 +407,17 @@ func (d *Dashboard) handleScrapeResult(msg scrapeResultMsg) (tea.Model, tea.Cmd)
 
 	var cmds []tea.Cmd
 	if d.downloader != nil {
-		// Start a background goroutine that continuously drains the progress
-		// channel and sends each event to the tea program. This avoids
-		// the re-arm pattern that starves downloadDoneMsg processing.
 		go d.drainProgress()
-		cmds = append(cmds, d.startAllDownloads())
+		cmds = append(cmds, d.startAllDownloads(), d.ensureRefreshTicker())
 	}
 	return d, tea.Batch(cmds...)
 }
 
 // drainProgress reads from the downloader's progress channel in a loop
-// and sends each event to the tea program via sendFunc. It exits when the
-// downloader closes the channel (Shutdown) and doesn't block the event loop.
+// and populates the pending map. It exits when the downloader closes the
+// channel (Shutdown). Progress is applied to the UI by the refresh ticker.
 func (d *Dashboard) drainProgress() {
-	if d.downloader == nil || d.sendFunc == nil {
+	if d.downloader == nil {
 		return
 	}
 	ch := d.downloader.Progress()
@@ -431,29 +427,28 @@ func (d *Dashboard) drainProgress() {
 			d.pending = make(map[string]model.ProgressEvent)
 		}
 		d.pending[evt.Item.Key()] = evt
-		sendRefresh := !d.refreshPending
-		d.refreshPending = true
 		d.progressMu.Unlock()
-		if sendRefresh {
-			d.sendFunc(refreshMsg{})
-		}
 	}
 }
 
-func (d *Dashboard) queueProgress(evt model.ProgressEvent) {
-	d.progressMu.Lock()
-	if d.pending == nil {
-		d.pending = make(map[string]model.ProgressEvent)
+func (d *Dashboard) ensureRefreshTicker() tea.Cmd {
+	if d.refreshTickActive {
+		return nil
 	}
-	d.pending[evt.Item.Key()] = evt
-	d.progressMu.Unlock()
+	d.refreshTickActive = true
+	return func() tea.Msg { return refreshTickMsg{} }
+}
+
+func (d *Dashboard) hasPending() bool {
+	d.progressMu.Lock()
+	defer d.progressMu.Unlock()
+	return len(d.pending) > 0
 }
 
 func (d *Dashboard) applyPendingProgress() {
 	d.progressMu.Lock()
 	pending := d.pending
 	d.pending = make(map[string]model.ProgressEvent)
-	d.refreshPending = false
 	d.progressMu.Unlock()
 	if len(pending) == 0 {
 		return
@@ -536,7 +531,7 @@ func (d *Dashboard) handleBatchScrape(msg batchScrapeMsg) (tea.Model, tea.Cmd) {
 		var cmds []tea.Cmd
 		if d.downloader != nil {
 			go d.drainProgress()
-			cmds = append(cmds, d.startAllDownloads())
+			cmds = append(cmds, d.startAllDownloads(), d.ensureRefreshTicker())
 		}
 		if d.batchRemaining > 0 {
 			cmds = append(cmds, d.startNextScrape())
@@ -659,7 +654,7 @@ func (d *Dashboard) retrySelected() tea.Cmd {
 	d.states[idx].lastErr = nil
 	d.downloader.Prepare(d.states[idx].item)
 	d.refreshRows()
-	return startDownload(d.downloader, d.states[idx].item, dest)
+	return tea.Batch(startDownload(d.downloader, d.states[idx].item, dest), d.ensureRefreshTicker())
 }
 
 func (d *Dashboard) startAllDownloads() tea.Cmd {

@@ -625,7 +625,6 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 			d.SetAlbumSlug(slug)
 
 			p := tea.NewProgram(d, tea.WithAltScreen())
-			d.SetSendFunc(func(msg tea.Msg) { p.Send(msg) })
 
 			_, err := p.Run()
 			return err
@@ -886,7 +885,6 @@ func runBatch(opts globalOptions, urls []string) error {
 			d := dashboard.NewBatch(dl, cfg.OutputDir, dashAlbums)
 
 			p := tea.NewProgram(d, tea.WithAltScreen())
-			d.SetSendFunc(func(msg tea.Msg) { p.Send(msg) })
 
 			_, err := p.Run()
 			return err
