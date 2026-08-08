@@ -1026,3 +1026,27 @@ func TestBatchHandlesEmptyAlbumWithoutCreatingDirectory(t *testing.T) {
 		t.Fatal("second album directory should exist")
 	}
 }
+
+func TestDownloadingRowUsesStaticMarker(t *testing.T) {
+	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 10)}
+	items := []model.MediaItem{
+		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100},
+	}
+	d := New(instantItems(items), fd, t.TempDir(), "test")
+	d.Update(scrapeResultMsg{items: items})
+
+	// Mark a row as downloading
+	d.applyProgress(model.ProgressEvent{
+		Item:   d.states[0].item,
+		Bytes:  50,
+		Total:  100,
+		Status: model.StatusDownloading,
+	})
+	d.refreshRows()
+
+	// The mark column for a downloading row must be "↓", not a spinner character.
+	mark := d.rows[0][0]
+	if mark != "↓" {
+		t.Errorf("expected static '↓' for downloading row, got %q", mark)
+	}
+}
