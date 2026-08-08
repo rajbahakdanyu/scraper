@@ -616,13 +616,13 @@ func TestRunBatchSelectsDownloaderBySiteAndWiresDestinations(t *testing.T) {
 	}
 
 	base := t.TempDir()
-	if err := runBatch(globalOptions{configPath: filepath.Join(t.TempDir(), "missing.yaml"), noTui: true}, []string{"https://cyberdrop.cr/a/album"}); err != nil {
+	if err := runBatch(globalOptions{configPath: filepath.Join(t.TempDir(), "missing.yaml"), noTui: true, output: base, outputSet: true}, []string{"https://cyberdrop.cr/a/album"}); err != nil {
 		t.Fatalf("generic batch failed: %v", err)
 	}
 	if genericCalls != 1 || youtubeCalls != 0 {
 		t.Fatalf("generic batch selected wrong downloader: generic=%d youtube=%d", genericCalls, youtubeCalls)
 	}
-	if len(genericDL.dests) != 1 || !strings.HasSuffix(genericDL.dests[0], filepath.Join("album")) {
+	if len(genericDL.dests) != 1 || !strings.HasSuffix(genericDL.dests[0], filepath.Join(base, "album")) {
 		t.Fatalf("generic batch destination = %v, want album slug under output", genericDL.dests)
 	}
 
