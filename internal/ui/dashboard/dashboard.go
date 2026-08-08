@@ -473,6 +473,20 @@ func (d *Dashboard) handleBatchScrape(msg batchScrapeMsg) (tea.Model, tea.Cmd) {
 	d.batchRemaining--
 	d.batchIdx++
 
+	if len(msg.items) == 0 {
+		if msg.err != nil {
+			d.status = "warning: " + msg.err.Error()
+		}
+		d.refreshRows()
+		if d.batchRemaining > 0 {
+			return d, d.startNextScrape()
+		}
+		if len(d.states) == 0 {
+			d.phase = phaseDone
+		}
+		return d, nil
+	}
+
 	wasFirstAlbum := d.phase == phaseLoading
 
 	if err := os.MkdirAll(msg.album.Dest, 0750); err != nil {

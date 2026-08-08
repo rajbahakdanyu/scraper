@@ -991,3 +991,38 @@ func TestHeaderRowRenderedInVisibleColumn(t *testing.T) {
 		t.Error("header row column 1 must contain the styled header text")
 	}
 }
+
+func TestBatchHandlesEmptyAlbumWithoutCreatingDirectory(t *testing.T) {
+	root := t.TempDir()
+	albumDir := filepath.Join(root, "empty-album")
+	urls := []DashAlbumURL{
+		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/empty", Slug: "empty-album", Dest: albumDir},
+		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/next", Slug: "next", Dest: filepath.Join(root, "next")},
+	}
+	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 10)}
+	d := NewBatch(fd, root, urls)
+
+	// First album returns zero items (e.g., all filtered).
+	msg := batchScrapeMsg{album: urls[0], idx: 0, items: nil}
+	_, cmd := d.handleBatchScrape(msg)
+
+	// Must not have created the empty album's directory.
+	if _, err := os.Stat(albumDir); !os.IsNotExist(err) {
+		t.Fatalf("empty album directory should not exist, got: %v", err)
+	}
+	// Must proceed to next album.
+	if cmd == nil {
+		t.Fatal("expected next scrape command after empty album")
+	}
+
+	// Second album arrives normally — should work.
+	items := []model.MediaItem{{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100}}
+	msg2 := batchScrapeMsg{album: urls[1], idx: 1, items: items}
+	_, cmd2 := d.handleBatchScrape(msg2)
+	if cmd2 == nil {
+		t.Fatal("expected download commands after normal album")
+	}
+	if _, err := os.Stat(urls[1].Dest); os.IsNotExist(err) {
+		t.Fatal("second album directory should exist")
+	}
+}
