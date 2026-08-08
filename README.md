@@ -36,6 +36,7 @@ subcommand:
 ```bash
 ./scraper https://youtu.be/VIDEO_ID
 ./scraper https://filester.sh/f/FOLDER_ID
+./scraper https://pixeldrain.com/l/CSbjLYKs
 ```
 
 Or use an explicit subcommand (useful for scripting, or if detection ever
@@ -48,6 +49,8 @@ guesses wrong):
 ./scraper goonbox https://goonbox.cr/a/ALBUM_ID
 ./scraper filester https://filester.sh/f/FOLDER_ID
 ./scraper filester https://filester.sh/d/FILE_SLUG
+./scraper pixeldrain https://pixeldrain.com/l/CSbjLYKs
+./scraper pixeldrain https://pixeldrain.com/u/qZz2NiiW
 ```
 Preview what would be downloaded — item count and total size — without
 downloading anything or launching the TUI:
@@ -229,6 +232,7 @@ YouTube client library does not expose a stable entity validator/range contract.
 | Bunker    | `bunkr.cr/a/ALBUM_ID`              | API + token signing, parallel fetch  |
 | GoonBox   | `goonbox.cr/a/ALBUM_ID`            | JSON API, paginated albums           |
 | Filester  | `filester.sh/f/ID` or `/d/SLUG`    | HTML folder listing + signed download tokens, paginated |
+| Pixeldrain| `pixeldrain.com/l/LIST_ID` or `/u/FILE_ID` | JSON API, direct download, Range-request resume |
 
 ## Development
 
