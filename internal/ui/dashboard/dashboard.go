@@ -727,7 +727,6 @@ func (d *Dashboard) applyProgress(evt model.ProgressEvent) {
 		d.states[i].speed = float64(evt.Bytes) / elapsed
 	}
 	d.markDirty(i)
-	return
 }
 
 func (d *Dashboard) applyDone(msg downloadDoneMsg) {
