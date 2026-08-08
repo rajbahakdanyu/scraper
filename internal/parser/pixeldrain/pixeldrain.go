@@ -59,7 +59,11 @@ func (s *Scraper) Parse(ctx context.Context, rawURL string) ([]model.MediaItem, 
 	if strings.Contains(rawURL, "/u/") {
 		return s.parseFile(ctx, rawURL)
 	}
-	return nil, fmt.Errorf("pixeldrain: unsupported URL format (expected /l/ or /u/): %s", rawURL)
+	// Direct file or API links: /api/file/ID, /file/ID, /api/file/ID?download
+	if strings.Contains(rawURL, "/file/") || strings.Contains(rawURL, "/api/file/") {
+		return s.parseFile(ctx, rawURL)
+	}
+	return nil, fmt.Errorf("pixeldrain: unsupported URL format (expected /l/, /u/, or /file/): %s", rawURL)
 }
 
 func (s *Scraper) parseList(ctx context.Context, rawURL string) ([]model.MediaItem, error) {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/rajbahakdanyu/scraper/internal/model"
@@ -223,5 +224,65 @@ func TestMediaTypeDetection(t *testing.T) {
 	scraper := newTestScraper()
 	if scraper.Name() != "pixeldrain" {
 		t.Errorf("expected name pixeldrain, got %s", scraper.Name())
+	}
+}
+
+func TestParseAPIURL(t *testing.T) {
+	mux := http.NewServeMux()
+	var called string
+	mux.HandleFunc("/file/", func(w http.ResponseWriter, r *http.Request) {
+		called = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":     true,
+			"id":          "qZz2NiiW",
+			"name":        "vid 9.mp4",
+			"size":        float64(341367083),
+			"mime_type":   "video/mp4",
+			"hash_sha256": "794ce9c4",
+		})
+	})
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	scraper := newTestScraper()
+	scraper.baseURL = ts.URL
+
+	items, err := scraper.Parse(context.Background(), "https://pixeldrain.com/api/file/qZz2NiiW?download")
+	if err != nil {
+		t.Fatalf("Parse /api/file/ID?download failed: %v", err)
+	}
+	if len(items) != 1 || items[0].Title != "vid 9.mp4" {
+		t.Fatalf("expected 1 item with title vid 9.mp4, got %d items", len(items))
+	}
+	if !strings.Contains(called, "qZz2NiiW") {
+		t.Errorf("expected API call for qZz2NiiW, got %s", called)
+	}
+}
+
+func TestParseDirectFileURL(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/file/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":     true,
+			"id":          "abc123",
+			"name":        "test.mp4",
+			"size":        float64(100),
+			"mime_type":   "video/mp4",
+			"hash_sha256": "abcdef",
+		})
+	})
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	scraper := newTestScraper()
+	scraper.baseURL = ts.URL
+
+	_, err := scraper.Parse(context.Background(), ts.URL+"/file/abc123")
+	if err != nil {
+		t.Fatalf("Parse /file/ID failed: %v", err)
 	}
 }
