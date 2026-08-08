@@ -234,6 +234,8 @@ YouTube client library does not expose a stable entity validator/range contract.
 | Filester  | `filester.sh/f/ID` or `/d/SLUG`    | HTML folder listing + signed download tokens, paginated |
 | Pixeldrain| `pixeldrain.com/l/LIST_ID` or `/u/FILE_ID` | JSON API, direct download, Range-request resume |
 
+Pixeldrain has a per-IP daily bandwidth cap (~6-10 GB for free users). If you hit this, use `--proxy` to route through a different IP, or wait for the cap to reset (24h). The scraper's Range-request resume also reuses partial downloads across runs, so an interrupted multi-GB file continues where it left off.
+
 ## Development
 
 ```bash
