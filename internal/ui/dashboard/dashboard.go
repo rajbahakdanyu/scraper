@@ -802,7 +802,7 @@ func (d *Dashboard) refreshRows() {
 		mark := " "
 		switch st.status {
 		case model.StatusDownloading:
-			mark = "↓"
+			mark = d.spinner.View()
 		case model.StatusCompleted:
 			mark = "✓"
 		case model.StatusFailed:
