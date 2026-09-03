@@ -176,6 +176,23 @@ func TestLoadGlobalConfigHonorsExplicitDefaultValues(t *testing.T) {
 	}
 }
 
+func TestLoadGlobalConfigRejectsUnreasonableConcurrency(t *testing.T) {
+	opts := globalOptions{
+		configPath:     emptyTestConfig(t),
+		concurrency:    2000000000,
+		concurrencySet: true,
+	}
+	if _, err := loadGlobalConfig(opts); err == nil {
+		t.Fatal("expected an error for --concurrent 2000000000")
+	}
+
+	opts.concurrency = 0
+	opts.concurrencySet = true
+	if _, err := loadGlobalConfig(opts); err == nil {
+		t.Fatal("expected an error for --concurrent 0")
+	}
+}
+
 func TestExpandHomePath(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

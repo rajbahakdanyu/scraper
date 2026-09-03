@@ -87,6 +87,9 @@ func loadGlobalConfig(opts globalOptions) (*config.Config, error) {
 	if opts.concurrencySet {
 		cfg.ConcurrentDownloads = opts.concurrency
 	}
+	if cfg.ConcurrentDownloads < 1 || cfg.ConcurrentDownloads > 256 {
+		return nil, fmt.Errorf("invalid --concurrent %d (must be between 1 and 256)", cfg.ConcurrentDownloads)
+	}
 	if opts.rateLimitSet {
 		cfg.RateLimit = opts.rateLimit
 	}
