@@ -215,7 +215,11 @@ func parseSize(s string) (int64, error) {
 		return 0, fmt.Errorf("invalid size %q: must not be negative", s)
 	}
 	scaled := n * mult
-	if math.IsNaN(scaled) || math.IsInf(scaled, 0) || scaled > math.MaxInt64 {
+	// float64(math.MaxInt64) is exactly 2^63, which int64 cannot represent —
+	// and any float in (2^63 - 1024, 2^63] rounds to it. Compare against
+	// 1<<63 so the boundary itself is rejected before the conversion
+	// overflows into a negative value.
+	if math.IsNaN(scaled) || math.IsInf(scaled, 0) || scaled >= float64(1<<63) {
 		return 0, fmt.Errorf("invalid size %q: out of range", s)
 	}
 	return int64(scaled), nil

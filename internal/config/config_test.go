@@ -265,3 +265,20 @@ func TestParseSizeInvalid(t *testing.T) {
 		}
 	}
 }
+
+func TestParseSizeRejectsInt64OverflowBoundary(t *testing.T) {
+	// 2^63 exactly: float64(math.MaxInt64) rounds to this value, so the old
+	// `scaled > math.MaxInt64` guard admitted it and int64() conversion
+	// overflowed to a negative number.
+	for _, s := range []string{"9223372036854775808", "8796093022208G"} {
+		n, err := ParseSize(s)
+		if err == nil {
+			t.Errorf("ParseSize(%q) = %d, want error (2^63 boundary)", s, n)
+		}
+	}
+	// Values safely below the boundary still parse.
+	n, err := ParseSize("1G")
+	if err != nil || n != 1<<30 {
+		t.Errorf("ParseSize(1G) = %d, %v; want %d, nil", n, err, 1<<30)
+	}
+}
