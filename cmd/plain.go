@@ -585,6 +585,26 @@ batchLoop:
 			continue
 		}
 
+		fi, lerr := os.Lstat(a.Dest)
+		if lerr != nil {
+			aErr := fmt.Errorf("stat album directory: %w", lerr)
+			writeJSONLine(out, model.JSONEvent{Event: "album_error", Site: a.Site, URL: a.URL, Slug: a.Slug, Error: aErr.Error()})
+			allErrs = append(allErrs, aErr)
+			if albumIdx+1 < len(albums) {
+				scrapeCh = startBatchScrape(ctx, abort, albums[albumIdx+1])
+			}
+			continue
+		}
+		if fi.Mode()&os.ModeSymlink != 0 {
+			aErr := fmt.Errorf("refusing to use symlinked output directory: %s", a.Dest)
+			writeJSONLine(out, model.JSONEvent{Event: "album_error", Site: a.Site, URL: a.URL, Slug: a.Slug, Error: aErr.Error()})
+			allErrs = append(allErrs, aErr)
+			if albumIdx+1 < len(albums) {
+				scrapeCh = startBatchScrape(ctx, abort, albums[albumIdx+1])
+			}
+			continue
+		}
+
 		writeJSONLine(out, model.JSONEvent{Event: "album_start", Site: a.Site, URL: a.URL, Slug: a.Slug, Total: len(items)})
 
 		downloadsDone := make(chan struct{})

@@ -930,3 +930,37 @@ func TestRunBatchPlainSkipsSymlinkedAlbumAndContinues(t *testing.T) {
 		t.Errorf("second album should still download, dests=%v", dl.dests)
 	}
 }
+
+func TestRunBatchJSONRefusesSymlinkedAlbumDir(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "outside")
+	if err := os.Mkdir(target, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(root, "linked")); err != nil {
+		t.Fatal(err)
+	}
+
+	dl := newFakePlainDownloader()
+	scraper := &mockScraper{items: []model.MediaItem{
+		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100},
+	}}
+	albums := []dashboard.DashAlbumURL{
+		{Site: "test", URL: "https://example.com/1", Slug: "linked", Dest: filepath.Join(root, "linked"), Scraper: scraper},
+	}
+
+	var out bytes.Buffer
+	err := runBatchJSON(dl, albums, root, "", "", &out)
+	if err == nil {
+		t.Fatal("expected a partial error naming the symlinked album")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Errorf("expected symlink refusal in error, got: %v", err)
+	}
+	if len(dl.dests) != 0 {
+		t.Errorf("no downloads should go through a symlinked dir, got %v", dl.dests)
+	}
+	if !strings.Contains(out.String(), "album_error") {
+		t.Errorf("expected an album_error JSON event, got: %q", out.String())
+	}
+}
