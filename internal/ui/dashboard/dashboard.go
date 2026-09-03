@@ -575,7 +575,8 @@ func (d *Dashboard) handleBatchScrape(msg batchScrapeMsg) (tea.Model, tea.Cmd) {
 	}
 	if d.batchRemaining > 0 {
 		cmds = append(cmds, d.startNextScrape())
-	} else if msg.err != nil {
+	}
+	if msg.err != nil && len(msg.items) > 0 {
 		d.status = "warning: " + msg.err.Error()
 	}
 	return d, tea.Batch(cmds...)

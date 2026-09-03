@@ -774,12 +774,6 @@ type Downloader struct {
 	skipSum   bool
 	quality   int    // maxHeight; 0 = no cap
 	audioOnly string // "" or "m4a"/"mp3"
-	// wg tracks in-flight Download calls. Shutdown closes the progress
-	// channel only after wg drains, so a sendProgress can never hit a
-	// closed channel. shuttingDown (guarded by mu) makes post-Shutdown
-	// Download calls fail fast instead of joining wg.
-	wg           sync.WaitGroup
-	shuttingDown bool
 }
 
 func NewDownloaderWithConfig(scraper *Scraper, config DownloaderConfig) (*Downloader, error) {
@@ -910,7 +904,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) (string, error)
 
 	switch {
 	case err == nil:
-		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCompleted, Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
+		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCompleted, Filename: finalPath, Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
 		return finalPath, nil
 	case ctx.Err() != nil:
 		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled, Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
@@ -932,10 +926,8 @@ func (d *Downloader) Cancel(item model.MediaItem) {
 // fetches, ffmpeg muxes, and downloads still waiting on the concurrency
 // semaphore — and closes the progress channel once the last in-flight
 // Download returns, so a consumer ranging over Progress() terminates.
-// sendProgress is only ever called from Download goroutines (tracked by
-// d.wg), so closing after they all return can never panic with a send on
-// a closed channel. Shutdown is idempotent and non-blocking (the channel
-// closes asynchronously); afterwards Download calls fail fast instead of
+// Shutdown is idempotent and non-blocking (the channel closes
+// asynchronously); afterwards Download calls fail fast instead of
 // starting new work.
 func (d *Downloader) Shutdown() {
 	d.Core.Shutdown()

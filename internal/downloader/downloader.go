@@ -405,12 +405,12 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, res
 	var unknownSizeLimit *io.LimitedReader
 	unknownSize := total <= 0 || (existing > 0 && resp.ContentLength < 0)
 	if unknownSize {
-		unknownSizeLimit = &io.LimitedReader{R: tee, N: MaxUnknownFileSize}
+		unknownSizeLimit = &io.LimitedReader{R: tee, N: MaxUnknownFileSize + 1}
 		source = unknownSizeLimit
 	}
 	copiedBytes, copyErr := io.CopyBuffer(out, source, make([]byte, 512*1024))
 	closeErr := out.Close()
-	if unknownSizeLimit != nil && copiedBytes >= MaxUnknownFileSize {
+	if unknownSizeLimit != nil && copiedBytes > MaxUnknownFileSize {
 		err := model.NewNonRetryable(fmt.Errorf("download exceeds maximum unknown file size of %d bytes", MaxUnknownFileSize))
 		return "", errors.Join(err, closeErr)
 	}
@@ -468,7 +468,7 @@ func (pr *progressReader) Read(p []byte) (int, error) {
 	if n > 0 {
 		if pr.limiter != nil {
 			if waitErr := pr.limiter.WaitN(pr.ctx, n); waitErr != nil {
-				return n, waitErr
+				return 0, waitErr
 			}
 		}
 		pr.read += int64(n)

@@ -196,6 +196,29 @@ func TestDownloadUnknownLengthExceedsCapDiscardsPartial(t *testing.T) {
 	}
 }
 
+func TestDownloadUnknownLengthExactCapSucceeds(t *testing.T) {
+	oldMax := MaxUnknownFileSize
+	MaxUnknownFileSize = 1024
+	defer func() { MaxUnknownFileSize = oldMax }()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.(http.Flusher).Flush()
+		_, _ = w.Write(bytes.Repeat([]byte("x"), 1024)) // exactly the cap
+	}))
+	defer ts.Close()
+
+	dl := newTestDownloader(1, 0, "")
+	dest := t.TempDir()
+	item := model.MediaItem{URL: ts.URL, Title: "exact-cap.bin"}
+	got, err := dl.Download(item, dest)
+	if err != nil {
+		t.Fatalf("a download of exactly MaxUnknownFileSize bytes must succeed, got: %v", err)
+	}
+	if info, statErr := os.Stat(got); statErr != nil || info.Size() != 1024 {
+		t.Fatalf("downloaded file = %s, want 1024 bytes on disk", got)
+	}
+}
+
 func TestDownloadRetry(t *testing.T) {
 	var attempts int32
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

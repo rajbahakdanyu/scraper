@@ -655,6 +655,29 @@ func TestBatchModeSpinnerActiveWhileScraping(t *testing.T) {
 	}
 }
 
+func TestBatchPartialScrapeWarningVisibleMidBatch(t *testing.T) {
+	urls := []DashAlbumURL{
+		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/1", Slug: "one", Dest: "/tmp/one"},
+		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/2", Slug: "two", Dest: "/tmp/two"},
+		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/3", Slug: "three", Dest: "/tmp/three"},
+	}
+	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 10)}
+	d := NewBatch(fd, "/tmp", urls)
+
+	first := batchScrapeMsg{album: urls[0], idx: 0, items: []model.MediaItem{{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100}}}
+	d.handleBatchScrape(first)
+
+	partial := batchScrapeMsg{album: urls[1], idx: 1, items: []model.MediaItem{{URL: "https://example.com/b.mp4", Title: "b.mp4", Size: 100}}, err: errors.New("one item failed")}
+	d.handleBatchScrape(partial)
+
+	if d.batchRemaining != 1 {
+		t.Fatalf("expected batchRemaining = 1 (mid-batch), got %d", d.batchRemaining)
+	}
+	if !strings.Contains(d.status, "warning:") || !strings.Contains(d.status, "one item failed") {
+		t.Fatalf("partial warning not surfaced mid-batch: %q", d.status)
+	}
+}
+
 func TestCancelSelectedSkipsHeader(t *testing.T) {
 	urls := []DashAlbumURL{
 		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/test", Slug: "test", Dest: "/tmp/test"},
