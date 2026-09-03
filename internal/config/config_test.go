@@ -112,6 +112,23 @@ func TestLoadConfigDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadConfigOmittingDiskCheckKeepsDefault(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "partial.yaml")
+	if err := os.WriteFile(path, []byte("user_agent: \"Scraper/1.0\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.DiskCheck {
+		t.Error("disk_check omitted from the config file must keep the true default")
+	}
+	if cfg.ConcurrentDownloads != 5 {
+		t.Errorf("concurrent_downloads omitted must keep default 5, got %d", cfg.ConcurrentDownloads)
+	}
+}
+
 func TestLoadExplicitMissingConfigErrors(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "typo.yaml")
 	if _, err := Load(missing); err == nil {

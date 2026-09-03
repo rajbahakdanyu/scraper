@@ -101,20 +101,20 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 
-	var cfg Config
+	// Seed from defaults so config-file keys that are omitted keep their
+	// defaults (yaml.v3 only overwrites keys present in the document).
+	cfg := *defaultConfig()
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, err
 	}
 
-	if cfg.OutputDir == "" {
-		cfg.OutputDir = defaultConfig().OutputDir
-	} else {
-		expanded, err := ExpandHomePath(cfg.OutputDir)
-		if err != nil {
-			return nil, err
-		}
-		cfg.OutputDir = expanded
+	expanded, err := ExpandHomePath(cfg.OutputDir)
+	if err != nil {
+		return nil, err
 	}
+	cfg.OutputDir = expanded
+	// Clamps still apply to explicit zero/negative values in the config
+	// file, which overwrite the seeded defaults above.
 	if cfg.ConcurrentDownloads <= 0 {
 		cfg.ConcurrentDownloads = 5
 	}
