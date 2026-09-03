@@ -446,10 +446,10 @@ func TestAlbumSlugForYouTubePlaylistUsesPlaylistID(t *testing.T) {
 			want:     "PLxyz123",
 		},
 		{
-			name:     "youtube video with no playlist falls back to the generic slug",
+			name:     "youtube video with no playlist falls back to the video ID",
 			siteName: "youtube",
 			url:      "https://www.youtube.com/watch?v=abc123",
-			want:     "watch",
+			want:     "abc123",
 		},
 		{
 			name:     "non-youtube sites always use the generic slug",
@@ -703,8 +703,8 @@ func TestRunBatchSelectsDownloaderBySiteAndWiresDestinations(t *testing.T) {
 	if youtubeCalls != 1 || genericCalls != 1 {
 		t.Fatalf("youtube batch selected wrong downloader: generic=%d youtube=%d", genericCalls, youtubeCalls)
 	}
-	if len(youtubeDL.dests) != 1 || !strings.HasSuffix(youtubeDL.dests[0], filepath.Join("watch")) {
-		t.Fatalf("youtube batch destination = %v, want watch slug under output", youtubeDL.dests)
+	if len(youtubeDL.dests) != 1 || !strings.HasSuffix(youtubeDL.dests[0], filepath.Join("abc")) {
+		t.Fatalf("youtube batch destination = %v, want video-ID slug under output", youtubeDL.dests)
 	}
 }
 

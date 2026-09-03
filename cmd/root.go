@@ -512,11 +512,15 @@ func extractSlug(rawURL string) string {
 // playlist URLs don't have a unique path segment (they're all just
 // "/playlist?list=..."), so extractSlug's generic "last path segment"
 // logic would put every playlist in the same "playlist" folder — use the
-// playlist ID instead for those.
+// playlist ID instead for those. Plain video URLs all share the "watch"
+// path, so fall back to the video ID for those too.
 func albumSlugFor(siteName, targetURL string) string {
 	if siteName == "youtube" {
 		if playlistID := youtube.ExtractPlaylistID(targetURL); playlistID != "" {
 			return playlistID
+		}
+		if videoID := youtube.ExtractVideoID(targetURL); videoID != "" {
+			return videoID
 		}
 	}
 	return extractSlug(targetURL)

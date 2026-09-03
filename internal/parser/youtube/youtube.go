@@ -692,6 +692,13 @@ func ExtractPlaylistID(rawURL string) string {
 	return u.Query().Get("list")
 }
 
+// ExtractVideoID returns the video ID from a watch or youtu.be URL, or ""
+// if rawURL is not a single-video URL.
+func ExtractVideoID(rawURL string) string {
+	s := &Scraper{}
+	return s.extractVideoID(rawURL)
+}
+
 // videoWatchURL builds a canonical watch URL from a bare video ID, so
 // MediaItem.URL is always something extractVideoID can round-trip.
 func videoWatchURL(videoID string) string {

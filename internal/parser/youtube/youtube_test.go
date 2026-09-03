@@ -187,6 +187,20 @@ func TestExtractPlaylistID(t *testing.T) {
 	}
 }
 
+func TestExtractVideoIDPackageFunction(t *testing.T) {
+	tests := []struct{ url, want string }{
+		{"https://www.youtube.com/watch?v=abc123XYZ_-", "abc123XYZ_-"},
+		{"https://youtu.be/abc123XYZ_-", "abc123XYZ_-"},
+		{"https://www.youtube.com/playlist?list=PL123", ""},
+		{"https://example.com/nothing", ""},
+	}
+	for _, tt := range tests {
+		if got := ExtractVideoID(tt.url); got != tt.want {
+			t.Errorf("ExtractVideoID(%q) = %q, want %q", tt.url, got, tt.want)
+		}
+	}
+}
+
 func TestVideoWatchURLRoundTripsWithExtractVideoID(t *testing.T) {
 	s := NewYouTubeScraper()
 	got := s.extractVideoID(videoWatchURL("dQw4w9WgXcQ"))
