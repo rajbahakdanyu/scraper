@@ -591,7 +591,26 @@ func writeResumeMetadata(tempPath string, metadata resumeMetadata) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(resumeMetadataPath(tempPath), data, 0600)
+	target := resumeMetadataPath(tempPath)
+	// Write to a temp file and rename into place: rename replaces a symlink
+	// instead of writing through it, so a planted link cannot redirect the
+	// write at an arbitrary victim file (same defense as the checksum sidecar).
+	temp, err := os.CreateTemp(filepath.Dir(target), ".resume-*")
+	if err != nil {
+		return err
+	}
+	tempName := temp.Name()
+	defer os.Remove(tempName)
+	if err := temp.Chmod(0600); err != nil {
+		return errors.Join(err, temp.Close())
+	}
+	if _, err := temp.Write(data); err != nil {
+		return errors.Join(err, temp.Close())
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tempName, target)
 }
 
 func removeFiles(paths ...string) error {

@@ -1014,6 +1014,31 @@ func TestWriteResumeMetadataUsesOwnerOnlyPermissions(t *testing.T) {
 	}
 }
 
+func TestWriteResumeMetadataRefusesSymlinkedTarget(t *testing.T) {
+	root := t.TempDir()
+	victim := filepath.Join(root, "victim.txt")
+	if err := os.WriteFile(victim, []byte("do not clobber"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	tempPath := filepath.Join(root, "file.mp4.part")
+	link := resumeMetadataPath(tempPath)
+	if err := os.Symlink(victim, link); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := writeResumeMetadata(tempPath, resumeMetadata{URL: "https://example.com"}); err != nil {
+		t.Fatalf("writeResumeMetadata: %v", err)
+	}
+
+	data, err := os.ReadFile(victim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "do not clobber" {
+		t.Fatalf("symlinked victim file was clobbered: %q", data)
+	}
+}
+
 // TestDownloadResumesAfterSignedURLRotation is the cross-run-resume win: an
 // interrupted run leaves a .part plus resume metadata tied to an OLD
 // signed URL; the next run resolves a FRESH signed URL for the SAME
