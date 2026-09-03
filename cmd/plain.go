@@ -484,6 +484,15 @@ func runJSON(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error)
 			writeJSONLine(out, model.JSONEvent{Event: "error", URL: targetURL, Error: fmt.Sprintf("create album directory: %v", dErr)})
 			return dErr
 		}
+		if fi, lerr := os.Lstat(albumDest); lerr != nil {
+			dErr := fmt.Errorf("stat album directory: %w", lerr)
+			writeJSONLine(out, model.JSONEvent{Event: "error", URL: targetURL, Error: dErr.Error()})
+			return dErr
+		} else if fi.Mode()&os.ModeSymlink != 0 {
+			dErr := fmt.Errorf("refusing to use symlinked output directory: %s", albumDest)
+			writeJSONLine(out, model.JSONEvent{Event: "error", URL: targetURL, Error: dErr.Error()})
+			return dErr
+		}
 		dest = albumDest
 	}
 
