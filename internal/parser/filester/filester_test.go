@@ -478,6 +478,60 @@ func TestParseFilesterSingleFile(t *testing.T) {
 	}
 }
 
+// TestParseFilesterSingleFileReResolvesFreshTokens guards against the bug
+// where the single-file resolver returned the signed URL captured at parse
+// time forever: tokens expire, so a 403-triggered re-resolve must perform a
+// fresh token exchange, not replay the stale signature.
+func TestParseFilesterSingleFileReResolvesFreshTokens(t *testing.T) {
+	var tokenRequests int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v2/api/public/download", func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&tokenRequests, 1)
+		var body struct {
+			FileSlug string `json:"file_slug"`
+		}
+		data, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(data, &body)
+		resp := map[string]string{
+			"file":  "file-" + body.FileSlug,
+			"token": fmt.Sprintf("tok-%s-%d", body.FileSlug, n),
+			"name":  body.FileSlug + "-name.bin",
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	})
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	scraper := newTestFilesterScraper()
+	scraper.baseURL = ts.URL
+	scraper.cdnURLs = []string{ts.URL}
+
+	items, err := scraper.Parse(context.Background(), ts.URL+"/d/Sw9EGcH")
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	if len(items) != 1 || items[0].Resolve == nil {
+		t.Fatalf("expected 1 resolvable item, got %d items", len(items))
+	}
+
+	first, err := items[0].Resolve(context.Background())
+	if err != nil {
+		t.Fatalf("first Resolve: %v", err)
+	}
+	second, err := items[0].Resolve(context.Background())
+	if err != nil {
+		t.Fatalf("second Resolve: %v", err)
+	}
+	if first == second {
+		t.Error("Resolve returned the same captured URL twice; expected a fresh token exchange per call")
+	}
+	if got := atomic.LoadInt32(&tokenRequests); got < 2 {
+		t.Errorf("expected at least 2 token exchanges, got %d", got)
+	}
+}
+
 func TestParseFilesterRejectsOversizedHTML(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, strings.Repeat("x", 32<<20)+`<div class="file-item" data-name="late.bin" data-size="1" onclick="window.location.href='/d/late'"></div>`)

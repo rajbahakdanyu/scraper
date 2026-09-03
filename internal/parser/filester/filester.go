@@ -92,19 +92,25 @@ func (s *Scraper) Parse(ctx context.Context, rawURL string) ([]model.MediaItem, 
 	kind, id := extractKindAndID(rawURL)
 	switch kind {
 	case "d":
-		// A single file stays eager, unlike folder items: the token
-		// exchange is the only source of the file's real name (a lazy
-		// item's Title must carry the real extension for the downloader's
-		// filename), and a queue of one starts downloading immediately so
-		// the signature can't expire in the queue.
+		// The token exchange itself stays eager, unlike folder items: it
+		// is the only source of the file's real name (a lazy item's Title
+		// must carry the real extension for the downloader's filename),
+		// and it surfaces a gone or garbled file as a parse error. But
+		// the signed URL must resolve lazily like folder items do: a
+		// captured signature expires while queued, and a 403-triggered
+		// re-resolve must produce a fresh token exchange, not replay the
+		// stale one.
 		item, err := s.resolveFile(ctx, id, "")
 		if err != nil {
 			return nil, err
 		}
-		signedURL := item.URL
 		item.URL = fmt.Sprintf("%s/d/%s", s.baseURL, id)
-		item.Resolve = func(context.Context) (string, error) {
-			return signedURL, nil
+		item.Resolve = func(ctx context.Context) (string, error) {
+			resolved, err := s.resolveFile(ctx, id, item.Title)
+			if err != nil {
+				return "", err
+			}
+			return resolved.URL, nil
 		}
 		return []model.MediaItem{item}, nil
 	case "f":
