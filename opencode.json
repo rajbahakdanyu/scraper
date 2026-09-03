@@ -30,6 +30,11 @@
       "model": "opencode-go/kimi-k3",
       "description": "Architectural analysis, SDD plan generation, and constraint definitions without editing files directly."
     },
+    "debug": {
+      "mode": "primary",
+      "model": "opencode-go/glm-5.3-flash",
+      "description": "Default primary agent for debugging and issue resolution."
+    },
     "general": {
       "mode": "subagent",
       "model": "opencode-go/glm-5.3-flash",
