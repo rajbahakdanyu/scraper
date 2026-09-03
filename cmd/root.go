@@ -577,10 +577,11 @@ func runWithScraper(scraper model.Scraper, targetURL string, siteName string, op
 	}
 
 	if opts.dryRun {
+		filtered := applyDryRunFilters(scraper, cfg)
 		if opts.json {
-			return runDryRunJSONWithDiskCheck(scraper, targetURL, siteName, os.Stdout, cfg.OutputDir, cfg.DiskCheck)
+			return runDryRunJSONWithDiskCheck(filtered, targetURL, siteName, os.Stdout, cfg.OutputDir, cfg.DiskCheck)
 		}
-		return runDryRunWithDiskCheck(scraper, targetURL, cfg.OutputDir, cfg.DiskCheck)
+		return runDryRunWithDiskCheck(filtered, targetURL, cfg.OutputDir, cfg.DiskCheck)
 	}
 	rateLimitBytesPerSec, err := config.ParseRateLimit(cfg.RateLimit)
 	if err != nil {
@@ -776,7 +777,7 @@ func runBatch(opts globalOptions, urls []string) error {
 					allErrs = append(allErrs, sitErr)
 					continue
 				}
-				if jsonErr := runDryRunJSONWithDiskCheck(reg[site], u, site, os.Stdout, cfg.OutputDir, cfg.DiskCheck); jsonErr != nil {
+				if jsonErr := runDryRunJSONWithDiskCheck(applyDryRunFilters(reg[site], cfg), u, site, os.Stdout, cfg.OutputDir, cfg.DiskCheck); jsonErr != nil {
 					allErrs = append(allErrs, jsonErr)
 				}
 			}
@@ -789,7 +790,7 @@ func runBatch(opts globalOptions, urls []string) error {
 				errs = append(errs, sitErr)
 				continue
 			}
-			if dryErr := runDryRunWithDiskCheck(reg[site], u, cfg.OutputDir, cfg.DiskCheck); dryErr != nil {
+			if dryErr := runDryRunWithDiskCheck(applyDryRunFilters(reg[site], cfg), u, cfg.OutputDir, cfg.DiskCheck); dryErr != nil {
 				errs = append(errs, dryErr)
 			}
 		}
@@ -1014,6 +1015,24 @@ func diskWarning(total, free int64, unknown int) string {
 		msg += fmt.Sprintf(" (%d items with unknown size)", unknown)
 	}
 	return msg
+}
+
+// applyDryRunFilters wraps a scraper with the include/exclude/size filters
+// for dry-run paths, so previewed counts match what a real run downloads.
+// Disk check stays with the dry-run functions themselves to avoid printing
+// the warning twice.
+func applyDryRunFilters(scraper model.Scraper, cfg *config.Config) model.Scraper {
+	if !cfg.HasFilters() {
+		return scraper
+	}
+	return &filterScraper{
+		inner:     scraper,
+		include:   cfg.Include,
+		exclude:   cfg.Exclude,
+		minSize:   cfg.MinSizeBytes(),
+		maxSize:   cfg.MaxSizeBytes(),
+		diskCheck: false,
+	}
 }
 
 func tryNotify(cfg *config.Config, summary string) {

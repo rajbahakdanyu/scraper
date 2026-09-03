@@ -47,6 +47,16 @@ func captureStdout(f func()) string {
 	return buf.String()
 }
 
+// emptyTestConfig writes a minimal empty config file and returns its path.
+func emptyTestConfig(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "empty.yaml")
+	if err := os.WriteFile(path, []byte("{}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 func TestNewRootCmdRegistersSubcommands(t *testing.T) {
 	root := NewRootCmd()
 
@@ -590,6 +600,47 @@ func TestRunBatchDryRunJSONLoopsOverURLs(t *testing.T) {
 	}
 	if !strings.Contains(out, "one") || !strings.Contains(out, "two") || !strings.Contains(out, "item") {
 		t.Fatalf("expected both URLs and item output, got %q", out)
+	}
+}
+
+func TestDryRunAppliesFilters(t *testing.T) {
+	scraper := &fakeDryRunScraper{items: []model.MediaItem{
+		{URL: "https://cyberdrop.cr/f/1.mp4", Title: "one.mp4", Size: 100},
+		{URL: "https://cyberdrop.cr/f/2.txt", Title: "two.txt", Size: 200},
+	}}
+	restoreBatchFactories(t)
+	batchScraperRegistry = func(string, []*http.Cookie) (map[string]model.Scraper, error) {
+		return map[string]model.Scraper{"cyberdrop": scraper}, nil
+	}
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := os.Stdout
+	os.Stdout = w
+	defer func() { os.Stdout = orig }()
+
+	errCh := make(chan error, 1)
+	go func() {
+		err := runBatch(globalOptions{
+			configPath: emptyTestConfig(t), noTui: true, dryRun: true,
+			include: []string{"*.mp4"}, includeSet: true,
+		}, []string{"https://cyberdrop.cr/a/album"})
+		w.Close()
+		errCh <- err
+	}()
+	if err := <-errCh; err != nil {
+		t.Fatalf("dry run failed: %v", err)
+	}
+	out, _ := io.ReadAll(r)
+
+	got := string(out)
+	if strings.Contains(got, "two.txt") {
+		t.Errorf("filtered item leaked into dry-run output: %q", got)
+	}
+	if !strings.Contains(got, "one.mp4") {
+		t.Errorf("expected matching item in output: %q", got)
 	}
 }
 
