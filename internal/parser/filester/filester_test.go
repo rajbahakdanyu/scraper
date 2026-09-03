@@ -299,6 +299,43 @@ func TestParseFilesterFolderPagination(t *testing.T) {
 	}
 }
 
+// TestParseFilesterFolderPaginationCapped bounds pagination: a hostile or
+// buggy page advertising an enormous data-total must not drive an
+// effectively infinite sequential fetch loop. Like goonbox's maxAlbumPages
+// cap, the total is clamped (silently) to maxFolderPages, so at most that
+// many pages are ever requested.
+func TestParseFilesterFolderPaginationCapped(t *testing.T) {
+	var pageRequests int32
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/f/hostile", func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&pageRequests, 1)
+		w.Header().Set("Content-Type", "text/html")
+		// Same fixture shape as TestParseFilesterFolderPagination's
+		// page 1, but advertising a hostile total. Serving the same
+		// page for every request is fine — the point is bounding
+		// the loop.
+		w.Write([]byte(`<html><body>
+			<button id="loadAllPagesBtn" data-total="1000000000">Load all pages</button>
+			<div class="file-item" data-name="p1.jpg" data-size="40" onclick="window.location.href='/d/p1'"></div>
+		</body></html>`))
+	})
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	scraper := newTestFilesterScraper()
+	scraper.baseURL = ts.URL
+	scraper.cdnURLs = []string{ts.URL}
+
+	// The clamp is silent (mirroring goonbox): the parse returns the
+	// pages it fetched, so only the request count is asserted here.
+	_, _ = scraper.Parse(context.Background(), ts.URL+"/f/hostile")
+	if got := atomic.LoadInt32(&pageRequests); got > 1001 {
+		t.Errorf("pagination exceeded the 1000-page cap: %d page requests", got)
+	}
+}
+
 // TestParseFilesterFolderRecoversFromTransientEmptyPage guards against a
 // real bug: a page that transiently comes back with zero items (rate
 // limiting, a momentary blip) used to be treated as "end of the album",

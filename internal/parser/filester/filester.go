@@ -31,6 +31,10 @@ var defaultCDNURLs = []string{
 	"https://rs2.filester.me",
 }
 
+// maxFolderPages bounds pagination: far above any real folder, so only a
+// buggy or hostile page ever hits it (mirrors goonbox's maxAlbumPages).
+const maxFolderPages = 1000
+
 // Scraper parses filester.sh/.me folder (/f/<id>) and single-file (/d/<slug>)
 // share links.
 type Scraper struct {
@@ -289,6 +293,12 @@ func (s *Scraper) fetchFolderPage(ctx context.Context, id string, page int) (ent
 			if n, aerr := strconv.Atoi(v); aerr == nil {
 				pageTotal = n
 			}
+		}
+		// A hostile or buggy page can advertise an enormous total,
+		// which would otherwise drive an effectively unbounded
+		// sequential fetch loop; clamp it silently like goonbox does.
+		if pageTotal > maxFolderPages {
+			pageTotal = maxFolderPages
 		}
 	}
 
