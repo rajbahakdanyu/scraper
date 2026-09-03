@@ -81,7 +81,8 @@ func (c *Config) SetMinSizeBytes(n int64) { c.minSizeBytes = n }
 func (c *Config) SetMaxSizeBytes(n int64) { c.maxSizeBytes = n }
 
 func Load(path string) (*Config, error) {
-	if path == "" {
+	explicit := path != ""
+	if !explicit {
 		path = getDefaultConfigPath()
 	}
 	if fi, err := os.Stat(path); err == nil && fi.Mode().Perm()&0077 != 0 {
@@ -92,6 +93,9 @@ func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
+			if explicit {
+				return nil, fmt.Errorf("config file %q not found", path)
+			}
 			return defaultConfig(), nil
 		}
 		return nil, err

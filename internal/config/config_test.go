@@ -91,10 +91,9 @@ func TestLoadDoesNotWarnForPrivateConfig(t *testing.T) {
 }
 
 func TestLoadConfigDefaults(t *testing.T) {
-	tmpDir := t.TempDir()
-	cfgPath := filepath.Join(tmpDir, "nonexistent.yaml")
+	t.Setenv("HOME", t.TempDir())
 
-	cfg, err := Load(cfgPath)
+	cfg, err := Load("")
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
@@ -110,6 +109,13 @@ func TestLoadConfigDefaults(t *testing.T) {
 	}
 	if cfg.SkipChecksums {
 		t.Error("expected checksums to be enabled by default")
+	}
+}
+
+func TestLoadExplicitMissingConfigErrors(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "typo.yaml")
+	if _, err := Load(missing); err == nil {
+		t.Fatal("expected an error for an explicitly specified missing config file")
 	}
 }
 

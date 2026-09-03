@@ -234,8 +234,8 @@ func TestExpandHomePath(t *testing.T) {
 func TestLoadGlobalConfigExpandsHomeInOutputFlag(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	// A nonexistent config path yields defaults, isolating the flag path.
-	configPath := filepath.Join(t.TempDir(), "nonexistent.yaml")
+	// An empty config file yields defaults, isolating the flag path.
+	configPath := emptyTestConfig(t)
 
 	cfg, err := loadGlobalConfig(globalOptions{
 		configPath: configPath,
@@ -251,7 +251,7 @@ func TestLoadGlobalConfigExpandsHomeInOutputFlag(t *testing.T) {
 }
 
 func TestLoadGlobalConfigRejectsTildeUserOutput(t *testing.T) {
-	configPath := filepath.Join(t.TempDir(), "nonexistent.yaml")
+	configPath := emptyTestConfig(t)
 
 	_, err := loadGlobalConfig(globalOptions{
 		configPath: configPath,
@@ -582,7 +582,7 @@ func TestRunBatchRejectsMixedYouTubeAndGenericSites(t *testing.T) {
 		}, nil
 	}
 
-	err := runBatch(globalOptions{configPath: filepath.Join(t.TempDir(), "missing.yaml")}, []string{
+	err := runBatch(globalOptions{configPath: emptyTestConfig(t)}, []string{
 		"https://youtube.com/watch?v=abc",
 		"https://cyberdrop.cr/a/album",
 	})
@@ -601,7 +601,7 @@ func TestRunBatchDryRunJSONLoopsOverURLs(t *testing.T) {
 	var err error
 	out := captureStdout(func() {
 		err = runBatch(globalOptions{
-			configPath: filepath.Join(t.TempDir(), "missing.yaml"),
+			configPath: emptyTestConfig(t),
 			dryRun:     true,
 			json:       true,
 		}, []string{
@@ -684,7 +684,7 @@ func TestRunBatchSelectsDownloaderBySiteAndWiresDestinations(t *testing.T) {
 	}
 
 	base := t.TempDir()
-	if err := runBatch(globalOptions{configPath: filepath.Join(t.TempDir(), "missing.yaml"), noTui: true, output: base, outputSet: true}, []string{"https://cyberdrop.cr/a/album"}); err != nil {
+	if err := runBatch(globalOptions{configPath: emptyTestConfig(t), noTui: true, output: base, outputSet: true}, []string{"https://cyberdrop.cr/a/album"}); err != nil {
 		t.Fatalf("generic batch failed: %v", err)
 	}
 	if genericCalls != 1 || youtubeCalls != 0 {
@@ -697,7 +697,7 @@ func TestRunBatchSelectsDownloaderBySiteAndWiresDestinations(t *testing.T) {
 	batchScraperRegistry = func(string, []*http.Cookie) (map[string]model.Scraper, error) {
 		return map[string]model.Scraper{"youtube": youtubeScraper}, nil
 	}
-	if err := runBatch(globalOptions{configPath: filepath.Join(t.TempDir(), "missing.yaml"), noTui: true, output: base, outputSet: true}, []string{"https://youtube.com/watch?v=abc"}); err != nil {
+	if err := runBatch(globalOptions{configPath: emptyTestConfig(t), noTui: true, output: base, outputSet: true}, []string{"https://youtube.com/watch?v=abc"}); err != nil {
 		t.Fatalf("youtube batch failed: %v", err)
 	}
 	if youtubeCalls != 1 || genericCalls != 1 {
