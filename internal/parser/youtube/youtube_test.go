@@ -156,6 +156,19 @@ func TestSafeOutputPathAddsMP4ForDotContainingTitle(t *testing.T) {
 	}
 }
 
+func TestPartOutputPathKeepsExtension(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"Title.m4a", "Title.m4a.part.m4a"},
+		{"Title.mp3", "Title.mp3.part.mp3"},
+		{"no ext", "no ext.part"},
+	}
+	for _, tt := range tests {
+		if got := partOutputPath(tt.in); got != tt.want {
+			t.Errorf("partOutputPath(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
 func TestExtractPlaylistID(t *testing.T) {
 	tests := []struct {
 		url  string

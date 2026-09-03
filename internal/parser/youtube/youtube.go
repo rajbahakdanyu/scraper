@@ -305,7 +305,7 @@ func (s *Scraper) downloadAudioOnly(ctx context.Context, video *ytdl.Video, vide
 		}
 		return nil
 	}
-	tempPath := finalPath + ".part"
+	tempPath := partOutputPath(finalPath)
 	defer os.Remove(tempPath)
 
 	streamTemp := tempPath + ".stream"
@@ -712,6 +712,13 @@ func safeOutputPath(dest, title string) string {
 		return abs
 	}
 	return p
+}
+
+// partOutputPath derives the temp file for ffmpeg from the final path,
+// keeping the real extension so ffmpeg can infer the output muxer. A bare
+// ".part" suffix matches no muxer and makes ffmpeg abort.
+func partOutputPath(finalPath string) string {
+	return finalPath + ".part" + filepath.Ext(finalPath)
 }
 
 // --- Downloader ---
