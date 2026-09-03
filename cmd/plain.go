@@ -107,6 +107,19 @@ func downloadAllWithPaths(dl dashboard.Downloader, items []model.MediaItem, dest
 	return errs, paths
 }
 
+// nonCancelledErrs drops user-initiated cancellations from an error list —
+// a Ctrl+C mid-run is not a failure and must not produce exit code 1.
+func nonCancelledErrs(errs []error) []error {
+	kept := make([]error, 0, len(errs))
+	for _, err := range errs {
+		if err == nil || model.IsCancelled(err) {
+			continue
+		}
+		kept = append(kept, err)
+	}
+	return kept
+}
+
 func assignIDs(items []model.MediaItem, prefix string) {
 	model.AssignIDs(items, prefix)
 }
@@ -409,10 +422,13 @@ batchLoop:
 			if errs[i] == nil {
 				continue
 			}
+			if model.IsCancelled(errs[i]) {
+				continue
+			}
 			title := model.TitleOf(item)
 			printCh <- fmt.Sprintf("failed %s: %v\n", title, errs[i])
 		}
-		if partialErr := model.NewPartialError("album", errs); partialErr != nil {
+		if partialErr := model.NewPartialError("album", nonCancelledErrs(errs)); partialErr != nil {
 			allErrs = append(allErrs, partialErr)
 		}
 	}
@@ -509,7 +525,7 @@ func runJSON(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error)
 		TotalBytes: totalBytes,
 	})
 
-	return model.NewPartialError("download", errs)
+	return model.NewPartialError("download", nonCancelledErrs(errs))
 }
 
 // runBatchJSON downloads items from multiple albums with one-album scrape
@@ -627,7 +643,7 @@ batchLoop:
 		grandCancelled += cancelled
 		grandTotalItems += albumReal
 
-		if partialErr := model.NewPartialError("album", errs); partialErr != nil {
+		if partialErr := model.NewPartialError("album", nonCancelledErrs(errs)); partialErr != nil {
 			allErrs = append(allErrs, partialErr)
 		}
 	}

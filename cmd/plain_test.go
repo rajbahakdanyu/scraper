@@ -590,6 +590,38 @@ func TestRunJSONShutsDownProgress(t *testing.T) {
 	}
 }
 
+func TestNonCancelledErrs(t *testing.T) {
+	in := []error{
+		errors.New("real failure"),
+		&model.CancelledError{URL: "https://example.com/x"},
+		nil,
+		errors.New("another failure"),
+	}
+	got := nonCancelledErrs(in)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 non-cancelled errors, got %d: %v", len(got), got)
+	}
+	if model.IsCancelled(got[0]) || model.IsCancelled(got[1]) {
+		t.Errorf("cancelled error survived filtering: %v", got)
+	}
+}
+
+func TestRunJSONCancelledDownloadIsNotAnError(t *testing.T) {
+	dl := newFakePlainDownloader()
+	cancelled := &model.CancelledError{URL: "https://example.com/a.mp4"}
+	dl.errs["https://example.com/a.mp4"] = cancelled
+	items := []model.MediaItem{{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100}}
+	dl.scripted["https://example.com/a.mp4"] = []model.ProgressEvent{
+		{Status: model.StatusCancelled},
+	}
+
+	var buf bytes.Buffer
+	err := runJSON(dl, itemsScraper(items, nil), t.TempDir(), "album", "test", "https://example.com", "", "", &buf)
+	if err != nil {
+		t.Fatalf("cancelled download must not fail the run, got: %v", err)
+	}
+}
+
 type fakeBatchJSONScraper struct {
 	items []model.MediaItem
 	err   error
