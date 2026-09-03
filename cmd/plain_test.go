@@ -886,3 +886,47 @@ func TestRunBatchPlainReturnsPartialErrorAfterMixedAlbumResults(t *testing.T) {
 		t.Fatalf("expected one scrape failure in partial error, got %v", err)
 	}
 }
+
+func TestRunBatchPlainSkipsSymlinkedAlbumAndContinues(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "outside")
+	if err := os.Mkdir(target, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(root, "linked")); err != nil {
+		t.Fatal(err)
+	}
+
+	dl := newFakePlainDownloader()
+	scraper := &mockScraper{items: []model.MediaItem{
+		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100},
+	}}
+	albums := []dashboard.DashAlbumURL{
+		{URL: "https://example.com/1", Slug: "linked", Dest: filepath.Join(root, "linked"), Scraper: scraper},
+		{URL: "https://example.com/2", Slug: "good", Dest: filepath.Join(root, "good"), Scraper: scraper},
+	}
+
+	done := make(chan error, 1)
+	var buf bytes.Buffer
+	go func() { done <- runBatchPlain(dl, albums, root, &buf) }()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected partial error for the symlink refusal, got nil")
+		}
+		if !strings.Contains(err.Error(), "refusing to use symlinked output directory") {
+			t.Fatalf("expected symlink refusal in error, got: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("runBatchPlain deadlocked after symlinked album dir")
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "refusing to use symlinked output directory") {
+		t.Errorf("expected symlink warning, got: %q", out)
+	}
+	if len(dl.dests) == 0 || !strings.HasSuffix(dl.dests[0], filepath.Join(root, "good")) {
+		t.Errorf("second album should still download, dests=%v", dl.dests)
+	}
+}

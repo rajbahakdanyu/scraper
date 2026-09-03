@@ -387,6 +387,9 @@ batchLoop:
 			err := fmt.Errorf("refusing to use symlinked output directory: %s", a.Dest)
 			printCh <- fmt.Sprintf("failed: create album directory: %v\n", err)
 			allErrs = append(allErrs, err)
+			if albumIdx+1 < len(albums) {
+				scrapeCh = startBatchScrape(ctx, abort, albums[albumIdx+1])
+			}
 			continue
 		}
 
