@@ -194,6 +194,36 @@ func TestParseSignFailure(t *testing.T) {
 	}
 }
 
+func TestTurboResolve404IsPermanentNotRetried(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/a/album", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(`<html><body><table><tbody id="fileTbody">
+<tr class="file-row" data-id="gone" data-name="gone.mp4" data-size="100"></tr>
+</tbody></table></body></html>`))
+	})
+	mux.HandleFunc("/api/sign", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	scraper := newTestScraper()
+	scraper.baseURL = ts.URL
+
+	items, err := scraper.Parse(context.Background(), ts.URL+"/a/album")
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	_, err = items[0].Resolve(context.Background())
+	var permanent *model.PermanentError
+	if !errors.As(err, &permanent) {
+		t.Fatalf("expected a PermanentError for a 404 sign response, got %T: %v", err, err)
+	}
+}
+
 func TestExtractID(t *testing.T) {
 	tests := []struct {
 		url  string

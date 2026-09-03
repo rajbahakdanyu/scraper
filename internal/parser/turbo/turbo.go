@@ -2,6 +2,7 @@ package turbo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -115,7 +116,8 @@ func (s *Scraper) parseAlbum(ctx context.Context, rawURL string) ([]model.MediaI
 
 func (s *Scraper) resolveFile(ctx context.Context, fileID string) func(context.Context) (string, error) {
 	return func(ctx context.Context) (string, error) {
-		return s.signURL(ctx, fileID)
+		u, err := s.signURL(ctx, fileID)
+		return u, model.WrapPermanent(err)
 	}
 }
 
@@ -166,11 +168,16 @@ func (s *Scraper) signURL(ctx context.Context, fileID string) (string, error) {
 	}
 
 	if err := netutil.GetJSON(ctx, s.client, apiURL, userAgent, &result); err != nil {
+		var statusErr *netutil.HTTPStatusError
+		if errors.As(err, &statusErr) && !model.IsRetryableStatus(statusErr.StatusCode) {
+			return "", model.NewNonRetryableStatus(
+				fmt.Errorf("turbo: sign %s: %w", fileID, err), statusErr.StatusCode)
+		}
 		return "", fmt.Errorf("turbo: sign %s: %w", fileID, err)
 	}
 
 	if !result.Success || result.URL == "" {
-		return "", fmt.Errorf("turbo: sign returned no URL for %s", fileID)
+		return "", model.NewNonRetryable(fmt.Errorf("turbo: sign returned no URL for %s", fileID))
 	}
 
 	return result.URL, nil
