@@ -193,11 +193,13 @@ func (s *Scraper) Parse(ctx context.Context, albumURL string) ([]model.MediaItem
 
 	var items []model.MediaItem
 	var unsafeErrs []error
+	var pageErrs []error
 	for _, result := range results {
 		if result.err != nil {
 			if errors.Is(result.err, context.Canceled) {
 				return items, result.err
 			}
+			pageErrs = append(pageErrs, result.err)
 			continue
 		}
 		for _, item := range result.items {
@@ -216,7 +218,7 @@ func (s *Scraper) Parse(ctx context.Context, albumURL string) ([]model.MediaItem
 		return nil, fmt.Errorf("goonbox: no images found in album %s", albumID)
 	}
 
-	return items, model.NewPartialError("goonbox album", unsafeErrs)
+	return items, model.NewPartialError("goonbox album", append(unsafeErrs, pageErrs...))
 }
 
 func extractAlbumID(rawURL string) string {

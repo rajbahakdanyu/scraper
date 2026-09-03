@@ -323,6 +323,39 @@ func TestParseGoonBoxAlbumAllUnsafeImageURLs(t *testing.T) {
 	}
 }
 
+func TestParseGoonBoxAlbumSurfacesPageErrors(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/albums/testid", func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("page")
+		if page == "" || page == "1" {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"album":      map[string]string{"title": "Test Album"},
+				"images":     []map[string]interface{}{{"original_url": "https://cdn.example.com/img1.jpg", "original_filename": "img1.jpg", "size_bytes": float64(1024), "mime": "image/jpeg"}},
+				"pagination": map[string]int{"current_page": 1, "last_page": 2},
+			})
+			return
+		}
+		// Page 2: permanent server error.
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	scraper := newTestGoonBoxScraper()
+	scraper.baseURL = ts.URL
+
+	items, err := scraper.Parse(context.Background(), ts.URL+"/a/testid")
+	if len(items) != 1 {
+		t.Fatalf("expected page-1 items to survive, got %d", len(items))
+	}
+	var partial *model.PartialError
+	if !errors.As(err, &partial) {
+		t.Fatalf("expected a PartialError naming the failed page, got %v", err)
+	}
+}
+
 func TestExtractAlbumID(t *testing.T) {
 	tests := []struct {
 		url      string
