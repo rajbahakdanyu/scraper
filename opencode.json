@@ -22,6 +22,7 @@
   "agent": {
     "build": {
       "mode": "primary",
+      "model": "opencode-go/glm-5.3-flash",
       "description": "Default primary agent for full development, file editing, and task execution."
     },
     "plan": {
@@ -31,7 +32,7 @@
     },
     "general": {
       "mode": "subagent",
-      "model": "opencode-go/glm-5.2",
+      "model": "opencode-go/glm-5.3-flash",
       "description": "General-purpose subagent for background execution passes, multi-step subtasks, and SDD task reviews."
     },
     "explore": {
