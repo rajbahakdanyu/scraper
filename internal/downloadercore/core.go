@@ -114,6 +114,12 @@ func (c *Core) Begin(key string, item model.MediaItem, cancelledEvent model.Prog
 		c.wg.Done()
 		return nil, nil, nil, &model.CancelledError{URL: item.URL}
 	}
+	if _, exists := c.cancelMap[key]; exists {
+		c.mu.Unlock()
+		cancel()
+		c.wg.Done()
+		return nil, nil, nil, fmt.Errorf("download already in progress: %s", item.URL)
+	}
 	c.cancelMap[key] = cancel
 	c.mu.Unlock()
 

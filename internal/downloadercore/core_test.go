@@ -26,3 +26,20 @@ func TestBeginReportsQueuedCancellation(t *testing.T) {
 		t.Fatal("Begin did not report cancellation")
 	}
 }
+
+func TestBeginRejectsDuplicateKey(t *testing.T) {
+	core := New(2, 4, nil, false)
+	item := model.MediaItem{URL: "https://example.com"}
+
+	_, cancel, release, err := core.Begin(item.Key(), item, model.ProgressEvent{Status: model.StatusCancelled})
+	if err != nil {
+		t.Fatalf("first Begin: %v", err)
+	}
+	defer release()
+	defer cancel()
+
+	_, _, _, err = core.Begin(item.Key(), item, model.ProgressEvent{Status: model.StatusCancelled})
+	if err == nil {
+		t.Fatal("second Begin with the same key must fail, not overwrite the first")
+	}
+}
