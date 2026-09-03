@@ -22,7 +22,6 @@
   "agent": {
     "build": {
       "mode": "primary",
-      "model": "opencode-go/glm-5.3-flash",
       "description": "Default primary agent for full development, file editing, and task execution."
     },
     "plan": {
