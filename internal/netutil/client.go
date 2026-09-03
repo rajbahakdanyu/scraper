@@ -104,7 +104,7 @@ func NewPolicy(allowedPrivateURLs ...string) *Policy {
 	for _, rawURL := range allowedPrivateURLs {
 		u, err := url.Parse(rawURL)
 		if err == nil && u.Host != "" {
-			allowed[strings.ToLower(u.Host)] = struct{}{}
+			allowed[strings.ToLower(u.Hostname())] = struct{}{}
 		}
 	}
 	return &Policy{allowedPrivateHosts: allowed, resolver: net.DefaultResolver}
@@ -124,7 +124,7 @@ func (p *Policy) ValidateURL(rawURL string) error {
 	if u.User != nil {
 		return fmt.Errorf("URL %q must not contain credentials", rawURL)
 	}
-	if _, ok := p.allowedPrivateHosts[strings.ToLower(u.Host)]; ok {
+	if _, ok := p.allowedPrivateHosts[strings.ToLower(u.Hostname())]; ok {
 		return nil
 	}
 	return p.validateHost(u.Hostname())
@@ -147,7 +147,7 @@ func (p *Policy) dialContext(dialer *net.Dialer, readTimeout time.Duration) func
 		if err != nil {
 			return nil, err
 		}
-		if _, ok := p.allowedPrivateHosts[strings.ToLower(address)]; ok {
+		if _, ok := p.allowedPrivateHosts[strings.ToLower(host)]; ok {
 			conn, err := dialer.DialContext(ctx, network, address)
 			return withReadTimeout(conn, readTimeout), err
 		}

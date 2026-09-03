@@ -3,9 +3,11 @@ package netutil
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -193,11 +195,43 @@ func TestPolicyAllowsExplicitTestHost(t *testing.T) {
 	resp.Body.Close()
 }
 
+func TestAllowlistEntryWithoutPortMatchesAnyPort(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintln(w, "ok")
+	}))
+	defer ts.Close()
+
+	// Strip the port from the test server's URL to build a port-less
+	// allowlist entry — previously this could never match a dial to
+	// 127.0.0.1:<ts port>.
+	u, err := url.Parse(ts.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	portLess := u.Scheme + "://" + u.Hostname()
+
+	client, err := NewPublicClient(time.Second, portLess)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := client.Get(ts.URL)
+	if err != nil {
+		t.Fatalf("request through port-less allowlist failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
 func TestPublicClientBlocksPrivateRedirect(t *testing.T) {
-	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	defer target.Close()
+	// Allowlist entries are host-scoped: allowing a host permits every port
+	// on it, so a redirect to a different port on an allowed host is no
+	// longer blocked. Redirect to a private address that is not allowlisted
+	// to verify private redirect targets are still denied.
 	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, target.URL, http.StatusFound)
+		http.Redirect(w, r, "http://10.0.0.1/", http.StatusFound)
 	}))
 	defer redirector.Close()
 
