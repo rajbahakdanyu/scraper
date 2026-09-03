@@ -3,13 +3,16 @@ package turbo
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/rajbahakdanyu/scraper/internal/model"
+	"github.com/rajbahakdanyu/scraper/internal/netutil"
 )
 
 func newTestScraper() *Scraper {
@@ -73,6 +76,40 @@ func TestParseAlbum(t *testing.T) {
 	}
 	if !strings.Contains(resolved, "cdn.turbo.cr/VB8aLAF.mp4") {
 		t.Errorf("expected CDN URL with file ID, got %s", resolved)
+	}
+}
+
+func TestParseTurboRejectsOversizedHTML(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, strings.Repeat("x", 33<<20)+`<tr class="file-row" data-id="late" data-name="late.mp4" data-size="1"></tr>`)
+	}))
+	defer ts.Close()
+
+	scraper := newTestScraper()
+	scraper.baseURL = ts.URL
+
+	_, err := scraper.Parse(context.Background(), ts.URL+"/a/oversized")
+	if err == nil {
+		t.Fatal("expected error for oversized album page")
+	}
+}
+
+func TestParseTurboRejectsHTTPError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	scraper := newTestScraper()
+	scraper.baseURL = ts.URL
+
+	_, err := scraper.Parse(context.Background(), ts.URL+"/a/missing")
+	if err == nil {
+		t.Fatal("expected error for 404 album page")
+	}
+	var statusErr *netutil.HTTPStatusError
+	if !errors.As(err, &statusErr) {
+		t.Fatalf("expected *netutil.HTTPStatusError, got %T: %v", err, err)
 	}
 }
 

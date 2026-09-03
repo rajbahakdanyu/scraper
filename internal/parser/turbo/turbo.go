@@ -65,13 +65,12 @@ func (s *Scraper) Parse(ctx context.Context, rawURL string) ([]model.MediaItem, 
 }
 
 func (s *Scraper) parseAlbum(ctx context.Context, rawURL string) ([]model.MediaItem, error) {
-	resp, err := s.client.Get(rawURL)
+	body, err := netutil.GetDoc(ctx, s.client, rawURL, userAgent)
 	if err != nil {
 		return nil, fmt.Errorf("turbo: fetch album page: %w", err)
 	}
-	defer resp.Body.Close()
 
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	doc, err := goquery.NewDocumentFromReader(body)
 	if err != nil {
 		return nil, fmt.Errorf("turbo: parse album page: %w", err)
 	}
@@ -126,13 +125,12 @@ func (s *Scraper) parseFile(ctx context.Context, rawURL string) ([]model.MediaIt
 		return nil, fmt.Errorf("turbo: could not extract file ID from %s", rawURL)
 	}
 
-	resp, err := s.client.Get(rawURL)
+	body, err := netutil.GetDoc(ctx, s.client, rawURL, userAgent)
 	if err != nil {
 		return nil, fmt.Errorf("turbo: fetch file page: %w", err)
 	}
-	defer resp.Body.Close()
 
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	doc, err := goquery.NewDocumentFromReader(body)
 	if err != nil {
 		return nil, fmt.Errorf("turbo: parse file page: %w", err)
 	}
