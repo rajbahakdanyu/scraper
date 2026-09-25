@@ -1,6 +1,9 @@
 package model
 
-import "net/http"
+import (
+	"net/http"
+	"time"
+)
 
 // NonRetryableError marks an error that will never succeed no matter how
 // many times it's retried.
@@ -28,4 +31,24 @@ func IsRetryableStatus(code int) bool {
 	default:
 		return code >= 500
 	}
+}
+
+// HTTPStatusError marks an HTTP response that is retryable (429 or 5xx).
+// It carries the status, the redacted URL (for failure reports), and an
+// optional server-supplied Retry-After delay.
+type HTTPStatusError struct {
+	StatusCode int
+	URL        string
+	Delay      time.Duration
+	Err        error
+}
+
+func (e *HTTPStatusError) Error() string { return e.Err.Error() }
+func (e *HTTPStatusError) Unwrap() error { return e.Err }
+
+// RetryAfter implements the delay hint consumed by netutil.Retry.
+func (e *HTTPStatusError) RetryAfter() time.Duration { return e.Delay }
+
+func NewHTTPStatusError(err error, code int, url string, delay time.Duration) *HTTPStatusError {
+	return &HTTPStatusError{Err: err, StatusCode: code, URL: url, Delay: delay}
 }
