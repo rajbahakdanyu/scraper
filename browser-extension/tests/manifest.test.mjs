@@ -11,6 +11,10 @@ test("manifest is valid MV3 and requests only what the popup needs", () => {
   assert.equal(manifest.manifest_version, 3);
   assert.deepEqual(manifest.permissions, ["tabs", "downloads"]);
   assert.equal(manifest.action.default_popup, "popup.html");
+  // Downloads are orchestrated from the background page so they survive
+  // the popup closing; it must be a module to import collect.mjs.
+  assert.deepEqual(manifest.background.scripts, ["background.mjs"]);
+  assert.equal(manifest.background.type, "module");
   // data_collection_permissions is only supported from Firefox 140, and
   // Firefox for Android 142.
   assert.match(manifest.browser_specific_settings.gecko.strict_min_version, /^142\./);
@@ -22,7 +26,7 @@ test("manifest is valid MV3 and requests only what the popup needs", () => {
 
 test("every file referenced by the manifest exists", () => {
   const manifest = JSON.parse(readFileSync(join(root, "manifest.json"), "utf8"));
-  for (const relative of [manifest.action.default_popup]) {
+  for (const relative of [manifest.action.default_popup, ...manifest.background.scripts]) {
     assert.ok(existsSync(join(root, relative)), `${relative} is missing`);
   }
 });

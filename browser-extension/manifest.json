@@ -13,6 +13,10 @@
     }
   },
   "permissions": ["tabs", "downloads"],
+  "background": {
+    "scripts": ["background.mjs"],
+    "type": "module"
+  },
   "action": {
     "default_title": "Export supported tabs",
     "default_popup": "popup.html"

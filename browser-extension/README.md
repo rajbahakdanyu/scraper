@@ -15,7 +15,9 @@ use; there is no build step and no packaging.
 ## Use
 
 1. Open your album/file tabs (any windows).
-2. Click the extension button → **Export supported tabs**.
+2. Click the extension button → **Export supported tabs** and wait for the
+   status line (usually well under a second). The export runs in the
+   extension's background page, so it continues even if you close the popup.
 3. Downloads appear in your Downloads folder:
 
    | File | Contents |

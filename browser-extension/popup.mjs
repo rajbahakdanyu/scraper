@@ -1,5 +1,3 @@
-import { collectGroups, formatTxt } from "./collect.mjs";
-
 const button = document.getElementById("export");
 const status = document.getElementById("status");
 
@@ -7,39 +5,31 @@ function setStatus(text) {
   status.textContent = text;
 }
 
-async function downloadText(filename, text) {
-  const blob = new Blob([text], { type: "text/plain" });
-  const url = URL.createObjectURL(blob);
-  try {
-    await browser.downloads.download({ url, filename, saveAs: false });
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-}
-
 button.addEventListener("click", async () => {
   button.disabled = true;
-  setStatus("Reading tabs…");
+  setStatus("Exporting tabs…");
   try {
-    const tabs = await browser.tabs.query({});
-    const { youtube, other, skipped } = collectGroups(tabs);
+    // The background page does the querying and downloading so the export
+    // continues even if this popup closes before it finishes.
+    const { skipped, results } = await browser.runtime.sendMessage({ type: "export-tabs" });
 
-    if (youtube.length === 0 && other.length === 0) {
+    if (results.length === 0) {
       setStatus(`No supported tabs found (${skipped} skipped).`);
       return;
     }
 
-    const exported = [];
-    if (other.length > 0) {
-      await downloadText("scraper-tabs.txt", formatTxt(other));
-      exported.push(`${other.length} → scraper-tabs.txt`);
+    const ok = results.filter((result) => result.ok);
+    const failed = results.filter((result) => !result.ok);
+    let summary = ok.length > 0
+      ? `Exported ${ok.map((result) => `${result.count} → ${result.filename}`).join(", ")}`
+      : "Nothing exported";
+    if (failed.length > 0) {
+      summary += `; failed: ${failed.map((result) => `${result.filename} (${result.error})`).join(", ")}`;
     }
-    if (youtube.length > 0) {
-      await downloadText("scraper-youtube.txt", formatTxt(youtube));
-      exported.push(`${youtube.length} → scraper-youtube.txt`);
+    if (skipped > 0) {
+      summary += ` (${skipped} skipped)`;
     }
-    const skippedNote = skipped > 0 ? ` (${skipped} skipped)` : "";
-    setStatus(`Exported ${exported.join(", ")}${skippedNote}.`);
+    setStatus(`${summary}.`);
   } catch (err) {
     setStatus(`Export failed: ${err?.message ?? err}`);
   } finally {
