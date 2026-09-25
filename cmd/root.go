@@ -626,6 +626,9 @@ func runWithScraperAndConfig(cfg *config.Config, scraper model.Scraper, targetUR
 		if err != nil {
 			return nil, err
 		}
+		if shouldFilterMedia(cfg, siteName) {
+			items = applyMediaFilter(items)
+		}
 		if cfg.HasFilters() {
 			items, summary := model.FilterItems(items, cfg.Include, cfg.Exclude, cfg.MinSizeBytes(), cfg.MaxSizeBytes())
 			fmt.Fprintf(os.Stderr, "filters: %s\n", summary)
@@ -903,7 +906,7 @@ func runBatch(opts globalOptions, urls []string) error {
 		}
 	}
 
-	if cfg.HasFilters() || cfg.DiskCheck {
+	if cfg.HasFilters() || cfg.DiskCheck || cfg.MediaOnly {
 		for i := range dashAlbums {
 			dashAlbums[i].Scraper = &filterScraper{
 				inner:     dashAlbums[i].Scraper,
@@ -911,6 +914,7 @@ func runBatch(opts globalOptions, urls []string) error {
 				exclude:   cfg.Exclude,
 				minSize:   cfg.MinSizeBytes(),
 				maxSize:   cfg.MaxSizeBytes(),
+				mediaOnly: cfg.MediaOnly,
 				diskCheck: cfg.DiskCheck,
 				outputDir: cfg.OutputDir,
 			}
@@ -992,6 +996,7 @@ type filterScraper struct {
 	inner            model.Scraper
 	include, exclude []string
 	minSize, maxSize int64
+	mediaOnly        bool
 	diskCheck        bool
 	outputDir        string
 	diskChecked      bool
@@ -1003,6 +1008,9 @@ func (f *filterScraper) Parse(ctx context.Context, url string) ([]model.MediaIte
 	items, err := f.inner.Parse(ctx, url)
 	if err != nil {
 		return nil, err
+	}
+	if f.mediaOnly && f.inner.Name() != "youtube" {
+		items = applyMediaFilter(items)
 	}
 	filtered := items
 	if len(f.include) > 0 || len(f.exclude) > 0 || f.minSize > 0 || f.maxSize > 0 {
@@ -1018,6 +1026,27 @@ func (f *filterScraper) Parse(ctx context.Context, url string) ([]model.MediaIte
 		runDiskCheck(filtered, f.outputDir, true)
 	}
 	return filtered, nil
+}
+
+// shouldFilterMedia reports whether the media allowlist applies to a run:
+// only when enabled and only for file hosts (YouTube items have no
+// extensions and its downloader always produces media).
+func shouldFilterMedia(cfg *config.Config, siteName string) bool {
+	return cfg.MediaOnly && siteName != "youtube"
+}
+
+// applyMediaFilter drops non-media items and reports the skip count, so the
+// single, batch, and dry-run paths all behave the same. The message is only
+// printed when something was actually skipped; an all-skipped album says so.
+func applyMediaFilter(items []model.MediaItem) []model.MediaItem {
+	kept, skipped := model.FilterMediaItems(items)
+	if skipped > 0 {
+		fmt.Fprintf(os.Stderr, "media filter: %d/%d items (%d skipped non-media)\n", len(kept), len(items), skipped)
+	}
+	if len(kept) == 0 {
+		fmt.Fprintln(os.Stderr, "No media items found.")
+	}
+	return kept
 }
 
 func runDiskCheck(items []model.MediaItem, outputDir string, diskCheck bool) {
@@ -1056,7 +1085,7 @@ func diskWarning(total, free int64, unknown int) string {
 // Disk check stays with the dry-run functions themselves to avoid printing
 // the warning twice.
 func applyDryRunFilters(scraper model.Scraper, cfg *config.Config) model.Scraper {
-	if !cfg.HasFilters() {
+	if !cfg.HasFilters() && !cfg.MediaOnly {
 		return scraper
 	}
 	return &filterScraper{
@@ -1065,6 +1094,7 @@ func applyDryRunFilters(scraper model.Scraper, cfg *config.Config) model.Scraper
 		exclude:   cfg.Exclude,
 		minSize:   cfg.MinSizeBytes(),
 		maxSize:   cfg.MaxSizeBytes(),
+		mediaOnly: cfg.MediaOnly,
 		diskCheck: false,
 	}
 }

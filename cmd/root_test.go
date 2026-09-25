@@ -23,11 +23,17 @@ import (
 // fakeDryRunScraper is a minimal model.Scraper for exercising runDryRun
 // without any network access.
 type fakeDryRunScraper struct {
+	name  string
 	items []model.MediaItem
 	err   error
 }
 
-func (f *fakeDryRunScraper) Name() string { return "fake" }
+func (f *fakeDryRunScraper) Name() string {
+	if f.name != "" {
+		return f.name
+	}
+	return "fake"
+}
 
 func (f *fakeDryRunScraper) Parse(ctx context.Context, url string) ([]model.MediaItem, error) {
 	return f.items, f.err
@@ -42,6 +48,21 @@ func captureStdout(f func()) string {
 	f()
 	w.Close()
 	os.Stdout = old
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	return buf.String()
+}
+
+// captureStderr redirects os.Stderr for the duration of f and returns
+// everything written to it.
+func captureStderr(f func()) string {
+	old := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+	f()
+	w.Close()
+	os.Stderr = old
 
 	var buf bytes.Buffer
 	io.Copy(&buf, r)
@@ -664,8 +685,8 @@ func TestDryRunAppliesFilters(t *testing.T) {
 
 func TestRunBatchSelectsDownloaderBySiteAndWiresDestinations(t *testing.T) {
 	restoreBatchFactories(t)
-	genericScraper := &fakeDryRunScraper{items: []model.MediaItem{{URL: "https://cyberdrop.cr/item", Title: "generic"}}}
-	youtubeScraper := &fakeDryRunScraper{items: []model.MediaItem{{URL: "https://youtube.com/item", Title: "youtube"}}}
+	genericScraper := &fakeDryRunScraper{items: []model.MediaItem{{URL: "https://cyberdrop.cr/item", Title: "generic.mp4"}}}
+	youtubeScraper := &fakeDryRunScraper{name: "youtube", items: []model.MediaItem{{URL: "https://youtube.com/item", Title: "youtube"}}}
 	batchScraperRegistry = func(string, []*http.Cookie) (map[string]model.Scraper, error) {
 		return map[string]model.Scraper{"cyberdrop": genericScraper}, nil
 	}
@@ -1025,9 +1046,18 @@ func TestLoadGlobalConfigIncludeOverride(t *testing.T) {
 	}
 }
 
-type mockScraper struct{ items []model.MediaItem }
+type mockScraper struct {
+	name  string
+	items []model.MediaItem
+}
 
-func (m *mockScraper) Name() string { return "mock" }
+func (m *mockScraper) Name() string {
+	if m.name != "" {
+		return m.name
+	}
+	return "mock"
+}
+
 func (m *mockScraper) Parse(ctx context.Context, url string) ([]model.MediaItem, error) {
 	return m.items, nil
 }
@@ -1125,6 +1155,101 @@ func TestLoadGlobalConfigNotifyOverride(t *testing.T) {
 	}
 	if cfg.Notify {
 		t.Error("expected CLI false to override config true")
+	}
+}
+
+func TestFilterScraperMediaOnly(t *testing.T) {
+	inner := &mockScraper{items: []model.MediaItem{
+		{URL: "https://cdn.example.com/video.mp4", Title: "video.mp4"},
+		{URL: "https://cdn.example.com/setup.exe", Title: "setup.exe"},
+		{URL: "https://cdn.example.com/set.zip", Title: "set.zip"},
+		{URL: "https://cdn.example.com/page.html", Title: "page.html"},
+	}}
+	fs := &filterScraper{inner: inner, mediaOnly: true}
+
+	var items []model.MediaItem
+	stderr := captureStderr(func() {
+		items, _ = fs.Parse(context.Background(), "https://example.com/a/test")
+	})
+
+	if len(items) != 2 || items[0].Title != "video.mp4" || items[1].Title != "set.zip" {
+		t.Fatalf("expected video.mp4 and set.zip, got %+v", items)
+	}
+	if !strings.Contains(stderr, "2 skipped non-media") {
+		t.Fatalf("expected a skip summary, got %q", stderr)
+	}
+}
+
+func TestFilterScraperMediaOnlyBypassesYouTube(t *testing.T) {
+	inner := &mockScraper{name: "youtube", items: []model.MediaItem{
+		{URL: "https://youtube.com/watch?v=1", Title: "Some Video"},
+	}}
+	fs := &filterScraper{inner: inner, mediaOnly: true}
+
+	items, err := fs.Parse(context.Background(), "https://youtube.com/playlist?list=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected the YouTube item to be kept, got %d items", len(items))
+	}
+}
+
+func TestFilterScraperMediaOnlyKeepsWorkingWithGlobs(t *testing.T) {
+	inner := &mockScraper{items: []model.MediaItem{
+		{URL: "https://cdn.example.com/a.mp4", Title: "a.mp4"},
+		{URL: "https://cdn.example.com/b.zip", Title: "b.zip"},
+		{URL: "https://cdn.example.com/c.exe", Title: "c.exe"},
+	}}
+	fs := &filterScraper{inner: inner, mediaOnly: true, include: []string{"*.zip"}}
+
+	items, _ := fs.Parse(context.Background(), "https://example.com/a/test")
+	if len(items) != 1 || items[0].Title != "b.zip" {
+		t.Fatalf("expected only b.zip after media + include filters, got %+v", items)
+	}
+}
+
+func TestApplyDryRunFiltersWrapsWhenOnlyMediaOnly(t *testing.T) {
+	inner := &mockScraper{items: []model.MediaItem{{Title: "a.mp4"}}}
+	cfg := &config.Config{MediaOnly: true}
+
+	wrapped := applyDryRunFilters(inner, cfg)
+	if _, ok := wrapped.(*filterScraper); !ok {
+		t.Fatalf("expected a filterScraper wrapper, got %T", wrapped)
+	}
+}
+
+func TestApplyMediaFilterAllSkipped(t *testing.T) {
+	var kept []model.MediaItem
+	stderr := captureStderr(func() {
+		kept = applyMediaFilter([]model.MediaItem{{Title: "setup.exe"}})
+	})
+	if len(kept) != 0 {
+		t.Fatalf("expected no items, got %+v", kept)
+	}
+	if !strings.Contains(stderr, "1 skipped non-media") || !strings.Contains(stderr, "No media items found.") {
+		t.Fatalf("expected skip summary and empty notice, got %q", stderr)
+	}
+}
+
+func TestApplyMediaFilterSilentWhenNothingSkipped(t *testing.T) {
+	stderr := captureStderr(func() {
+		applyMediaFilter([]model.MediaItem{{Title: "a.mp4"}})
+	})
+	if stderr != "" {
+		t.Fatalf("expected no output when nothing was skipped, got %q", stderr)
+	}
+}
+
+func TestShouldFilterMedia(t *testing.T) {
+	if !shouldFilterMedia(&config.Config{MediaOnly: true}, "bunker") {
+		t.Fatal("media filtering must be on for file hosts")
+	}
+	if shouldFilterMedia(&config.Config{MediaOnly: true}, "youtube") {
+		t.Fatal("YouTube must always bypass the media filter")
+	}
+	if shouldFilterMedia(&config.Config{MediaOnly: false}, "bunker") {
+		t.Fatal("--media-only=false must disable filtering")
 	}
 }
 
