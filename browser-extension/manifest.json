@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Scraper Tab Export",
+  "version": "1.0",
+  "description": "Export all supported browser tabs as URL lists for the scraper CLI.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "scraper-tab-export@local",
+      "strict_min_version": "109.0"
+    }
+  },
+  "permissions": ["tabs", "downloads"],
+  "action": {
+    "default_title": "Export supported tabs",
+    "default_popup": "popup.html"
+  }
+}

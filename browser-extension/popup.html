@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body {
+        font: 13px sans-serif;
+        margin: 12px;
+        min-width: 260px;
+      }
+      button {
+        width: 100%;
+        padding: 8px;
+        cursor: pointer;
+      }
+      #status {
+        margin: 8px 0 0;
+        color: #555;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <button id="export">Export supported tabs</button>
+    <p id="status">Exports all supported tabs to Downloads.</p>
+    <script type="module" src="popup.mjs"></script>
+  </body>
+</html>
