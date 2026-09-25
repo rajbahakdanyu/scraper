@@ -131,10 +131,12 @@ func (d *Downloader) Download(item model.MediaItem, dest string) (string, error)
 	if filename == "" {
 		filename = "download"
 	}
-	// Only append extension from URL if the title doesn't already have one
+	// Only append extension from URL if the title doesn't already have one.
+	// Re-sanitize the combined name so the byte-budget clamp accounts for
+	// the extension.
 	if path.Ext(filename) == "" {
 		if ext := extFromURL(item.URL); ext != "" {
-			filename += ext
+			filename = fileutil.SanitizeFilename(filename + ext)
 		}
 	}
 	finalPath := d.paths.Claim(filepath.Join(dest, filename), item.Key())

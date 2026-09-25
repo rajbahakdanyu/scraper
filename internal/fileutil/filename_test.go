@@ -3,6 +3,7 @@ package fileutil
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestSanitizeFilename(t *testing.T) {
@@ -29,5 +30,62 @@ func TestSanitizeFilename(t *testing.T) {
 				t.Errorf("SanitizeFilename(%q) = %q, want %q", tt.input, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestSanitizeFilenameClampsLength(t *testing.T) {
+	long := strings.Repeat("a", 300) + ".mp4"
+	got := SanitizeFilename(long)
+	if len(got) > 255 {
+		t.Fatalf("len(%q) = %d, want <= 255", got, len(got))
+	}
+	if !strings.HasSuffix(got, ".mp4") {
+		t.Fatalf("extension lost: %q", got)
+	}
+	if SanitizeFilename(long) != got {
+		t.Fatal("truncation must be deterministic")
+	}
+	if SanitizeFilename(strings.Repeat("b", 300)+".mp4") == got {
+		t.Fatal("different long names must not collide")
+	}
+}
+
+func TestSanitizeFilenameClampsUnicodeWithoutSplittingRunes(t *testing.T) {
+	long := strings.Repeat("é", 300) + ".bin"
+	got := SanitizeFilename(long)
+	if len(got) > 255 {
+		t.Fatalf("len = %d, want <= 255", len(got))
+	}
+	if !utf8.ValidString(got) {
+		t.Fatalf("truncated to invalid UTF-8: %q", got)
+	}
+}
+
+func TestSanitizeFilenameWindowsReservedNames(t *testing.T) {
+	for in, want := range map[string]string{
+		"CON":       "_CON",
+		"con.txt":   "_con.txt",
+		"nul":       "_nul",
+		"COM1.mp4":  "_COM1.mp4",
+		"LPT9":      "_LPT9",
+		"CONSOLE":   "CONSOLE",
+		"CONSOLE.1": "CONSOLE.1",
+	} {
+		if got := SanitizeFilename(in); got != want {
+			t.Errorf("SanitizeFilename(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestSanitizeFilenameStripsTrailingDotsAndSpaces(t *testing.T) {
+	for in, want := range map[string]string{
+		"file.  ": "file",
+		"file...": "file",
+		"a . ":    "a",
+		"...":     "",
+	} {
+		if got := SanitizeFilename(in); got != want {
+			t.Errorf("SanitizeFilename(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
