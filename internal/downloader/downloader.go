@@ -30,6 +30,9 @@ import (
 // trustworthy total size. Tests may temporarily reduce this value.
 var MaxUnknownFileSize int64 = 64 << 30
 
+// renameFile is a test seam for the final atomic rename.
+var renameFile = os.Rename
+
 // Downloader manages concurrent media downloads with progress tracking,
 // cancellation, retry, and atomic file writes.
 type Downloader struct {
@@ -221,7 +224,8 @@ func (d *Downloader) Download(item model.MediaItem, dest string) (string, error)
 		return err
 	})
 	if lastErr == nil {
-		if err := os.Rename(tempPath, finalPath); err != nil {
+		if err := renameFile(tempPath, finalPath); err != nil {
+			d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed})
 			return "", errors.Join(err, removeFiles(tempPath, resumePath))
 		}
 		if !d.skipChecksums {

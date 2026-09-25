@@ -1811,3 +1811,37 @@ func TestShutdownWithConcurrentDownloads(t *testing.T) {
 		}
 	}
 }
+
+func TestDownloadRenameFailureEmitsFailedStatus(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("content"))
+	}))
+	defer ts.Close()
+
+	original := renameFile
+	renameFile = func(oldpath, newpath string) error {
+		return errors.New("rename blocked")
+	}
+	defer func() { renameFile = original }()
+
+	dl := newTestDownloader(1, 0, "")
+	item := model.MediaItem{URL: ts.URL, Title: "rename.bin"}
+	dest := t.TempDir()
+	if _, err := dl.Download(item, dest); err == nil {
+		t.Fatal("expected the rename failure to surface")
+	}
+	dl.Shutdown()
+
+	var sawFailed bool
+	for evt := range dl.Progress() {
+		if evt.Status == model.StatusFailed {
+			sawFailed = true
+		}
+	}
+	if !sawFailed {
+		t.Fatal("expected a StatusFailed progress event after a rename failure")
+	}
+	if _, err := os.Stat(filepath.Join(dest, "rename.bin.part")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("expected the .part file to be cleaned up after a rename failure")
+	}
+}
