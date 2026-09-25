@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -1132,5 +1133,41 @@ func TestDiskWarningIncludesUnknownItems(t *testing.T) {
 	want := "disk: 1.0M free, 3.0M needed (2.0M short) (2 items with unknown size)"
 	if got != want {
 		t.Fatalf("diskWarning() = %q, want %q", got, want)
+	}
+}
+
+func TestFinishRunNotifiesFailureAndSuccess(t *testing.T) {
+	original := notifySend
+	defer func() { notifySend = original }()
+
+	var got []string
+	notifySend = func(summary string) error {
+		got = append(got, summary)
+		return nil
+	}
+
+	runFailure := func() error { return errors.New("boom") }
+	if err := finishRun(&config.Config{Notify: true}, globalOptions{noTui: true}, runFailure, runFailure, runFailure); err == nil {
+		t.Fatal("expected finishRun to propagate the runner error")
+	}
+	if len(got) != 1 || got[0] != "Download failed" {
+		t.Fatalf("notifications = %v, want [Download failed]", got)
+	}
+
+	got = nil
+	runSuccess := func() error { return nil }
+	if err := finishRun(&config.Config{Notify: true}, globalOptions{noTui: true}, runSuccess, runSuccess, runSuccess); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != "Download complete" {
+		t.Fatalf("notifications = %v, want [Download complete]", got)
+	}
+
+	got = nil
+	if err := finishRun(&config.Config{Notify: false}, globalOptions{noTui: true}, runSuccess, runSuccess, runSuccess); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("notifications = %v, want none when Notify is disabled", got)
 	}
 }

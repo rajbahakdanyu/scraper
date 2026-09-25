@@ -696,9 +696,17 @@ func finishRun(cfg *config.Config, opts globalOptions, jsonRun, plainRun, tuiRun
 		err = tuiRun()
 	}
 	if cfg.Notify {
-		tryNotify(cfg, "Download complete")
+		tryNotify(notificationSummary(err))
 	}
 	return err
+}
+
+// notificationSummary maps a run's terminal error to the notification text.
+func notificationSummary(err error) string {
+	if err != nil {
+		return "Download failed"
+	}
+	return "Download complete"
 }
 
 // collectBatchURLs gathers URLs from positional arguments, --input-file, and
@@ -1042,10 +1050,11 @@ func applyDryRunFilters(scraper model.Scraper, cfg *config.Config) model.Scraper
 	}
 }
 
-func tryNotify(cfg *config.Config, summary string) {
-	if cfg.Notify {
-		if err := notify.Send(summary); err != nil {
-			fmt.Fprintf(os.Stderr, "notification: %v\n", err)
-		}
+// notifySend is a test seam; production always sends through notify.Send.
+var notifySend = notify.Send
+
+func tryNotify(summary string) {
+	if err := notifySend(summary); err != nil {
+		fmt.Fprintf(os.Stderr, "notification: %v\n", err)
 	}
 }
