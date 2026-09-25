@@ -39,6 +39,7 @@ type JSONEvent struct {
 	TotalBytes int64  `json:"totalBytes,omitempty"`
 	Quality    string `json:"quality,omitempty"`
 	AudioOnly  string `json:"audioOnly,omitempty"`
+	RetryFile  string `json:"retryFile,omitempty"`
 }
 
 func DownloadStatusString(s DownloadStatus) string {
