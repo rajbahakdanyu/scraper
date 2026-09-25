@@ -1128,6 +1128,44 @@ func TestLoadGlobalConfigNotifyOverride(t *testing.T) {
 	}
 }
 
+func TestLoadGlobalConfigMediaOnlyOverride(t *testing.T) {
+	cfg, err := loadGlobalConfig(globalOptions{configPath: emptyTestConfig(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.MediaOnly {
+		t.Fatal("media filtering must default to on")
+	}
+
+	cfg, err = loadGlobalConfig(globalOptions{
+		configPath:   emptyTestConfig(t),
+		mediaOnly:    false,
+		mediaOnlySet: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MediaOnly {
+		t.Fatal("--media-only=false must override the default")
+	}
+
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte("media_only: false\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = loadGlobalConfig(globalOptions{
+		configPath:   configPath,
+		mediaOnly:    true,
+		mediaOnlySet: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.MediaOnly {
+		t.Fatal("--media-only must re-enable filtering when the config disabled it")
+	}
+}
+
 func TestDiskWarningIncludesUnknownItems(t *testing.T) {
 	got := diskWarning(3*1024*1024, 1024*1024, 2)
 	want := "disk: 1.0M free, 3.0M needed (2.0M short) (2 items with unknown size)"

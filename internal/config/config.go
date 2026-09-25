@@ -58,6 +58,10 @@ type Config struct {
 	DiskCheck bool `yaml:"disk_check"`
 	// Notify enables OS notification when all downloads complete.
 	Notify bool `yaml:"notify"`
+	// MediaOnly restricts downloads to media and archive files. On by
+	// default; set false (or pass --media-only=false) to download
+	// everything an album lists.
+	MediaOnly bool `yaml:"media_only"`
 
 	minSizeBytes int64 `yaml:"-"`
 	maxSizeBytes int64 `yaml:"-"`
@@ -152,6 +156,7 @@ func defaultConfig() *Config {
 		RateLimit:           "",
 		SkipChecksums:       false,
 		DiskCheck:           true,
+		MediaOnly:           true,
 	}
 }
 

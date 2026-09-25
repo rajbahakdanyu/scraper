@@ -70,6 +70,8 @@ type globalOptions struct {
 	maxSizeSet       bool
 	diskCheck        bool
 	diskCheckSet     bool
+	mediaOnly        bool
+	mediaOnlySet     bool
 	notify           bool
 	notifySet        bool
 }
@@ -138,6 +140,9 @@ func loadGlobalConfig(opts globalOptions) (*config.Config, error) {
 	}
 	if opts.diskCheckSet {
 		cfg.DiskCheck = opts.diskCheck
+	}
+	if opts.mediaOnlySet {
+		cfg.MediaOnly = opts.mediaOnly
 	}
 	if opts.notifySet {
 		cfg.Notify = opts.notify
@@ -267,6 +272,10 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 	if err != nil {
 		return globalOptions{}, err
 	}
+	mediaOnly, err := flags.GetBool("media-only")
+	if err != nil {
+		return globalOptions{}, err
+	}
 	notify, err := flags.GetBool("notify")
 	if err != nil {
 		return globalOptions{}, err
@@ -308,6 +317,8 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 		maxSizeSet:       flags.Changed("max-size"),
 		diskCheck:        diskCheck,
 		diskCheckSet:     flags.Changed("disk-check"),
+		mediaOnly:        mediaOnly,
+		mediaOnlySet:     flags.Changed("media-only"),
 		notify:           notify,
 		notifySet:        flags.Changed("notify"),
 	}, nil
@@ -404,6 +415,7 @@ func NewRootCmd() *cobra.Command {
 	root.PersistentFlags().String("min-size", "", "Skip items smaller than size (e.g. 500K, 2M)")
 	root.PersistentFlags().String("max-size", "", "Skip items larger than size (e.g. 500M, 1G)")
 	root.PersistentFlags().Bool("disk-check", true, "Warn if free disk space is less than estimated download size")
+	root.PersistentFlags().Bool("media-only", true, "Only download media and archive files (use --media-only=false to allow everything)")
 	root.PersistentFlags().Bool("notify", false, "Send OS notification when downloads complete")
 
 	root.AddCommand(

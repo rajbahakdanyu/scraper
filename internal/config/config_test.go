@@ -305,3 +305,23 @@ func TestParseSizeRejectsInt64OverflowBoundary(t *testing.T) {
 		t.Errorf("ParseSize(1G) = %d, %v; want %d, nil", n, err, 1<<30)
 	}
 }
+
+func TestDefaultConfigMediaOnlyTrue(t *testing.T) {
+	if cfg := defaultConfig(); !cfg.MediaOnly {
+		t.Fatal("media_only must default to true")
+	}
+}
+
+func TestLoadMediaOnlyFalse(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("media_only: false\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MediaOnly {
+		t.Fatal("media_only: false in the config file must disable media filtering")
+	}
+}
