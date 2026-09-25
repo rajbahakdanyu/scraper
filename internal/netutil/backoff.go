@@ -8,9 +8,19 @@ import (
 )
 
 const (
-	MaxRetries     = 3
-	RetryBaseDelay = 500 * time.Millisecond
+	MaxRetries     = 5
+	RetryBaseDelay = 1 * time.Second
+	// MaxRetryDelay bounds any single retry sleep — including a
+	// server-supplied Retry-After hint — so one item cannot stall a
+	// batch indefinitely.
+	MaxRetryDelay = 30 * time.Second
 )
+
+// retryAfterer is implemented by errors that carry a server-supplied
+// retry delay (the Retry-After header).
+type retryAfterer interface {
+	RetryAfter() time.Duration
+}
 
 type Sleeper interface {
 	Sleep(time.Duration)
@@ -39,7 +49,17 @@ func Retry(ctx context.Context, attempts int, baseDelay time.Duration, sleeper S
 	var lastErr error
 	for attempt := 0; attempt < attempts; attempt++ {
 		if attempt > 0 {
-			if err := sleeper.SleepCtx(ctx, BackoffWithJitter(baseDelay, attempt-1)); err != nil {
+			delay := BackoffWithJitter(baseDelay, attempt-1)
+			var ra retryAfterer
+			if errors.As(lastErr, &ra) {
+				if hinted := ra.RetryAfter(); hinted > delay {
+					delay = hinted
+				}
+			}
+			if delay > MaxRetryDelay {
+				delay = MaxRetryDelay
+			}
+			if err := sleeper.SleepCtx(ctx, delay); err != nil {
 				return err
 			}
 		}

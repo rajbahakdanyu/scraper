@@ -101,3 +101,44 @@ func TestBackoffWithJitterGrowsWithAttempt(t *testing.T) {
 		previous = got
 	}
 }
+
+type retryAfterErr struct{ delay time.Duration }
+
+func (e retryAfterErr) Error() string             { return "retry after" }
+func (e retryAfterErr) RetryAfter() time.Duration { return e.delay }
+
+func TestRetryHonorsRetryAfterHint(t *testing.T) {
+	sleeper := &recordingSleeper{}
+	attempts := 0
+	err := netutil.Retry(context.Background(), 3, time.Millisecond, sleeper, func() error {
+		attempts++
+		if attempts < 2 {
+			return retryAfterErr{delay: 2 * time.Second}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Retry() error = %v", err)
+	}
+	if len(sleeper.delays) != 1 || sleeper.delays[0] < 2*time.Second {
+		t.Fatalf("delays = %v, want a single delay >= 2s", sleeper.delays)
+	}
+}
+
+func TestRetryCapsRetryAfterHint(t *testing.T) {
+	sleeper := &recordingSleeper{}
+	attempts := 0
+	err := netutil.Retry(context.Background(), 2, time.Millisecond, sleeper, func() error {
+		attempts++
+		if attempts < 2 {
+			return retryAfterErr{delay: time.Hour}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Retry() error = %v", err)
+	}
+	if len(sleeper.delays) != 1 || sleeper.delays[0] > netutil.MaxRetryDelay {
+		t.Fatalf("delays = %v, want one delay <= %s", sleeper.delays, netutil.MaxRetryDelay)
+	}
+}
