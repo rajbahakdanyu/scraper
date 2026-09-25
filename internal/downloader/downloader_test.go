@@ -1812,6 +1812,39 @@ func TestShutdownWithConcurrentDownloads(t *testing.T) {
 	}
 }
 
+// Long titles must survive the downloader's own suffixes: ".part" and
+// ".part.resume.json" are appended while downloading, ".sha256" on success,
+// and PathAllocator may add " (N)" for collisions.
+func TestDownloadLongTitlesFitFilesystemLimits(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("long name content"))
+	}))
+	defer ts.Close()
+
+	dest := t.TempDir()
+	for name, title := range map[string]string{
+		"ascii":   strings.Repeat("a", 300) + ".bin",
+		"unicode": strings.Repeat("é", 200) + ".bin",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dl := newTestDownloader(1, 0, "")
+			finalPath, err := dl.Download(model.MediaItem{URL: ts.URL, Title: title}, dest)
+			if err != nil {
+				t.Fatalf("download failed: %v", err)
+			}
+			if base := filepath.Base(finalPath); len(base) > 255 {
+				t.Fatalf("final filename is %d bytes: %q", len(base), base)
+			}
+			if _, err := os.Stat(finalPath + ".sha256"); err != nil {
+				t.Fatalf("expected checksum sidecar for %s: %v", finalPath, err)
+			}
+			if _, err := os.Stat(finalPath + ".part"); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("expected the .part file to be gone after success")
+			}
+		})
+	}
+}
+
 func TestDownloadRenameFailureEmitsFailedStatus(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("content"))

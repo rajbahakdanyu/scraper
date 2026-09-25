@@ -12,15 +12,23 @@ const (
 	// maxFilenameBytes is the common per-component limit on Linux (ext4)
 	// and the practical limit on macOS/Windows.
 	maxFilenameBytes = 255
-	filenameHashLen  = 8
+	// filenameSuffixReserve leaves room for suffixes added after
+	// sanitization: the downloader's ".part" + ".resume.json" (16 bytes),
+	// a PathAllocator collision suffix like " (99)" (5 bytes), and the
+	// ".sha256" sidecar (7 bytes). Returning a full 255-byte name would
+	// make the .part sibling exceed the filesystem limit.
+	filenameSuffixReserve = 24
+	filenameBudget        = maxFilenameBytes - filenameSuffixReserve
+	filenameHashLen       = 8
 )
 
 // SanitizeFilename removes characters that are invalid in filenames, strips
 // trailing dots/spaces (Windows silently drops them), guards Windows
-// reserved device names, and clamps the result to maxFilenameBytes. It also
-// rejects "." and ".." (once slashes are stripped, these are the only
-// remaining path segments that could otherwise let a crafted item title make
-// the joined download path escape the destination directory).
+// reserved device names, and clamps the result to filenameBudget (255 bytes
+// minus room for the downloader's own suffixes). It also rejects "." and
+// ".." (once slashes are stripped, these are the only remaining path
+// segments that could otherwise let a crafted item title make the joined
+// download path escape the destination directory).
 func SanitizeFilename(s string) string {
 	clean := make([]rune, 0, len(s))
 	for _, r := range s {
@@ -35,7 +43,7 @@ func SanitizeFilename(s string) string {
 	if isWindowsReservedName(result) {
 		result = "_" + result
 	}
-	if len(result) > maxFilenameBytes {
+	if len(result) > filenameBudget {
 		result = truncateFilenameWithHash(result, s)
 	}
 	return result
@@ -65,7 +73,7 @@ func isWindowsReservedName(name string) bool {
 	return false
 }
 
-// truncateFilenameWithHash clips name to fit maxFilenameBytes while keeping
+// truncateFilenameWithHash clips name to fit filenameBudget while keeping
 // its extension, replacing the removed bytes with "-" + the first 8 hex
 // chars of sha256(original) so distinct titles stay distinct. original is
 // hashed rather than the cleaned name so the suffix is stable across calls.
@@ -74,14 +82,14 @@ func truncateFilenameWithHash(name, original string) string {
 	hash := hex.EncodeToString(sum[:])[:filenameHashLen]
 
 	ext := path.Ext(name)
-	if len(ext) > maxFilenameBytes/2 {
+	if len(ext) > filenameBudget/2 {
 		ext = "" // a pathological "extension" leaves no room for a stem
 	}
 	suffix := "-" + hash
-	budget := maxFilenameBytes - len(ext) - len(suffix)
+	budget := filenameBudget - len(ext) - len(suffix)
 	if budget < 1 {
 		ext = ""
-		budget = maxFilenameBytes - len(suffix)
+		budget = filenameBudget - len(suffix)
 	}
 	body := name[:len(name)-len(ext)]
 	if len(body) > budget {

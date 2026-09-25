@@ -21,7 +21,9 @@ func TestSanitizeFilename(t *testing.T) {
 		{name: "unicode preserved", input: "café.mp4", want: "café.mp4"},
 		{name: "leading hyphen preserved", input: "-start", want: "-start"},
 		{name: "path separators stripped", input: "path/to\\file.mp4", want: "pathtofile.mp4"},
-		{name: "255 characters preserved", input: strings.Repeat("x", 255), want: strings.Repeat("x", 255)},
+		// The budget leaves room for ".part"/".resume.json"/".sha256"
+		// suffixes added after sanitization.
+		{name: "budget bytes preserved", input: strings.Repeat("x", filenameBudget), want: strings.Repeat("x", filenameBudget)},
 	}
 
 	for _, tt := range tests {
@@ -36,8 +38,8 @@ func TestSanitizeFilename(t *testing.T) {
 func TestSanitizeFilenameClampsLength(t *testing.T) {
 	long := strings.Repeat("a", 300) + ".mp4"
 	got := SanitizeFilename(long)
-	if len(got) > 255 {
-		t.Fatalf("len(%q) = %d, want <= 255", got, len(got))
+	if len(got) > filenameBudget {
+		t.Fatalf("len(%q) = %d, want <= %d", got, len(got), filenameBudget)
 	}
 	if !strings.HasSuffix(got, ".mp4") {
 		t.Fatalf("extension lost: %q", got)
