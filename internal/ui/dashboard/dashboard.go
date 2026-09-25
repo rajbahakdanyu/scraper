@@ -657,6 +657,25 @@ func (d *Dashboard) inspectSelected() {
 	}
 }
 
+// FailedItem pairs a media item with the error that ended its download.
+type FailedItem struct {
+	Item model.MediaItem
+	Err  error
+}
+
+// Failures returns the items that ended in the failed state, in display
+// order. The CLI uses it to write a retry list after the TUI exits.
+func (d *Dashboard) Failures() []FailedItem {
+	var out []FailedItem
+	for i := range d.states {
+		if d.states[i].isHeader || d.states[i].status != model.StatusFailed {
+			continue
+		}
+		out = append(out, FailedItem{Item: d.states[i].item, Err: d.states[i].lastErr})
+	}
+	return out
+}
+
 // retrySelected resets the selected failed item back to pending and
 // kicks off a fresh download attempt.
 func (d *Dashboard) retrySelected() tea.Cmd {

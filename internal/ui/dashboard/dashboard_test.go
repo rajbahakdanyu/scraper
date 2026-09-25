@@ -1136,3 +1136,21 @@ func TestEnsureStateIndexDoesNotRebuildWhenNothingChanged(t *testing.T) {
 		t.Fatalf("ensureStateIndex allocated %.2f times per no-op call; expected incremental indexing", allocs)
 	}
 }
+
+func TestFailuresReturnsOnlyFailedItems(t *testing.T) {
+	d := NewBatch(&fakeDownloader{ch: make(chan model.ProgressEvent, 1)}, t.TempDir(), nil)
+	d.states = []itemState{
+		{isHeader: true},
+		{item: model.MediaItem{URL: "https://x/1", Title: "done"}, status: model.StatusCompleted},
+		{item: model.MediaItem{URL: "https://x/2", Title: "bad"}, status: model.StatusFailed, lastErr: errors.New("boom")},
+		{item: model.MediaItem{URL: "https://x/3", Title: "cancelled"}, status: model.StatusCancelled},
+	}
+
+	got := d.Failures()
+	if len(got) != 1 {
+		t.Fatalf("Failures() returned %d items, want 1", len(got))
+	}
+	if got[0].Item.Title != "bad" || got[0].Err == nil || got[0].Err.Error() != "boom" {
+		t.Fatalf("Failures() = %+v, want the failed item with its error", got[0])
+	}
+}
