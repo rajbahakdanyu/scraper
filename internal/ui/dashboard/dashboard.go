@@ -69,12 +69,13 @@ type Dashboard struct {
 	spinner  spinner.Model
 	theme    styles.Theme
 
-	states     []itemState
-	stateIndex map[string]int
-	rows       []table.Row
-	dirtyRows  map[int]struct{}
-	downloader Downloader
-	dest       string
+	states        []itemState
+	stateIndex    map[string]int
+	indexedStates int
+	rows          []table.Row
+	dirtyRows     map[int]struct{}
+	downloader    Downloader
+	dest          string
 
 	width  int
 	height int
@@ -834,14 +835,17 @@ func (d *Dashboard) refreshRows() {
 	d.table.SetRows(d.rows)
 }
 
+// ensureStateIndex indexes newly appended states incrementally. States are
+// append-only, so rebuilding the whole map on every progress event (O(n) per
+// event, O(n²) per run in batch mode) is unnecessary.
 func (d *Dashboard) ensureStateIndex() {
-	if len(d.stateIndex) == len(d.states) {
-		return
+	if d.stateIndex == nil {
+		d.stateIndex = make(map[string]int)
 	}
-	d.stateIndex = make(map[string]int, len(d.states))
-	for i := range d.states {
-		if !d.states[i].isHeader {
-			d.stateIndex[d.states[i].item.Key()] = i
+	for ; d.indexedStates < len(d.states); d.indexedStates++ {
+		st := &d.states[d.indexedStates]
+		if !st.isHeader {
+			d.stateIndex[st.item.Key()] = d.indexedStates
 		}
 	}
 }

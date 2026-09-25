@@ -1092,3 +1092,47 @@ func TestDownloadTickerStopsWhenIdle(t *testing.T) {
 		t.Fatal("expected the download ticker to stop when idle")
 	}
 }
+
+func TestEnsureStateIndexIsIncremental(t *testing.T) {
+	urls := []DashAlbumURL{
+		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/one", Slug: "one", Dest: t.TempDir()},
+		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/two", Slug: "two", Dest: t.TempDir()},
+	}
+	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 10)}
+	d := NewBatch(fd, t.TempDir(), urls)
+
+	items := []model.MediaItem{{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100}}
+	_, _ = d.handleBatchScrape(batchScrapeMsg{album: urls[0], idx: 0, items: items})
+	d.ensureStateIndex()
+	key := d.states[1].item.Key()
+	if got, ok := d.stateIndex[key]; !ok || got != 1 {
+		t.Fatalf("state index = %v, want key at 1", d.stateIndex)
+	}
+
+	_, _ = d.handleBatchScrape(batchScrapeMsg{album: urls[1], idx: 1, items: items})
+	d.ensureStateIndex()
+	if _, ok := d.stateIndex[key]; !ok {
+		t.Fatal("incremental indexing dropped an existing entry")
+	}
+	last := len(d.states) - 1
+	if got, ok := d.stateIndex[d.states[last].item.Key()]; !ok || got != last {
+		t.Fatalf("new state not indexed: %v", d.stateIndex)
+	}
+}
+
+func TestEnsureStateIndexDoesNotRebuildWhenNothingChanged(t *testing.T) {
+	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 10)}
+	d := NewBatch(fd, t.TempDir(), nil)
+	// Duplicate keys make len(stateIndex) != len(states); a rebuild-based
+	// implementation reallocates the whole map on every call.
+	d.states = []itemState{
+		{item: model.MediaItem{URL: "https://example.com/a"}},
+		{item: model.MediaItem{URL: "https://example.com/a"}},
+	}
+	d.ensureStateIndex()
+
+	allocs := testing.AllocsPerRun(10, d.ensureStateIndex)
+	if allocs > 0 {
+		t.Fatalf("ensureStateIndex allocated %.2f times per no-op call; expected incremental indexing", allocs)
+	}
+}
