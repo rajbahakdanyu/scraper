@@ -361,3 +361,43 @@ func TestPublicClientRejectsHTTPSDowngradeRedirect(t *testing.T) {
 		t.Fatalf("HTTPS downgrade error = %v, want https-to-http error", err)
 	}
 }
+
+func TestPublicClientWithPrivateProxyHost(t *testing.T) {
+	var gotTarget string
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotTarget = r.URL.String()
+		_, _ = w.Write([]byte("proxied"))
+	}))
+	defer proxy.Close()
+
+	client, err := NewPublicClientWithProxy(time.Second, proxy.URL)
+	if err != nil {
+		t.Fatalf("NewPublicClientWithProxy failed: %v", err)
+	}
+	resp, err := client.Get("http://example.com/page")
+	if err != nil {
+		t.Fatalf("request through local proxy failed: %v", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "proxied" {
+		t.Fatalf("body = %q, want proxied", body)
+	}
+	if gotTarget != "http://example.com/page" {
+		t.Fatalf("proxy saw target %q, want http://example.com/page", gotTarget)
+	}
+}
+
+func TestPrivateProxyHostIsNotAllowedAsTarget(t *testing.T) {
+	client, err := NewPublicClientWithProxy(time.Second, "http://127.0.0.1:1")
+	if err != nil {
+		t.Fatalf("NewPublicClientWithProxy failed: %v", err)
+	}
+	// The proxy host is dialable, but must not become a valid request target.
+	if _, err := client.Get("http://127.0.0.1:1/"); err == nil || !strings.Contains(err.Error(), "not public") {
+		t.Fatalf("private target via proxy error = %v, want not public error", err)
+	}
+}

@@ -96,6 +96,7 @@ func GetDoc(ctx context.Context, client *http.Client, url, userAgent string) (io
 
 type Policy struct {
 	allowedPrivateHosts map[string]struct{}
+	allowedDialHosts    map[string]struct{}
 	resolver            *net.Resolver
 }
 
@@ -108,6 +109,26 @@ func NewPolicy(allowedPrivateURLs ...string) *Policy {
 		}
 	}
 	return &Policy{allowedPrivateHosts: allowed, resolver: net.DefaultResolver}
+}
+
+// allowDialHost permits dialing host without permitting it as a request
+// target. Used for a configured proxy host (which is dialed directly by the
+// transport, never fetched as the request URL): a local/private proxy would
+// otherwise be rejected by the public-IP dial guard.
+func (p *Policy) allowDialHost(host string) {
+	if p.allowedDialHosts == nil {
+		p.allowedDialHosts = make(map[string]struct{})
+	}
+	p.allowedDialHosts[strings.ToLower(host)] = struct{}{}
+}
+
+func (p *Policy) dialAllowed(host string) bool {
+	host = strings.ToLower(host)
+	if _, ok := p.allowedPrivateHosts[host]; ok {
+		return true
+	}
+	_, ok := p.allowedDialHosts[host]
+	return ok
 }
 
 func (p *Policy) ValidateURL(rawURL string) error {
@@ -147,7 +168,7 @@ func (p *Policy) dialContext(dialer *net.Dialer, readTimeout time.Duration) func
 		if err != nil {
 			return nil, err
 		}
-		if _, ok := p.allowedPrivateHosts[strings.ToLower(host)]; ok {
+		if p.dialAllowed(host) {
 			conn, err := dialer.DialContext(ctx, network, address)
 			return withReadTimeout(conn, readTimeout), err
 		}
@@ -235,6 +256,10 @@ func newPublicClientWithConcurrency(concurrency int, timeout, responseHeaderTime
 		if err != nil {
 			return nil, fmt.Errorf("invalid proxy URL %q: %w", proxyURL, err)
 		}
+		if u.Hostname() == "" {
+			return nil, fmt.Errorf("invalid proxy URL %q: missing host", proxyURL)
+		}
+		policy.allowDialHost(u.Hostname())
 		proxy := http.ProxyURL(u)
 		transport.Proxy = func(req *http.Request) (*url.URL, error) {
 			if err := policy.ValidateURL(req.URL.String()); err != nil {
