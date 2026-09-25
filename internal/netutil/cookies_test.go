@@ -3,6 +3,7 @@ package netutil
 import (
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -228,6 +229,38 @@ func TestWithCookiesSetsJar(t *testing.T) {
 	jarCookies := client.Jar.Cookies(u)
 	if len(jarCookies) == 0 {
 		t.Fatal("expected cookies in jar, got none")
+	}
+}
+
+// TestWithCookiesSendsCookiesOverPlainHTTP guards against the review claim
+// that WithCookies only sets cookies for https:// targets. Go's cookiejar
+// stores cookies by domain, not scheme: a non-secure cookie set via an
+// https URL is returned for http targets (and the existing
+// TestWithCookiesSetsJar already asserts that). This test pins the
+// end-to-end behavior with a real HTTP round trip.
+func TestWithCookiesSendsCookiesOverPlainHTTP(t *testing.T) {
+	var got string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if c, err := r.Cookie("session"); err == nil {
+			got = c.Value
+		}
+	}))
+	defer ts.Close()
+
+	u, err := url.Parse(ts.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookies := []*http.Cookie{{Name: "session", Value: "abc", Domain: u.Hostname(), Path: "/"}}
+	client := WithCookies(ts.Client(), cookies)
+
+	resp, err := client.Get(ts.URL)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	resp.Body.Close()
+	if got != "abc" {
+		t.Fatalf("http request saw cookie %q, want abc", got)
 	}
 }
 
