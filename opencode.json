@@ -5,8 +5,8 @@
     "superpowers@git+https://github.com/obra/superpowers.git"
   ],
 
-  "model": "opencode-go/deepseek-v4-pro",
-  "small_model": "opencode-go/deepseek-v4-flash",
+  "model": "opencode/deepseek-v4.1-flash",
+  "small_model": "opencode/deepseek-v4.1-flash",
 
   "autoupdate": true,
 
@@ -26,22 +26,22 @@
     },
     "plan": {
       "mode": "primary",
-      "model": "opencode-go/kimi-k3",
+      "model": "opencode/kimi-k3",
       "description": "Architectural analysis, SDD plan generation, and constraint definitions without editing files directly."
     },
     "debug": {
       "mode": "primary",
-      "model": "opencode-go/glm-5.3-flash",
+      "model": "opencode/glm-5.3-flash",
       "description": "Default primary agent for debugging and issue resolution."
     },
     "general": {
       "mode": "subagent",
-      "model": "opencode-go/glm-5.3-flash",
+      "model": "opencode/glm-5.3-flash",
       "description": "General-purpose subagent for background execution passes, multi-step subtasks, and SDD task reviews."
     },
     "explore": {
       "mode": "subagent",
-      "model": "opencode-go/deepseek-v4-flash",
+      "model": "opencode/deepseek-v4.1-flash",
       "description": "Fast, read-only codebase search, file path inspection, and string matching.",
       "permission": {
         "edit": "deny",
