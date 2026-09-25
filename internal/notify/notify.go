@@ -26,8 +26,15 @@ func darwinNotify(summary string) error {
 	if _, err := exec.LookPath("osascript"); err != nil {
 		return nil
 	}
-	script := fmt.Sprintf(`display notification %q with title "scraper"`, sanitizeNotificationSummary(summary))
-	return execNotify("osascript", "-e", script)
+	return execNotify("osascript", "-e", darwinScript(summary))
+}
+
+// darwinScript composes the AppleScript notification.
+// sanitizeNotificationSummary replaces double quotes and backslashes (the
+// only AppleScript string metacharacters used here), so the summary cannot
+// break out of its string literal and inject AppleScript.
+func darwinScript(summary string) string {
+	return fmt.Sprintf(`display notification %q with title "scraper"`, sanitizeNotificationSummary(summary))
 }
 
 func sanitizeNotificationSummary(summary string) string {
@@ -38,12 +45,18 @@ func linuxNotify(summary string) error {
 	if _, err := exec.LookPath("notify-send"); err != nil {
 		return nil
 	}
-	return execNotify("notify-send", "scraper", summary)
+	return execNotify("notify-send", linuxNotifyArgs(summary)...)
+}
+
+// linuxNotifyArgs builds notify-send's argv; the summary is a single argv
+// element and is never passed through a shell.
+func linuxNotifyArgs(summary string) []string {
+	return []string{"scraper", summary}
 }
 
 // execNotify runs a notification command. All callers sanitize their
 // arguments: darwinNotify quotes the message via sanitizeNotificationSummary;
-// linuxNotify receives the constant "Download complete".
+// linuxNotify passes the summary as a single argv element, never a shell.
 //
 // #nosec G204 -- arguments are sanitized or constant, not attacker-controlled.
 func execNotify(name string, args ...string) error {
