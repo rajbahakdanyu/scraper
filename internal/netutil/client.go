@@ -238,6 +238,25 @@ func NewPublicStreamingClientWithProxy(responseHeaderTimeout time.Duration, prox
 	return newPublicClientWithConcurrency(1, 0, responseHeaderTimeout, responseHeaderTimeout, proxyURL)
 }
 
+// WithRedirectPolicy returns a shallow clone of client whose redirects are
+// additionally validated against policy. The client's existing
+// CheckRedirect (redirect cap, HTTPS-downgrade block, public-IP policy)
+// runs first and is preserved. Use this to keep a strict host allowlist in
+// force across redirects, not just for the initial URL.
+func WithRedirectPolicy(client *http.Client, policy *Policy) *http.Client {
+	clone := *client
+	existing := client.CheckRedirect
+	clone.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if existing != nil {
+			if err := existing(req, via); err != nil {
+				return err
+			}
+		}
+		return policy.ValidateURL(req.URL.String())
+	}
+	return &clone
+}
+
 func WithUserAgent(client *http.Client, userAgent string) *http.Client {
 	if userAgent == "" {
 		return client
@@ -337,9 +356,10 @@ func withReadTimeout(conn net.Conn, timeout time.Duration) net.Conn {
 	return &readTimeoutConn{Conn: conn, timeout: timeout}
 }
 
-// nonPublicIPBlocks are IANA special-purpose IPv4 ranges that Go's
-// IsGlobalUnicast/IsPrivate predicates do not cover (CGNAT, TEST-NETs,
-// benchmarking, and the reserved 240/4 block including broadcast).
+// nonPublicIPBlocks are IANA special-purpose ranges that Go's
+// IsGlobalUnicast/IsPrivate predicates do not cover: CGNAT, TEST-NETs,
+// benchmarking, and the reserved 240/4 block including broadcast for IPv4;
+// documentation, discard-only, and benchmarking ranges for IPv6.
 var nonPublicIPBlocks = func() []*net.IPNet {
 	cidrs := []string{
 		"100.64.0.0/10",   // CGNAT (RFC 6598)
@@ -348,6 +368,10 @@ var nonPublicIPBlocks = func() []*net.IPNet {
 		"198.51.100.0/24", // TEST-NET-2
 		"203.0.113.0/24",  // TEST-NET-3
 		"240.0.0.0/4",     // reserved + broadcast
+		"100::/64",        // discard-only (RFC 6666)
+		"2001:2::/48",     // benchmarking (RFC 5180)
+		"2001:db8::/32",   // documentation (RFC 3849)
+		"3fff::/20",       // documentation (RFC 9637)
 	}
 	blocks := make([]*net.IPNet, 0, len(cidrs))
 	for _, cidr := range cidrs {

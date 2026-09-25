@@ -486,6 +486,34 @@ func TestExtractSlug(t *testing.T) {
 	}
 }
 
+func TestParseFileRejectsUnlistedAuthRedirect(t *testing.T) {
+	auth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://localhost:9/other", http.StatusFound)
+	}))
+	defer auth.Close()
+
+	info := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"name": "f.mp4", "size": 1,
+			"auth_url": auth.URL,
+		})
+	}))
+	defer info.Close()
+
+	scraper := newTestCyberDropScraper()
+	scraper.baseURL = info.URL
+
+	items, err := scraper.Parse(context.Background(), info.URL+"/f/slug")
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	_, err = items[0].Resolve(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "allowlist") {
+		t.Fatalf("resolve error = %v, want an allowlist rejection for the redirect", err)
+	}
+}
+
 func TestParseFileRejectsUnlistedAuthHost(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

@@ -429,6 +429,41 @@ func TestStrictPolicyRejectsUnlistedPublicHosts(t *testing.T) {
 	}
 }
 
+func TestWithRedirectPolicyBlocksUnlistedRedirect(t *testing.T) {
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://localhost:9/unlisted", http.StatusFound)
+	}))
+	defer redirector.Close()
+
+	client := WithRedirectPolicy(redirector.Client(), NewStrictPolicy(redirector.URL))
+	if _, err := client.Get(redirector.URL); err == nil || !strings.Contains(err.Error(), "allowlist") {
+		t.Fatalf("redirect error = %v, want allowlist rejection", err)
+	}
+}
+
+func TestWithRedirectPolicyAllowsAllowlistedRedirect(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("target"))
+	}))
+	defer target.Close()
+
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusFound)
+	}))
+	defer redirector.Close()
+
+	client := WithRedirectPolicy(redirector.Client(), NewStrictPolicy(redirector.URL))
+	resp, err := client.Get(redirector.URL)
+	if err != nil {
+		t.Fatalf("allowlisted redirect failed: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != "target" {
+		t.Fatalf("body = %q, want target", body)
+	}
+}
+
 func TestIsPublicIPRejectsSpecialPurposeRanges(t *testing.T) {
 	blocked := []string{
 		"100.64.0.1",      // CGNAT (RFC 6598)
@@ -453,6 +488,27 @@ func TestIsPublicIPRejectsSpecialPurposeRanges(t *testing.T) {
 		"223.255.255.255",
 	}
 	for _, addr := range allowed {
+		if !isPublicIP(net.ParseIP(addr)) {
+			t.Errorf("isPublicIP(%s) = false, want true", addr)
+		}
+	}
+
+	blockedV6 := []string{
+		"2001:db8::1", // documentation (RFC 3849)
+		"3fff::1",     // documentation (RFC 9637)
+		"100::1",      // discard-only (RFC 6666)
+		"2001:2::1",   // benchmarking (RFC 5180)
+	}
+	for _, addr := range blockedV6 {
+		if isPublicIP(net.ParseIP(addr)) {
+			t.Errorf("isPublicIP(%s) = true, want false", addr)
+		}
+	}
+	allowedV6 := []string{
+		"2606:4700:4700::1111",
+		"2001:4860:4860::8888",
+	}
+	for _, addr := range allowedV6 {
 		if !isPublicIP(net.ParseIP(addr)) {
 			t.Errorf("isPublicIP(%s) = false, want true", addr)
 		}

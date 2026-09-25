@@ -126,7 +126,11 @@ func (s *Scraper) fetchSignedURL(ctx context.Context, authURL, slug string) (str
 	var auth struct {
 		URL string `json:"url"`
 	}
-	if err := netutil.GetJSON(ctx, s.client, authURL, s.userAgent, &auth); err != nil {
+	// authURL already passed strict host validation in fetchFileInfo; pin
+	// its redirects to the same hosts so an allowed auth host cannot bounce
+	// the request to an arbitrary public host.
+	authClient := netutil.WithRedirectPolicy(s.client, netutil.NewStrictPolicy(s.baseURL, authURL))
+	if err := netutil.GetJSON(ctx, authClient, authURL, s.userAgent, &auth); err != nil {
 		return "", classifyAPIError(err, "cyberdrop: failed to get download URL (HTTP %d)")
 	}
 
