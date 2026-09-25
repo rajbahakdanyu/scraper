@@ -1136,6 +1136,20 @@ func TestDiskWarningIncludesUnknownItems(t *testing.T) {
 	}
 }
 
+func TestOutputFlagHelpMentionsEffectiveDefault(t *testing.T) {
+	root := NewRootCmd()
+	flag := root.PersistentFlags().Lookup("output")
+	if flag == nil {
+		t.Fatal("expected --output persistent flag")
+	}
+	if flag.DefValue != "" {
+		t.Errorf("--output flag default = %q, want empty (the effective default lives in config.Load)", flag.DefValue)
+	}
+	if !strings.Contains(flag.Usage, "~/Downloads") {
+		t.Errorf("--output usage = %q, want it to mention ~/Downloads", flag.Usage)
+	}
+}
+
 func TestFinishRunNotifiesFailureAndSuccess(t *testing.T) {
 	original := notifySend
 	defer func() { notifySend = original }()

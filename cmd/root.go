@@ -380,14 +380,14 @@ func NewRootCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				return runWithScraper(reg[site], targetURL, site, opts)
+				return runWithScraperAndConfig(cfg, reg[site], targetURL, site, opts)
 			}
 			return runBatch(opts, urls)
 		},
 	}
 
 	root.PersistentFlags().String("config", "", "Config file path (default: ~/.scraper.yaml)")
-	root.PersistentFlags().StringP("output", "o", ".", "Output directory")
+	root.PersistentFlags().StringP("output", "o", "", "Output directory (default: ~/Downloads)")
 	root.PersistentFlags().Int("concurrent", 5, "Maximum concurrent downloads")
 	root.PersistentFlags().String("limit-rate", "", "Cap total download speed (e.g. 500K, 2M, 1G; default: unlimited)")
 	root.PersistentFlags().Bool("no-checksums", false, "Don't write/verify .sha256 checksum sidecar files")
@@ -569,14 +569,21 @@ func detectSite(rawURL string) (string, error) {
 	return "", fmt.Errorf("could not auto-detect a site for %q (available: youtube, cyberdrop, bunker, goonbox, filester, pixeldrain, turbo)", rawURL)
 }
 
-// runWithScraper launches the TUI immediately. The scraper runs in the
-// background; the TUI shows a loading spinner until results arrive.
+// runWithScraper loads config and then runs; site subcommands use this
+// entry point.
 func runWithScraper(scraper model.Scraper, targetURL string, siteName string, opts globalOptions) error {
 	cfg, err := loadGlobalConfig(opts)
 	if err != nil {
 		return err
 	}
+	return runWithScraperAndConfig(cfg, scraper, targetURL, siteName, opts)
+}
 
+// runWithScraperAndConfig launches the TUI immediately using an
+// already-loaded config, avoiding a second config-file parse/cookie read on
+// the root command path. The scraper runs in the background; the TUI shows
+// a loading spinner until results arrive.
+func runWithScraperAndConfig(cfg *config.Config, scraper model.Scraper, targetURL, siteName string, opts globalOptions) error {
 	if len(cfg.ParsedCookies()) > 0 {
 		if s, ok := scraper.(interface{ SetCookies([]*http.Cookie) }); ok {
 			s.SetCookies(cfg.ParsedCookies())
