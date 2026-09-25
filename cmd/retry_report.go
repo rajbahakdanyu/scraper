@@ -37,12 +37,19 @@ func collectFailures(items []model.MediaItem, errs []error) []failedItem {
 }
 
 // retryURL picks the URL a retry run should use: the human-facing page
-// when the parser recorded one, else the item's URL.
+// when the parser recorded one, else the item's URL with any query or
+// fragment stripped so signed parameters never reach the retry list.
 func retryURL(item model.MediaItem) string {
 	if item.PageURL != "" {
 		return item.PageURL
 	}
-	return item.URL
+	u, err := url.Parse(item.URL)
+	if err != nil {
+		return ""
+	}
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String()
 }
 
 // failureReason classifies an error into a short reason for the grouped

@@ -1980,3 +1980,92 @@ func TestDownloadRedactsSignedURLFromConnectionError(t *testing.T) {
 		t.Fatalf("expected the error to wrap io.EOF, got: %v", err)
 	}
 }
+
+type recordingSleeper struct {
+	mu     sync.Mutex
+	delays []time.Duration
+}
+
+func (s *recordingSleeper) Sleep(time.Duration) {}
+
+func (s *recordingSleeper) SleepCtx(_ context.Context, d time.Duration) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.delays = append(s.delays, d)
+	return nil
+}
+
+// A real 503 with Retry-After must flow through downloadOnce into the
+// sleeper, and a huge hint must still be capped at netutil.MaxRetryDelay.
+func TestDownloadHonorsRetryAfterFromResponse(t *testing.T) {
+	tests := []struct {
+		name       string
+		retryAfter string
+		wantMin    time.Duration
+	}{
+		{"seconds", "2", 2 * time.Second},
+		{"huge capped", "1000000000", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var requests int32
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if atomic.AddInt32(&requests, 1) == 1 {
+					w.Header().Set("Retry-After", tt.retryAfter)
+					w.WriteHeader(http.StatusServiceUnavailable)
+					return
+				}
+				w.Write([]byte("ok"))
+			}))
+			defer ts.Close()
+
+			dl := newTestDownloader(1, 0, "")
+			sleeper := &recordingSleeper{}
+			dl.SetSleeper(sleeper)
+			item := model.MediaItem{URL: ts.URL + "/file", Title: "retryafter.bin"}
+			if _, err := dl.Download(item, t.TempDir()); err != nil {
+				t.Fatalf("expected retry to succeed, got %v", err)
+			}
+			if len(sleeper.delays) != 1 {
+				t.Fatalf("delays = %v, want exactly one", sleeper.delays)
+			}
+			if tt.wantMin > 0 && sleeper.delays[0] < tt.wantMin {
+				t.Fatalf("delay = %s, want >= %s", sleeper.delays[0], tt.wantMin)
+			}
+			if sleeper.delays[0] > netutil.MaxRetryDelay {
+				t.Fatalf("delay = %s, want <= %s", sleeper.delays[0], netutil.MaxRetryDelay)
+			}
+		})
+	}
+}
+
+// A 404 is permanent even for items with a resolver: no URL refresh.
+func TestDownload404WithResolverNotReResolved(t *testing.T) {
+	var requests, resolveCalls int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requests, 1)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	dl := newTestDownloader(1, 0, "")
+	dl.SetSleeper(noopSleeper{})
+	item := model.MediaItem{
+		URL:   ts.URL + "/file",
+		Title: "gone.bin",
+		Resolve: func(ctx context.Context) (string, error) {
+			atomic.AddInt32(&resolveCalls, 1)
+			return ts.URL + "/file", nil
+		},
+	}
+	_, err := dl.Download(item, t.TempDir())
+	if err == nil {
+		t.Fatal("expected a 404 to fail")
+	}
+	if got := atomic.LoadInt32(&requests); got != 1 {
+		t.Errorf("HTTP requests = %d, want 1 (404 is permanent)", got)
+	}
+	if got := atomic.LoadInt32(&resolveCalls); got != 1 {
+		t.Errorf("resolve calls = %d, want 1 (no refresh for 404)", got)
+	}
+}

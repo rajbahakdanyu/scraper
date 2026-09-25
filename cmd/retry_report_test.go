@@ -125,3 +125,45 @@ func TestFailuresFromDashboard(t *testing.T) {
 		t.Fatalf("failuresFromDashboard() = %+v", out)
 	}
 }
+
+func TestRetryReportRedactsSignedFallbackURL(t *testing.T) {
+	dir := t.TempDir()
+	failures := []failedItem{
+		{Item: model.MediaItem{URL: "https://cdn.example/file.mp4?token=secret&ex=123", Title: "signed"}, Err: errors.New("boom")},
+	}
+
+	path, summary, err := retryReport(dir, failures, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	if strings.Contains(string(data), "secret") {
+		t.Fatalf("retry list leaked a signed URL:\n%s", data)
+	}
+	if strings.Contains(summary, "secret") {
+		t.Fatalf("summary leaked a signed URL:\n%s", summary)
+	}
+	if !strings.Contains(string(data), "https://cdn.example/file.mp4") {
+		t.Fatalf("retry list lost the URL path:\n%s", data)
+	}
+}
+
+func TestRetryReportErrorsOnUnwritableDir(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can write to read-only directories")
+	}
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0700) })
+
+	failures := []failedItem{{Item: model.MediaItem{URL: "https://bunkr.cr/f/x"}, Err: errors.New("boom")}}
+	path, summary, err := retryReport(dir, failures, time.Now())
+	if err == nil {
+		t.Fatalf("expected an error for an unwritable directory, got path=%q", path)
+	}
+	if path != "" || summary != "" {
+		t.Fatalf("retryReport() = (%q, %q), want empty results on error", path, summary)
+	}
+}
