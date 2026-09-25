@@ -97,7 +97,18 @@ func GetDoc(ctx context.Context, client *http.Client, url, userAgent string) (io
 type Policy struct {
 	allowedPrivateHosts map[string]struct{}
 	allowedDialHosts    map[string]struct{}
+	strict              bool
 	resolver            *net.Resolver
+}
+
+// NewStrictPolicy returns a Policy that, in addition to the public-IP dial
+// guard, only accepts request URLs whose host is in allowedURLs or is a
+// subdomain of one. Use it where a caller intends to pin downloads to known
+// infrastructure; NewPolicy stays permissive (public hosts anywhere).
+func NewStrictPolicy(allowedURLs ...string) *Policy {
+	p := NewPolicy(allowedURLs...)
+	p.strict = true
+	return p
 }
 
 func NewPolicy(allowedPrivateURLs ...string) *Policy {
@@ -145,10 +156,26 @@ func (p *Policy) ValidateURL(rawURL string) error {
 	if u.User != nil {
 		return fmt.Errorf("URL %q must not contain credentials", rawURL)
 	}
-	if _, ok := p.allowedPrivateHosts[strings.ToLower(u.Hostname())]; ok {
+	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	if p.strict {
+		if !p.allowsHost(host) {
+			return fmt.Errorf("host %q is not in the allowlist", host)
+		}
+		return nil
+	}
+	if _, ok := p.allowedPrivateHosts[host]; ok {
 		return nil
 	}
 	return p.validateHost(u.Hostname())
+}
+
+func (p *Policy) allowsHost(host string) bool {
+	for allowed := range p.allowedPrivateHosts {
+		if host == allowed || strings.HasSuffix(host, "."+allowed) {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *Policy) validateHost(host string) error {

@@ -807,3 +807,31 @@ func TestParseFilesterFolderRecoversFromTransientHTTPError(t *testing.T) {
 		t.Fatalf("expected 3 items (page 2 recovers after 500), got %d", len(items))
 	}
 }
+
+func TestParseFilesterRejectsUnlistedCDNServer(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v2/api/public/download", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"file":   "file-x",
+			"token":  "tok",
+			"server": "https://evil.example.net",
+			"name":   "x.bin",
+		})
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	scraper := newTestFilesterScraper()
+	scraper.baseURL = ts.URL
+	scraper.cdnURLs = []string{ts.URL}
+
+	item, err := scraper.resolveFile(context.Background(), "slug", "x.bin")
+	_ = item
+	if err == nil {
+		t.Fatal("expected an unlisted CDN server to be rejected")
+	}
+	if !strings.Contains(err.Error(), "unsafe CDN server") {
+		t.Fatalf("error = %v, want unsafe CDN server", err)
+	}
+}

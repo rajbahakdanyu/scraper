@@ -103,7 +103,7 @@ type fileInfo struct {
 }
 
 // fetchFileInfo GETs a file's metadata (name, size, auth_url) from the API.
-func (s *Scraper) fetchFileInfo(ctx context.Context, slug string) (fileInfo, error) {
+func (s *Scraper) fetchFileInfo(ctx context.Context, slug, pageURL string) (fileInfo, error) {
 	infoURL := fmt.Sprintf("%s/file/info/%s", s.baseURL, slug)
 
 	var info fileInfo
@@ -114,7 +114,7 @@ func (s *Scraper) fetchFileInfo(ctx context.Context, slug string) (fileInfo, err
 	if info.AuthURL == "" {
 		return fileInfo{}, fmt.Errorf("cyberdrop: no auth_url returned for %s", slug)
 	}
-	if err := netutil.NewPolicy(s.baseURL).ValidateURL(info.AuthURL); err != nil {
+	if err := netutil.NewStrictPolicy(s.baseURL, pageURL).ValidateURL(info.AuthURL); err != nil {
 		return fileInfo{}, fmt.Errorf("cyberdrop: unsafe auth_url for %s: %w", slug, err)
 	}
 
@@ -144,7 +144,7 @@ func (s *Scraper) fetchSignedURL(ctx context.Context, authURL, slug string) (str
 // filename and size, and surfaces missing/unsafe files at parse time) and
 // defers only the signed-URL exchange to the item's Resolve func.
 func (s *Scraper) parseFile(ctx context.Context, pageURL, slug string) (model.MediaItem, error) {
-	info, err := s.fetchFileInfo(ctx, slug)
+	info, err := s.fetchFileInfo(ctx, slug, pageURL)
 	if err != nil {
 		return model.MediaItem{}, err
 	}
@@ -212,7 +212,7 @@ func (s *Scraper) parseAlbum(ctx context.Context, albumPageURL, slug string) ([]
 			MimeType: f.Type,
 			Type:     model.MediaTypeForName(title),
 			Resolve: func(ctx context.Context) (string, error) {
-				info, err := s.fetchFileInfo(ctx, fileSlug)
+				info, err := s.fetchFileInfo(ctx, fileSlug, albumPageURL)
 				if err != nil {
 					return "", model.WrapPermanent(err)
 				}

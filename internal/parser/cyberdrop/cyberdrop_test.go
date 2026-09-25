@@ -485,3 +485,22 @@ func TestExtractSlug(t *testing.T) {
 		}
 	}
 }
+
+func TestParseFileRejectsUnlistedAuthHost(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"name": "f.mp4", "size": 1,
+			"auth_url": "https://evil.example.net/file/auth/x",
+		})
+	}))
+	defer ts.Close()
+
+	scraper := newTestCyberDropScraper()
+	scraper.baseURL = ts.URL
+
+	if _, err := scraper.Parse(context.Background(), ts.URL+"/f/slug"); err == nil ||
+		!strings.Contains(err.Error(), "unsafe auth_url") {
+		t.Fatalf("error = %v, want unsafe auth_url", err)
+	}
+}

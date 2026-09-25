@@ -401,3 +401,29 @@ func TestPrivateProxyHostIsNotAllowedAsTarget(t *testing.T) {
 		t.Fatalf("private target via proxy error = %v, want not public error", err)
 	}
 }
+
+func TestStrictPolicyAllowsListedHostAndSubdomains(t *testing.T) {
+	policy := NewStrictPolicy("https://filester.sh")
+	for _, rawURL := range []string{
+		"https://filester.sh/f/1",
+		"https://CDN.FilESTer.sh:8443/x",
+		"https://cdn.filester.sh/x",
+	} {
+		if err := policy.ValidateURL(rawURL); err != nil {
+			t.Errorf("ValidateURL(%s) = %v, want nil", rawURL, err)
+		}
+	}
+}
+
+func TestStrictPolicyRejectsUnlistedPublicHosts(t *testing.T) {
+	policy := NewStrictPolicy("https://filester.sh")
+	for _, rawURL := range []string{
+		"https://evil.example.net/x",
+		"https://filester.sh.evil.example.net/x",
+		"https://notfilester.sh/x",
+	} {
+		if err := policy.ValidateURL(rawURL); err == nil {
+			t.Errorf("ValidateURL(%s) accepted an unlisted host", rawURL)
+		}
+	}
+}

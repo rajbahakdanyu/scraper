@@ -439,7 +439,7 @@ func (s *Scraper) resolveFileOnce(ctx context.Context, slug, knownName string) (
 		server = s.cdnURLs[rand.Intn(len(s.cdnURLs))]
 	}
 	allowedURLs := append([]string{s.baseURL}, s.cdnURLs...)
-	if err := netutil.NewPolicy(allowedURLs...).ValidateURL(server); err != nil {
+	if err := netutil.NewStrictPolicy(allowedURLs...).ValidateURL(server); err != nil {
 		return model.MediaItem{}, model.NewNonRetryable(fmt.Errorf("filester: unsafe CDN server for %s: %w", slug, err))
 	}
 	for _, segment := range strings.Split(tok.File, "/") {
