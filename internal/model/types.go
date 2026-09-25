@@ -29,8 +29,12 @@ const (
 
 // MediaItem represents a single media item to be downloaded
 type MediaItem struct {
-	ID       string    // Per-run identity used to distinguish duplicate URLs
-	URL      string    // URL of the media resource (a stable page URL when Resolve is set)
+	ID  string // Per-run identity used to distinguish duplicate URLs
+	URL string // URL of the media resource (a stable page URL when Resolve is set)
+	// PageURL is the human-facing page for the item when it differs from
+	// URL (e.g. a bunkr /f/<slug> page). Retry reports prefer it so the
+	// item can be re-scraped by feeding the URL back to the CLI.
+	PageURL  string
 	Title    string    // Display title of the media
 	Size     int64     // Size of the media in bytes
 	MimeType string    // MIME type of the media

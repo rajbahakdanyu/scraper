@@ -694,3 +694,26 @@ func TestBunkerSignResponseBodyIsBounded(t *testing.T) {
 		t.Fatal("expected an oversized signing response to fail decoding")
 	}
 }
+
+func TestParseBunkerRecordsPageURL(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/f/pageurl", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprintf(w, `<html><head><title>clip.mp4 | Bunkr</title></head><body>
+<a href="https://bunkr.cr/file/61567">Download</a></body></html>`)
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	scraper := newTestBunkerScraper()
+	items, err := scraper.Parse(context.Background(), ts.URL+"/f/pageurl")
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if items[0].PageURL != ts.URL+"/f/pageurl" {
+		t.Errorf("PageURL = %q, want %q", items[0].PageURL, ts.URL+"/f/pageurl")
+	}
+}

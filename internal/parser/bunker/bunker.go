@@ -241,6 +241,7 @@ func (s *Scraper) parseFilePage(ctx context.Context, fileURL string) (model.Medi
 	// lazily at download time via the API + signing service.
 	return model.MediaItem{
 		URL:      dlURL.String(),
+		PageURL:  fileURL,
 		Title:    title,
 		MimeType: "application/octet-stream",
 		Type:     model.MediaTypeForName(title),
