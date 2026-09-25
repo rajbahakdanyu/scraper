@@ -145,3 +145,13 @@ func TestFilterSummaryString(t *testing.T) {
 		}
 	}
 }
+
+func TestFilterItemsMatchesURLDecodedFilename(t *testing.T) {
+	items := []MediaItem{
+		{URL: "https://cdn.example.com/my%20video.mp4"},
+	}
+	filtered, s := FilterItems(items, []string{"my video.mp4"}, nil, 0, 0)
+	if s.Kept != 1 || len(filtered) != 1 {
+		t.Fatalf("kept = %d, want 1 (glob must match the decoded filename)", s.Kept)
+	}
+}

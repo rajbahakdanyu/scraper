@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"strings"
 
@@ -47,6 +48,13 @@ func FilterItems(items []MediaItem, include, exclude []string, minSize, maxSize 
 	filtered := make([]MediaItem, 0, len(items))
 	for _, item := range items {
 		filename := netutil.PathSlug(item.URL)
+		// Match the human-readable filename: the URL slug is usually
+		// percent-encoded (e.g. "my%20video.mp4"). Decoding failure falls
+		// back to the raw slug. Matching stays case-sensitive, and
+		// patterns are validated by the CLI before reaching here.
+		if decoded, err := url.PathUnescape(filename); err == nil {
+			filename = decoded
+		}
 
 		if hasInclude && !matchesAny(filename, include) {
 			s.ExcludedByGlob++
