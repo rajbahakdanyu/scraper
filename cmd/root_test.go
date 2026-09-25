@@ -1299,6 +1299,25 @@ func TestDryRunKeepsPartialMediaItems(t *testing.T) {
 	}
 }
 
+func TestBatchDryRunPrintsPerURLErrors(t *testing.T) {
+	restoreBatchFactories(t)
+	bad := &fakeDryRunScraper{name: "bunker", err: errors.New("album page returned no file links")}
+	batchScraperRegistry = func(string, []*http.Cookie) (map[string]model.Scraper, error) {
+		return map[string]model.Scraper{"bunker": bad}, nil
+	}
+
+	var runErr error
+	stderr := captureStderr(func() {
+		runErr = runBatch(globalOptions{configPath: emptyTestConfig(t), dryRun: true, noTui: true}, []string{"https://bunkr.cr/a/one"})
+	})
+	if runErr == nil {
+		t.Fatal("expected the batch dry-run to report the failure")
+	}
+	if !strings.Contains(stderr, "https://bunkr.cr/a/one") || !strings.Contains(stderr, "no file links") {
+		t.Fatalf("expected the failing URL and its error on stderr, got %q", stderr)
+	}
+}
+
 func TestHelpRequestedOnlyWithoutAnyURLSource(t *testing.T) {
 	if !helpRequested(nil, false, true) {
 		t.Fatal("no args, no input file, terminal stdin: expected help")

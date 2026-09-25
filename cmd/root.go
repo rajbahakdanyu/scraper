@@ -826,6 +826,7 @@ func runBatch(opts globalOptions, urls []string) error {
 					continue
 				}
 				if jsonErr := runDryRunJSONWithDiskCheck(applyDryRunFilters(reg[site], cfg), u, site, os.Stdout, cfg.OutputDir, cfg.DiskCheck); jsonErr != nil {
+					fmt.Fprintf(os.Stderr, "dry-run: %s: %v\n", u, jsonErr)
 					allErrs = append(allErrs, jsonErr)
 				}
 			}
@@ -839,6 +840,7 @@ func runBatch(opts globalOptions, urls []string) error {
 				continue
 			}
 			if dryErr := runDryRunWithDiskCheck(applyDryRunFilters(reg[site], cfg), u, cfg.OutputDir, cfg.DiskCheck); dryErr != nil {
+				fmt.Fprintf(os.Stderr, "dry-run: %s: %v\n", u, dryErr)
 				errs = append(errs, dryErr)
 			}
 		}

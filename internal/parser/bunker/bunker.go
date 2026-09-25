@@ -25,7 +25,16 @@ type Scraper struct {
 	userAgent string
 	baseURL   string
 	signURL   string
+	sleeper   netutil.Sleeper
 }
+
+const (
+	// maxAlbumAttempts bounds album-page fetches: transient blips,
+	// rate-limit interstitials, and 5xx responses shouldn't fail an
+	// otherwise valid album.
+	maxAlbumAttempts    = 4
+	albumRetryBaseDelay = 1500 * time.Millisecond
+)
 
 // NewBunkerScraper creates a new Bunker scraper using the default HTTP client.
 func NewBunkerScraper() *Scraper {
@@ -35,6 +44,7 @@ func NewBunkerScraper() *Scraper {
 		userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
 		baseURL:   "https://bunkr.cr",
 		signURL:   "https://glb-apisign.cdn.cr/sign",
+		sleeper:   netutil.RealSleeper{},
 	}
 }
 
@@ -50,8 +60,13 @@ func NewBunkerScraperWithProxy(proxyURL string) (*Scraper, error) {
 		userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
 		baseURL:   "https://bunkr.cr",
 		signURL:   "https://glb-apisign.cdn.cr/sign",
+		sleeper:   netutil.RealSleeper{},
 	}, nil
 }
+
+// SetSleeper replaces the retry delay implementation. Call this before
+// parsing, not concurrently with it.
+func (s *Scraper) SetSleeper(sleeper netutil.Sleeper) { s.sleeper = sleeper }
 
 func (s *Scraper) SetCookies(cookies []*http.Cookie) {
 	s.client = netutil.WithCookies(s.client, cookies)
@@ -88,23 +103,9 @@ func (s *Scraper) Parse(ctx context.Context, albumURL string) ([]model.MediaItem
 		return []model.MediaItem{item}, nil
 	}
 
-	doc, err := s.fetchDoc(ctx, albumURL)
+	fileLinks, err := s.fetchAlbumLinks(ctx, albumURL)
 	if err != nil {
 		return nil, err
-	}
-
-	var fileLinks []string
-	doc.Find(`a[aria-label="download"]`).Each(func(_ int, sel *goquery.Selection) {
-		href, ok := sel.Attr("href")
-		if !ok || href == "" {
-			return
-		}
-		fullURL := s.resolveURL(albumURL, href)
-		fileLinks = append(fileLinks, fullURL)
-	})
-
-	if len(fileLinks) == 0 {
-		return nil, fmt.Errorf("bunker: no file links found on album page")
 	}
 
 	// Fetch file pages concurrently for speed.
@@ -141,6 +142,37 @@ func (s *Scraper) Parse(ctx context.Context, albumURL string) ([]model.MediaItem
 	}
 
 	return result, model.NewPartialError("bunker album", errs)
+}
+
+// fetchAlbumLinks fetches an album page and extracts its download links,
+// retrying transient failures with backoff: 429/5xx and network errors, and
+// a 200 page with no links (a challenge interstitial or momentary blip).
+// Permanent errors (404 etc.) stop after one attempt via netutil.Retry's
+// NonRetryableError handling.
+func (s *Scraper) fetchAlbumLinks(ctx context.Context, albumURL string) ([]string, error) {
+	var links []string
+	err := netutil.Retry(ctx, maxAlbumAttempts, albumRetryBaseDelay, s.sleeper, func() error {
+		doc, err := s.fetchDoc(ctx, albumURL)
+		if err != nil {
+			return err
+		}
+		links = nil
+		doc.Find(`a[aria-label="download"]`).Each(func(_ int, sel *goquery.Selection) {
+			href, ok := sel.Attr("href")
+			if !ok || href == "" {
+				return
+			}
+			links = append(links, s.resolveURL(albumURL, href))
+		})
+		if len(links) == 0 {
+			return fmt.Errorf("bunker: album page %s returned no file links", albumURL)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return links, nil
 }
 
 // parseFilePage visits a /f/<id> page to get the dl.bunkr.cr download link
@@ -307,7 +339,11 @@ func (s *Scraper) fetchDoc(ctx context.Context, pageURL string) (*goquery.Docume
 	if err != nil {
 		var statusErr *netutil.HTTPStatusError
 		if errors.As(err, &statusErr) {
-			return nil, fmt.Errorf("bunker: HTTP %d for %s", statusErr.StatusCode, pageURL)
+			statusMessage := fmt.Errorf("bunker: HTTP %d for %s", statusErr.StatusCode, pageURL)
+			if !model.IsRetryableStatus(statusErr.StatusCode) {
+				return nil, model.NewNonRetryable(statusMessage)
+			}
+			return nil, statusMessage
 		}
 		return nil, err
 	}

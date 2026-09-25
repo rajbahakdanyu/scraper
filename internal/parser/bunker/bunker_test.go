@@ -14,13 +14,20 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/rajbahakdanyu/scraper/internal/model"
 )
 
+type noopSleeper struct{}
+
+func (noopSleeper) Sleep(time.Duration)                           {}
+func (noopSleeper) SleepCtx(context.Context, time.Duration) error { return nil }
+
 func newTestBunkerScraper() *Scraper {
 	scraper := NewBunkerScraper()
 	scraper.client = &http.Client{}
+	scraper.SetSleeper(noopSleeper{})
 	return scraper
 }
 
@@ -446,6 +453,117 @@ func TestParseBunkerAlbumNoLinks(t *testing.T) {
 	_, err := scraper.Parse(context.Background(), ts.URL+"/a/test")
 	if err == nil {
 		t.Error("expected error for album with no file links")
+	}
+}
+
+func TestParseBunkerAlbumErrorIncludesURL(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(`<html><body>no files here</body></html>`))
+	}))
+	defer ts.Close()
+
+	scraper := newTestBunkerScraper()
+	scraper.baseURL = ts.URL
+	albumURL := ts.URL + "/a/empty"
+	_, err := scraper.Parse(context.Background(), albumURL)
+	if err == nil {
+		t.Fatal("expected error for album with no file links")
+	}
+	if !strings.Contains(err.Error(), albumURL) {
+		t.Fatalf("error must name the failing album page, got %q", err.Error())
+	}
+}
+
+func TestParseBunkerAlbumRetriesTransientEmptyPage(t *testing.T) {
+	var albumRequests int32
+
+	mux := http.NewServeMux()
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	mux.HandleFunc("/a/flaky", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		if atomic.AddInt32(&albumRequests, 1) == 1 {
+			_, _ = io.WriteString(w, `<html><body>challenge interstitial</body></html>`)
+			return
+		}
+		_, _ = io.WriteString(w, `<html><body><a href="/f/one" aria-label="download"></a></body></html>`)
+	})
+	mux.HandleFunc("/f/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprintf(w, `<html><head><title>x.mp4 | Bunkr</title></head><body>
+<a href="%s/file/1">Download</a></body></html>`, ts.URL)
+	})
+
+	scraper := newTestBunkerScraper()
+	scraper.baseURL = ts.URL
+
+	items, err := scraper.Parse(context.Background(), ts.URL+"/a/flaky")
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item after the retry, got %d", len(items))
+	}
+	if got := atomic.LoadInt32(&albumRequests); got != 2 {
+		t.Fatalf("expected 2 album requests (one retry), got %d", got)
+	}
+}
+
+func TestParseBunkerAlbumRetriesTransientStatus(t *testing.T) {
+	var albumRequests int32
+
+	mux := http.NewServeMux()
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	mux.HandleFunc("/a/ratelimited", func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&albumRequests, 1) == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = io.WriteString(w, `<html><body><a href="/f/one" aria-label="download"></a></body></html>`)
+	})
+	mux.HandleFunc("/f/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprintf(w, `<html><head><title>x.mp4 | Bunkr</title></head><body>
+<a href="%s/file/1">Download</a></body></html>`, ts.URL)
+	})
+
+	scraper := newTestBunkerScraper()
+	scraper.baseURL = ts.URL
+
+	items, err := scraper.Parse(context.Background(), ts.URL+"/a/ratelimited")
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item after the retry, got %d", len(items))
+	}
+	if got := atomic.LoadInt32(&albumRequests); got != 2 {
+		t.Fatalf("expected 2 album requests (one retry), got %d", got)
+	}
+}
+
+func TestParseBunkerAlbumPermanentErrorNotRetried(t *testing.T) {
+	var albumRequests int32
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&albumRequests, 1)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	scraper := newTestBunkerScraper()
+	scraper.baseURL = ts.URL
+
+	if _, err := scraper.Parse(context.Background(), ts.URL+"/a/gone"); err == nil {
+		t.Fatal("expected a 404 album to fail")
+	}
+	if got := atomic.LoadInt32(&albumRequests); got != 1 {
+		t.Fatalf("permanent 404 must not be retried, got %d requests", got)
 	}
 }
 
