@@ -562,24 +562,48 @@ func TestBatchHeaderRowsCreated(t *testing.T) {
 
 func TestBatchHeaderCursorSkip(t *testing.T) {
 	urls := []DashAlbumURL{
-		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/test", Slug: "test", Dest: "/tmp/test"},
+		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/one", Slug: "one", Dest: t.TempDir()},
+		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/two", Slug: "two", Dest: t.TempDir()},
 	}
 	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 10)}
-	d := NewBatch(fd, "/tmp", urls)
+	d := NewBatch(fd, t.TempDir(), urls)
 
 	items := []model.MediaItem{
 		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100},
+		{URL: "https://example.com/b.mp4", Title: "b.mp4", Size: 200},
 	}
-	msg := batchScrapeMsg{album: urls[0], idx: 0, items: items}
-	_, _ = d.handleBatchScrape(msg)
+	_, _ = d.handleBatchScrape(batchScrapeMsg{album: urls[0], idx: 0, items: items})
+	_, _ = d.handleBatchScrape(batchScrapeMsg{album: urls[1], idx: 1, items: items})
 
 	d.table.SetHeight(10)
 	d.refreshRows()
 
-	// Cursor should not be on a header row (it starts at 0, but move
-	// logic would skip if it were)
-	if d.states[0].isHeader {
-		t.Log("header row exists at index 0, which is expected for batch mode")
+	if !d.states[0].isHeader {
+		t.Fatal("expected a header at row 0")
+	}
+
+	// Moving up from the first item must never park on row 0's header.
+	d.table.SetCursor(1)
+	d.moveUpSkippingHeaders()
+	if idx := d.table.Cursor(); idx < 0 || idx >= len(d.states) || d.states[idx].isHeader {
+		t.Fatalf("moveUp parked on header at index %d", idx)
+	}
+
+	// Moving down from a header between albums must land on the next item.
+	secondHeader := -1
+	for i := 1; i < len(d.states); i++ {
+		if d.states[i].isHeader {
+			secondHeader = i
+			break
+		}
+	}
+	if secondHeader == -1 {
+		t.Fatal("expected a second album header")
+	}
+	d.table.SetCursor(secondHeader)
+	d.moveDownSkippingHeaders()
+	if idx := d.table.Cursor(); d.states[idx].isHeader {
+		t.Fatalf("moveDown parked on header at index %d", idx)
 	}
 }
 
@@ -1047,5 +1071,24 @@ func TestBatchHandlesEmptyAlbumWithoutCreatingDirectory(t *testing.T) {
 	}
 	if _, err := os.Stat(urls[1].Dest); os.IsNotExist(err) {
 		t.Fatal("second album directory should exist")
+	}
+}
+
+func TestDownloadTickerStopsWhenIdle(t *testing.T) {
+	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 10)}
+	items := []model.MediaItem{{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100}}
+	d := New(instantItems(items), fd, t.TempDir(), "cyberdrop")
+	d.Update(scrapeResultMsg{items: items})
+
+	if _, cmd := d.Update(tickMsg{}); cmd == nil {
+		t.Fatal("expected the download ticker to re-arm while downloads are pending")
+	}
+
+	d.applyDone(downloadDoneMsg{key: d.states[0].item.Key()})
+	if d.spinnerActive() {
+		t.Fatal("expected spinner inactive after all downloads done")
+	}
+	if _, cmd := d.Update(tickMsg{}); cmd != nil {
+		t.Fatal("expected the download ticker to stop when idle")
 	}
 }

@@ -264,6 +264,12 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return d, cmd
 
 	case tickMsg:
+		if !d.spinnerActive() {
+			// All downloads are done; stop re-arming instead of
+			// redrawing forever (the refreshTickMsg branch is gated the
+			// same way).
+			return d, nil
+		}
 		// Recalculate speed from elapsed time on each tick
 		for i := range d.states {
 			if d.states[i].status == model.StatusDownloading && !d.states[i].started.IsZero() {
@@ -584,11 +590,20 @@ func (d *Dashboard) handleBatchScrape(msg batchScrapeMsg) (tea.Model, tea.Cmd) {
 
 func (d *Dashboard) moveUpSkippingHeaders() {
 	d.table.MoveUp(1)
-	idx := d.table.Cursor()
-	// Clamp to the first non-header row, scanning upward.
-	for idx > 0 && idx < len(d.states) && d.states[idx].isHeader {
+	for idx := d.table.Cursor(); idx > 0 && idx < len(d.states) && d.states[idx].isHeader; {
 		d.table.MoveUp(1)
 		idx = d.table.Cursor()
+	}
+	// The scan can stop at row 0 when that row is a header (there is no
+	// non-header row above it). Park on the first non-header row instead
+	// of leaving the cursor on the header.
+	if idx := d.table.Cursor(); idx == 0 && len(d.states) > 0 && d.states[0].isHeader {
+		for i := 1; i < len(d.states); i++ {
+			if !d.states[i].isHeader {
+				d.table.SetCursor(i)
+				break
+			}
+		}
 	}
 }
 
