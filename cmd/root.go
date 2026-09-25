@@ -364,12 +364,12 @@ func NewRootCmd() *cobra.Command {
 		SilenceUsage: true,
 		Args:         cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 0 {
-				return cmd.Help()
-			}
 			opts, err := globalOptionsFromCommand(cmd)
 			if err != nil {
 				return err
+			}
+			if helpRequested(args, opts.inputFileSet, stdinIsTerminal()) {
+				return cmd.Help()
 			}
 
 			urls, err := collectBatchURLs(args, opts)
@@ -730,6 +730,17 @@ func notificationSummary(err error) string {
 	}
 	return "Download complete"
 }
+
+// helpRequested reports whether the root command should print help instead
+// of running: no URLs can come from anywhere (no positional args, no
+// --input-file, and stdin is a terminal). Piped stdin or an input file must
+// proceed so collectBatchURLs can read them.
+func helpRequested(args []string, inputFileSet, stdinIsTTY bool) bool {
+	return len(args) == 0 && !inputFileSet && stdinIsTTY
+}
+
+// stdinIsTerminal is a test seam for the bare-invocation help check.
+var stdinIsTerminal = func() bool { return term.IsTerminal(int(os.Stdin.Fd())) }
 
 // collectBatchURLs gathers URLs from positional arguments, --input-file, and
 // stdin (when not a TTY and no other sources). Lines starting with "#" are

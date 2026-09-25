@@ -357,6 +357,12 @@ func TestDetectSiteUnknown(t *testing.T) {
 }
 
 func TestRootCmdNoArgsShowsHelp(t *testing.T) {
+	// Bare invocation shows help only when stdin is an interactive terminal
+	// (no piped URL source). Make that deterministic under `go test`.
+	original := stdinIsTerminal
+	stdinIsTerminal = func() bool { return true }
+	defer func() { stdinIsTerminal = original }()
+
 	root := NewRootCmd()
 	if err := root.RunE(root, nil); err != nil {
 		t.Errorf("expected bare invocation to show help without error, got: %v", err)
@@ -1290,6 +1296,45 @@ func TestDryRunKeepsPartialMediaItems(t *testing.T) {
 	}
 	if strings.Contains(out, "b.exe") {
 		t.Fatalf("expected the skipped non-media item to stay out of dry-run output, got %q", out)
+	}
+}
+
+func TestHelpRequestedOnlyWithoutAnyURLSource(t *testing.T) {
+	if !helpRequested(nil, false, true) {
+		t.Fatal("no args, no input file, terminal stdin: expected help")
+	}
+	if helpRequested(nil, true, true) {
+		t.Fatal("--input-file set: must run, not print help")
+	}
+	if helpRequested(nil, false, false) {
+		t.Fatal("piped stdin: must run, not print help")
+	}
+	if helpRequested([]string{"https://example.com/x"}, false, true) {
+		t.Fatal("positional args: must run, not print help")
+	}
+}
+
+func TestRootCommandReadsInputFileWithoutPositionalArgs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "urls.txt")
+	if err := os.WriteFile(path, []byte("https://example.com/not-supported\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	root := NewRootCmd()
+	var stdout, stderr bytes.Buffer
+	root.SetOut(&stdout)
+	root.SetErr(&stderr)
+	root.SetArgs([]string{
+		"--config", emptyTestConfig(t),
+		"--input-file", path,
+	})
+
+	_, err := root.ExecuteC()
+	if err == nil {
+		t.Fatalf("expected the unsupported URL to fail, got help instead:\n%s", stdout.String())
+	}
+	if combined := stdout.String() + stderr.String(); strings.Contains(combined, "Usage:") {
+		t.Fatalf("expected the command to run, but it printed help:\n%s", combined)
 	}
 }
 
