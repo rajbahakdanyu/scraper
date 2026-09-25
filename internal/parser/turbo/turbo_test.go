@@ -249,3 +249,33 @@ func TestScraperName(t *testing.T) {
 		t.Errorf("expected name turbo, got %s", s.Name())
 	}
 }
+
+func TestTurboResolveRejectsUnsafeSignURL(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/a/album", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<html><body><table><tbody id="fileTbody">
+<tr class="file-row" data-id="abc" data-name="x.mp4" data-size="100"></tr>
+</tbody></table></body></html>`))
+	})
+	mux.HandleFunc("/api/sign", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"url":     "http://127.0.0.1/private",
+		})
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	scraper := newTestScraper()
+	scraper.baseURL = ts.URL
+
+	items, err := scraper.Parse(context.Background(), ts.URL+"/a/album")
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	if _, err := items[0].Resolve(context.Background()); err == nil {
+		t.Fatal("expected an unsafe sign URL to be rejected")
+	}
+}

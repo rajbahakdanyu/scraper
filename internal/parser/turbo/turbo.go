@@ -179,6 +179,9 @@ func (s *Scraper) signURL(ctx context.Context, fileID string) (string, error) {
 	if !result.Success || result.URL == "" {
 		return "", model.NewNonRetryable(fmt.Errorf("turbo: sign returned no URL for %s", fileID))
 	}
+	if err := netutil.NewPolicy().ValidateURL(result.URL); err != nil {
+		return "", model.NewNonRetryable(fmt.Errorf("turbo: unsafe sign URL for %s: %w", fileID, err))
+	}
 
 	return result.URL, nil
 }
