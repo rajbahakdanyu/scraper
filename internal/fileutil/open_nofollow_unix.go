@@ -14,7 +14,7 @@ var errSymlink = errors.New("refusing to follow symlink for .part file")
 // OpenFileNoFollow opens a file with O_NOFOLLOW on unix systems,
 // refusing to traverse symbolic links.
 func OpenFileNoFollow(path string, flag int, perm os.FileMode) (*os.File, error) {
-	fd, err := unix.Open(path, flag|unix.O_NOFOLLOW, uint32(perm.Perm()))
+	fd, err := unix.Open(path, flag|unix.O_NOFOLLOW|unix.O_CLOEXEC, uint32(perm.Perm()))
 	if err != nil {
 		if errors.Is(err, unix.ELOOP) {
 			return nil, errSymlink
