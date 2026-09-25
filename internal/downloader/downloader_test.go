@@ -1382,7 +1382,7 @@ func TestDownloadSkipsWhenChecksumMatches(t *testing.T) {
 	}
 }
 
-func TestDownloadRejectsMalformedChecksumSidecar(t *testing.T) {
+func TestDownloadTreatsMalformedChecksumSidecarAsAbsent(t *testing.T) {
 	var requests int32
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&requests, 1)
@@ -1400,12 +1400,19 @@ func TestDownloadRejectsMalformedChecksumSidecar(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := dl.Download(item, dest)
-	if err == nil || !strings.Contains(err.Error(), "invalid SHA-256") {
-		t.Fatalf("expected malformed checksum error, got %v", err)
+	if _, err := dl.Download(item, dest); err != nil {
+		t.Fatalf("a malformed sidecar must not fail the item: %v", err)
 	}
 	if requests != 0 {
-		t.Fatalf("malformed checksum unexpectedly triggered %d requests", requests)
+		t.Fatalf("malformed sidecar unexpectedly triggered %d requests", requests)
+	}
+	// The existing file is trusted exactly as if no sidecar were present.
+	got, err := os.ReadFile(filepath.Join(dest, "malformed.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "existing" {
+		t.Fatalf("file content = %q, want existing", got)
 	}
 }
 

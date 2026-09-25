@@ -51,6 +51,11 @@ func WriteChecksumDigest(path, sum string) error {
 	return os.Rename(tempName, sidecarPath)
 }
 
+// VerifyChecksum reports whether a usable .sha256 sidecar exists for path
+// and whether it matches the file's bytes. A missing sidecar, a sidecar
+// written for a different file, and unparseable/truncated content are all
+// reported as absent (present=false) rather than as errors, so callers
+// never permanently fail a file because of a bad sidecar.
 func VerifyChecksum(path string) (present, matches bool, err error) {
 	data, err := os.ReadFile(ChecksumPath(path))
 	if err != nil {
@@ -65,14 +70,20 @@ func VerifyChecksum(path string) (present, matches bool, err error) {
 	// only on the first space instead of fields-splitting.
 	content := strings.TrimSpace(string(data))
 	if content == "" {
-		return true, false, fmt.Errorf("empty checksum sidecar")
+		// An empty/whitespace-only sidecar is a truncated remnant (e.g.
+		// disk-full during write), not evidence the file is bad. Treat it
+		// exactly like a missing or wrong-name sidecar: absent. A hard
+		// error here would permanently fail an otherwise complete file.
+		return false, false, nil
 	}
 	line, _, _ := strings.Cut(content, "\n")
 	line = strings.TrimSpace(line)
 	digest, rest, _ := strings.Cut(line, " ")
 	expected, err := hex.DecodeString(digest)
 	if err != nil || len(expected) != sha256.Size {
-		return true, false, fmt.Errorf("invalid SHA-256 digest %q", digest)
+		// Same trust model as above: unparseable content carries no usable
+		// evidence, so report it absent instead of failing hard.
+		return false, false, nil
 	}
 	// rest is "<mode><filename>"; fewer than two characters means no
 	// filename was recorded (hash-only line, or a mode marker with no

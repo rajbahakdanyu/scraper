@@ -128,3 +128,31 @@ func TestVerifyChecksumAcceptsGNUBinaryMarker(t *testing.T) {
 		t.Fatalf("verification = present %v matches %v err %v", present, matches, err)
 	}
 }
+
+func TestVerifyChecksumTreatsUnparseableSidecarAsAbsent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "file.bin")
+	if err := os.WriteFile(path, []byte("content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	validDigest := strings.Repeat("ab", 32) // 64 hex chars
+
+	for name, content := range map[string]string{
+		"empty":          "",
+		"whitespace":     "  \n\n",
+		"CRLF blank":     "\r\n",
+		"not a digest":   "not-a-digest\n",
+		"tab separated":  validDigest + "\tfile.bin\n",
+		"short digest":   "abcd  file.bin\n",
+		"non-hex digest": strings.Repeat("zz", 32) + "  file.bin\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := os.WriteFile(ChecksumPath(path), []byte(content), 0644); err != nil {
+				t.Fatal(err)
+			}
+			present, matches, err := VerifyChecksum(path)
+			if err != nil || present || matches {
+				t.Fatalf("verification = present %v matches %v err %v, want false/false/nil", present, matches, err)
+			}
+		})
+	}
+}
