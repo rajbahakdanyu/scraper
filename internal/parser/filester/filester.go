@@ -270,22 +270,36 @@ func itemsFromEntries(allEntries []folderEntry, s *Scraper) []model.MediaItem {
 	return items
 }
 
-// fetchFolderPage fetches one page of a folder listing. A genuine fetch
-// error (bad status, network failure) is returned immediately — retrying a
-// permanent error like a 404 would just waste time. But if the page loads
-// fine yet comes back with zero .file-item entries (and it isn't page 1,
-// which can legitimately be an empty folder), that's retried a few times
-// before being treated as a real failure: a large album means dozens of
-// sequential requests, and a single transient hiccup (rate limiting, a
-// momentary blip) shouldn't be mistaken for having reached the end of the
-// album — that's exactly what previously caused large albums to be
-// silently truncated partway through with no error at all.
+// fetchFolderPage fetches one page of a folder listing. A transient fetch
+// failure (429/5xx/network blip) on a page after the first is retried with
+// backoff; page 1 fails immediately (a bad first page aborts the parse
+// anyway). Permanent errors like a 404 stop the retry loop after one attempt
+// via netutil.Retry's NonRetryableError handling. If the page loads fine yet
+// comes back with zero .file-item entries (and it isn't page 1, which can
+// legitimately be an empty folder), that's also retried a few times before
+// being treated as a real failure: a large album means dozens of sequential
+// requests, and a single transient hiccup (rate limiting, a momentary blip)
+// shouldn't be mistaken for having reached the end of the album — that's
+// exactly what previously caused large albums to be silently truncated
+// partway through with no error at all.
 func (s *Scraper) fetchFolderPage(ctx context.Context, id string, page int) (entries []folderEntry, pageTotal int, err error) {
 	pageURL := fmt.Sprintf("%s/f/%s?page=%d", s.baseURL, id, page)
 
-	doc, err := s.fetchDoc(ctx, pageURL)
-	if err != nil {
-		return nil, 0, err
+	var doc *goquery.Document
+	if page == 1 {
+		doc, err = s.fetchDoc(ctx, pageURL)
+		if err != nil {
+			return nil, 0, err
+		}
+	} else {
+		err = netutil.Retry(ctx, maxPageRetries, pageRetryBaseDelay, s.sleeper, func() error {
+			var fetchErr error
+			doc, fetchErr = s.fetchDoc(ctx, pageURL)
+			return fetchErr
+		})
+		if err != nil {
+			return nil, 0, err
+		}
 	}
 
 	if page == 1 {

@@ -760,3 +760,50 @@ func TestExtractKindAndID(t *testing.T) {
 		}
 	}
 }
+
+// A 5xx/429 on page > 1 must be retried like a transient empty page, not
+// returned immediately: the comment promised retries protect against rate
+// limiting, but a 429 used to bypass the retry loop entirely.
+func TestParseFilesterFolderRecoversFromTransientHTTPError(t *testing.T) {
+	var page2Attempts int32
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/f/flaky500", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		switch r.URL.Query().Get("page") {
+		case "2":
+			if atomic.AddInt32(&page2Attempts, 1) < 2 {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			_, _ = w.Write([]byte(`<html><body>
+				<div class="file-item" data-name="p2.jpg" data-size="50" onclick="window.location.href='/d/p2'"></div>
+			</body></html>`))
+		case "3":
+			_, _ = w.Write([]byte(`<html><body>
+				<div class="file-item" data-name="p3.jpg" data-size="60" onclick="window.location.href='/d/p3'"></div>
+			</body></html>`))
+		default:
+			_, _ = w.Write([]byte(`<html><body>
+				<button id="loadAllPagesBtn" data-total="3">Load all pages</button>
+				<div class="file-item" data-name="p1.jpg" data-size="40" onclick="window.location.href='/d/p1'"></div>
+			</body></html>`))
+		}
+	})
+	mux.HandleFunc("/v2/api/public/download", downloadTokenHandler("", false))
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	scraper := newTestFilesterScraper()
+	scraper.baseURL = ts.URL
+	scraper.cdnURLs = []string{ts.URL}
+
+	items, err := scraper.Parse(context.Background(), ts.URL+"/f/flaky500")
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("expected 3 items (page 2 recovers after 500), got %d", len(items))
+	}
+}
