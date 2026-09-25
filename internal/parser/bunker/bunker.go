@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"path"
@@ -176,14 +177,9 @@ func (s *Scraper) parseFilePage(ctx context.Context, fileURL string) (model.Medi
 		return model.MediaItem{}, fmt.Errorf("no download link on %s", fileURL)
 	}
 
-	// Extract the numeric file ID from the dl.bunkr.cr URL
-	// e.g. https://dl.bunkr.cr/file/61567794
-	fileID := path.Base(dlLink)
-	if fileID == "" || fileID == "/" {
-		return model.MediaItem{}, fmt.Errorf("could not extract file ID from %s", dlLink)
-	}
-
-	// Extract the dl.bunkr.cr origin for the API call
+	// Extract the dl.bunkr.cr origin for the API call. The file ID comes
+	// from the parsed URL path afterwards so a query string on the href
+	// (?download=1) can't leak into the API's file ID.
 	dlURL, err := url.Parse(dlLink)
 	if err != nil || dlURL == nil {
 		return model.MediaItem{}, fmt.Errorf("invalid dl.bunkr URL: %s", dlLink)
@@ -194,6 +190,11 @@ func (s *Scraper) parseFilePage(ctx context.Context, fileURL string) (model.Medi
 			return model.MediaItem{}, parseErr
 		}
 		dlURL = base.ResolveReference(dlURL)
+	}
+	// e.g. https://dl.bunkr.cr/file/61567794
+	fileID := path.Base(dlURL.Path)
+	if fileID == "" || fileID == "/" || fileID == "." {
+		return model.MediaItem{}, fmt.Errorf("could not extract file ID from %s", dlLink)
 	}
 	if err := netutil.NewPolicy(s.baseURL).ValidateURL(dlURL.String()); err != nil {
 		return model.MediaItem{}, fmt.Errorf("bunker: unsafe download API URL: %w", err)
@@ -286,7 +287,7 @@ func (s *Scraper) getSignedMediaURL(ctx context.Context, dlURL *url.URL, fileID,
 		Token string `json:"token"`
 		Ex    int64  `json:"ex"`
 	}
-	if err := json.NewDecoder(signResp.Body).Decode(&sign); err != nil {
+	if err := json.NewDecoder(io.LimitReader(signResp.Body, 10<<20)).Decode(&sign); err != nil {
 		return "", fmt.Errorf("bunker: decode signing response: %w", err)
 	}
 

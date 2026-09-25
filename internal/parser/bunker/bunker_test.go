@@ -491,3 +491,88 @@ func TestParseBunkerSingleFileNotFound(t *testing.T) {
 		t.Error("expected error for missing single file")
 	}
 }
+
+func TestBunkerFileIDIgnoresHrefQueryString(t *testing.T) {
+	var apiBody struct {
+		ID string `json:"id"`
+	}
+
+	mux := http.NewServeMux()
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	mux.HandleFunc("/a/album", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = io.WriteString(w, `<a href="/f/one" aria-label="download"></a>`)
+	})
+	mux.HandleFunc("/f/one", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprintf(w, `<html><head><title>q.bin | Bunkr</title></head><body>
+<a href="%s/file/61567794?download=1">Download</a></body></html>`, ts.URL)
+	})
+	mux.HandleFunc("/api/_001_v2", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&apiBody)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"mediafiles": "https://cdn.example.com",
+			"path":       "/storage/media/q.bin",
+		})
+	})
+	mux.HandleFunc("/sign", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"token": "tok", "ex": 9999999999})
+	})
+
+	scraper := newTestBunkerScraper()
+	scraper.baseURL = ts.URL
+	scraper.signURL = ts.URL + "/sign"
+
+	items, err := scraper.Parse(context.Background(), ts.URL+"/a/album")
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	if _, err := items[0].Resolve(context.Background()); err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if apiBody.ID != "61567794" {
+		t.Fatalf("API file id = %q, want 61567794", apiBody.ID)
+	}
+}
+
+func TestBunkerSignResponseBodyIsBounded(t *testing.T) {
+	mux := http.NewServeMux()
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	mux.HandleFunc("/a/album", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = io.WriteString(w, `<a href="/f/one" aria-label="download"></a>`)
+	})
+	mux.HandleFunc("/f/one", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprintf(w, `<html><head><title>x.bin | Bunkr</title></head><body>
+<a href="%s/file/1">Download</a></body></html>`, ts.URL)
+	})
+	mux.HandleFunc("/api/_001_v2", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"mediafiles": "https://cdn.example.com",
+			"path":       "/media/x.bin",
+		})
+	})
+	mux.HandleFunc("/sign", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"token":"`)
+		_, _ = io.WriteString(w, strings.Repeat("a", 10<<20))
+		_, _ = io.WriteString(w, `","ex":9999999999}`)
+	})
+
+	scraper := newTestBunkerScraper()
+	scraper.baseURL = ts.URL
+	scraper.signURL = ts.URL + "/sign"
+
+	items, err := scraper.Parse(context.Background(), ts.URL+"/a/album")
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	if _, err := items[0].Resolve(context.Background()); err == nil {
+		t.Fatal("expected an oversized signing response to fail decoding")
+	}
+}
