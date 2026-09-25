@@ -13,8 +13,10 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -216,10 +218,16 @@ func (d *Downloader) Download(item model.MediaItem, dest string) (string, error)
 			return nil
 		}
 		var nre *model.NonRetryableError
-		if errors.As(err, &nre) && item.Resolve != nil && !reResolved && nre.StatusCode == http.StatusForbidden {
+		if item.Resolve != nil && !reResolved && shouldRefreshURL(err) {
 			reResolved = true
 			resolvedURL = ""
-			return fmt.Errorf("retry with refreshed URL: %v", err)
+			if errors.As(err, &nre) {
+				// A 403 is non-retryable on its own; %v (not %w) keeps
+				// netutil.Retry from stopping before the refreshed URL
+				// is tried.
+				return fmt.Errorf("retry with refreshed URL: %v", err)
+			}
+			return fmt.Errorf("retry with refreshed URL: %w", err)
 		}
 		return err
 	})
@@ -303,7 +311,7 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, res
 
 	resp, err := d.client.Do(req)
 	if err != nil {
-		return "", err
+		return "", redactConnectionError(err, resolvedURL)
 	}
 	defer resp.Body.Close()
 
@@ -341,7 +349,12 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, res
 		if !model.IsRetryableStatus(resp.StatusCode) {
 			return "", model.NewNonRetryableStatus(err, resp.StatusCode)
 		}
-		return "", err
+		return "", model.NewHTTPStatusError(
+			err,
+			resp.StatusCode,
+			redactURL(resolvedURL),
+			parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()),
+		)
 	}
 
 	total := existing + resp.ContentLength
@@ -647,4 +660,55 @@ func redactURL(raw string) string {
 	u.RawQuery = ""
 	u.Fragment = ""
 	return u.String()
+}
+
+// parseRetryAfter interprets a Retry-After header (seconds or HTTP-date)
+// as a delay from now. It returns 0 for absent, unparsable, or past values.
+func parseRetryAfter(header string, now time.Time) time.Duration {
+	header = strings.TrimSpace(header)
+	if header == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(header); err == nil {
+		if secs <= 0 {
+			return 0
+		}
+		return time.Duration(secs) * time.Second
+	}
+	if when, err := http.ParseTime(header); err == nil {
+		if d := when.Sub(now); d > 0 {
+			return d
+		}
+	}
+	return 0
+}
+
+// redactConnectionError replaces the request URL inside a transport error
+// with its redacted form so signed query strings never reach logs or
+// failure reports. errors.Is/As still unwrap to the original cause.
+func redactConnectionError(err error, rawURL string) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		clone := *ue
+		clone.URL = redactURL(rawURL)
+		return &clone
+	}
+	return err
+}
+
+// shouldRefreshURL reports whether an attempt failure should trigger one
+// re-resolve of a signed URL: expired signatures (403), retryable HTTP
+// statuses (429/5xx), and connection-level drops.
+func shouldRefreshURL(err error) bool {
+	var nre *model.NonRetryableError
+	if errors.As(err, &nre) && nre.StatusCode == http.StatusForbidden {
+		return true
+	}
+	var hse *model.HTTPStatusError
+	if errors.As(err, &hse) {
+		return true
+	}
+	return errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, syscall.ECONNRESET)
 }

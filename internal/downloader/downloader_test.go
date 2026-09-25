@@ -1878,3 +1878,105 @@ func TestDownloadRenameFailureEmitsFailedStatus(t *testing.T) {
 		t.Fatal("expected the .part file to be cleaned up after a rename failure")
 	}
 }
+
+func TestParseRetryAfter(t *testing.T) {
+	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name   string
+		header string
+		want   time.Duration
+	}{
+		{"empty", "", 0},
+		{"seconds", "5", 5 * time.Second},
+		{"zero", "0", 0},
+		{"negative", "-3", 0},
+		{"http date", now.Add(10 * time.Second).Format(http.TimeFormat), 10 * time.Second},
+		{"past date", now.Add(-time.Minute).Format(http.TimeFormat), 0},
+		{"garbage", "soon", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parseRetryAfter(tt.header, now); got != tt.want {
+				t.Fatalf("parseRetryAfter(%q) = %s, want %s", tt.header, got, tt.want)
+			}
+		})
+	}
+}
+
+// A 503 is retryable; with a resolver, the downloader must refresh the
+// signed URL once instead of reusing the failing one.
+func TestDownloadReResolvesOnRetryableStatus(t *testing.T) {
+	var requests int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requests, 1)
+		if r.URL.Query().Get("sig") == "stale" {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.Write([]byte("fresh content"))
+	}))
+	defer ts.Close()
+
+	var resolveCalls int32
+	dl := newTestDownloader(1, 0, "")
+	dl.SetSleeper(noopSleeper{})
+	item := model.MediaItem{
+		URL:   ts.URL + "/file",
+		Title: "flaky.bin",
+		Resolve: func(ctx context.Context) (string, error) {
+			if atomic.AddInt32(&resolveCalls, 1) == 1 {
+				return ts.URL + "/file?sig=stale", nil
+			}
+			return ts.URL + "/file?sig=fresh", nil
+		},
+	}
+
+	dest := t.TempDir()
+	if _, err := dl.Download(item, dest); err != nil {
+		t.Fatalf("expected re-resolve on 503 to recover, got: %v", err)
+	}
+	if got := atomic.LoadInt32(&resolveCalls); got != 2 {
+		t.Errorf("resolve calls = %d, want 2 (initial + refresh)", got)
+	}
+	if got := atomic.LoadInt32(&requests); got != 2 {
+		t.Errorf("HTTP requests = %d, want 2 (503 then success)", got)
+	}
+}
+
+// A dropped connection must not leak the signed URL into the error.
+func TestDownloadRedactsSignedURLFromConnectionError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			t.Error("test server does not support hijacking")
+			return
+		}
+		conn, _, err := hj.Hijack()
+		if err != nil {
+			return
+		}
+		_ = conn.Close()
+	}))
+	defer ts.Close()
+
+	dl := newTestDownloader(1, 0, "")
+	dl.SetSleeper(noopSleeper{})
+	item := model.MediaItem{
+		URL:   ts.URL + "/placeholder",
+		Title: "dropped.bin",
+		Resolve: func(ctx context.Context) (string, error) {
+			return ts.URL + "/signed?token=secret", nil
+		},
+	}
+
+	_, err := dl.Download(item, t.TempDir())
+	if err == nil {
+		t.Fatal("expected the dropped connection to fail")
+	}
+	if strings.Contains(err.Error(), "secret") {
+		t.Fatalf("connection error leaked the signed URL: %v", err)
+	}
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("expected the error to wrap io.EOF, got: %v", err)
+	}
+}
