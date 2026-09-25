@@ -209,6 +209,28 @@ download everything an album lists.
 This is a filename/MIME allowlist, not content verification: a payload
 renamed to `video.mp4` still downloads, and archives are not inspected.
 
+## Retrying failed downloads
+
+When a run finishes with failures, the scraper writes a retry list to the
+output directory: `scraper-failed-<date>-<time>.txt`, containing the page
+URL of every failed item (one per line), and prints a grouped summary of
+why they failed, for example:
+
+    Failed 111 item(s):
+      98 × HTTP 503 from pc9.scdn.st
+      13 × connection dropped
+    Retry list: ~/Downloads/scraper-failed-20260926-021500.txt
+
+CDN hosts occasionally go down or throttle; the list makes recovery one
+command once they are healthy again:
+
+    ./scraper --input-file ~/Downloads/scraper-failed-20260926-021500.txt
+
+JSON mode adds the same path to the final `summary` event as `retryFile`.
+Transient failures are retried in-run with exponential backoff (5 attempts,
+honoring `Retry-After` when the server sends it) and signed URLs are
+re-resolved once when an attempt fails, so many blips recover on their own.
+
 ## Configuration
 
 A YAML config file can be placed at `~/.scraper.yaml`:
