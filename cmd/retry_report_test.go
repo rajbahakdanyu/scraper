@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/rajbahakdanyu/scraper/internal/model"
+	"github.com/rajbahakdanyu/scraper/internal/ui/dashboard"
 )
 
 func TestFailureReason(t *testing.T) {
@@ -114,5 +115,13 @@ func TestCollectFailuresSkipsCancelledAndNil(t *testing.T) {
 	got := collectFailures(items, errs)
 	if len(got) != 1 || got[0].Item.URL != "https://x/3" {
 		t.Fatalf("collectFailures() = %+v, want only the failed item", got)
+	}
+}
+
+func TestFailuresFromDashboard(t *testing.T) {
+	in := []dashboard.FailedItem{{Item: model.MediaItem{URL: "https://x/1"}, Err: errors.New("boom")}}
+	out := failuresFromDashboard(in)
+	if len(out) != 1 || out[0].Item.URL != "https://x/1" || out[0].Err == nil {
+		t.Fatalf("failuresFromDashboard() = %+v", out)
 	}
 }

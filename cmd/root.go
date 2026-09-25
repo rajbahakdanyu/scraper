@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
@@ -664,7 +665,14 @@ func runWithScraperAndConfig(cfg *config.Config, scraper model.Scraper, targetUR
 
 			p := tea.NewProgram(d, tea.WithAltScreen())
 
-			_, err := p.Run()
+			final, err := p.Run()
+			if dash, ok := final.(*dashboard.Dashboard); ok {
+				if _, summary, rErr := retryReport(cfg.OutputDir, failuresFromDashboard(dash.Failures()), time.Now()); rErr != nil {
+					fmt.Fprintf(os.Stderr, "retry list: %v\n", rErr)
+				} else if summary != "" {
+					fmt.Fprintln(os.Stdout, summary)
+				}
+			}
 			return err
 		},
 	)
@@ -946,7 +954,14 @@ func runBatch(opts globalOptions, urls []string) error {
 
 			p := tea.NewProgram(d, tea.WithAltScreen())
 
-			_, err := p.Run()
+			final, err := p.Run()
+			if dash, ok := final.(*dashboard.Dashboard); ok {
+				if _, summary, rErr := retryReport(cfg.OutputDir, failuresFromDashboard(dash.Failures()), time.Now()); rErr != nil {
+					fmt.Fprintf(os.Stderr, "retry list: %v\n", rErr)
+				} else if summary != "" {
+					fmt.Fprintln(os.Stdout, summary)
+				}
+			}
 			return err
 		},
 	)

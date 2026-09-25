@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 	"github.com/rajbahakdanyu/scraper/internal/model"
@@ -197,6 +198,7 @@ func startBatchScrape(ctx context.Context, abort <-chan struct{}, album dashboar
 // consuming the same progress channel the dashboard would. It returns a
 // non-nil error when any download fails so the process exits non-zero.
 func runPlain(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error), dest, slug string, out io.Writer) error {
+	reportDir := dest
 	items, err := scrapeFn()
 	if err != nil && len(items) == 0 {
 		return err
@@ -290,6 +292,11 @@ drain:
 		fmt.Fprintf(out, "failed %s: %v\n", title, errs[i])
 		realErrs = append(realErrs, errs[i])
 	}
+	if _, summary, rErr := retryReport(reportDir, collectFailures(items, errs), time.Now()); rErr != nil {
+		fmt.Fprintf(out, "retry list: %v\n", rErr)
+	} else if summary != "" {
+		fmt.Fprintln(out, summary)
+	}
 	return model.NewPartialError("download", realErrs)
 }
 
@@ -332,6 +339,7 @@ func runBatchPlain(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, des
 	}()
 
 	var allErrs []error
+	var failures []failedItem
 	var scrapeCh <-chan batchScrapeResult
 batchLoop:
 	for albumIdx, a := range albums {
@@ -418,6 +426,8 @@ batchLoop:
 
 		<-downloadsDone
 
+		failures = append(failures, collectFailures(items, errs)...)
+
 		for i, item := range items {
 			if errs[i] == nil {
 				continue
@@ -441,6 +451,12 @@ batchLoop:
 		dl.Shutdown()
 	}
 	<-progressDone
+
+	if _, summary, rErr := retryReport(destRoot, failures, time.Now()); rErr != nil {
+		fmt.Fprintf(out, "retry list: %v\n", rErr)
+	} else if summary != "" {
+		fmt.Fprintln(out, summary)
+	}
 
 	return model.NewPartialError("batch", allErrs)
 }
@@ -525,6 +541,13 @@ func runJSON(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error)
 
 	completed, failed, cancelled, realItems, totalBytes := writeItemResult(out, items, errs, paths, slug, quality, audioOnly)
 
+	retryPath, summary, rErr := retryReport(dest, collectFailures(items, errs), time.Now())
+	if rErr != nil {
+		fmt.Fprintf(os.Stderr, "retry list: %v\n", rErr)
+	} else if summary != "" {
+		fmt.Fprintln(os.Stderr, summary)
+	}
+
 	writeJSONLine(out, model.JSONEvent{
 		Event:      "summary",
 		Total:      realItems,
@@ -532,6 +555,7 @@ func runJSON(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error)
 		Failed:     failed,
 		Cancelled:  cancelled,
 		TotalBytes: totalBytes,
+		RetryFile:  retryPath,
 	})
 
 	return model.NewPartialError("download", nonCancelledErrs(errs))
@@ -562,6 +586,7 @@ func runBatchJSON(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, dest
 	var allErrs []error
 	var grandCompleted, grandFailed, grandCancelled int
 	var grandTotalItems int
+	var failures []failedItem
 	var scrapeCh <-chan batchScrapeResult
 batchLoop:
 	for albumIdx, a := range albums {
@@ -645,6 +670,8 @@ batchLoop:
 
 		<-downloadsDone
 
+		failures = append(failures, collectFailures(items, errs)...)
+
 		completed, failed, cancelled, albumReal, _ := writeItemResult(out, items, errs, paths, a.Slug, quality, audioOnly)
 
 		grandCompleted += completed
@@ -665,12 +692,20 @@ batchLoop:
 	}
 	<-progressDone
 
+	retryPath, summary, rErr := retryReport(destRoot, failures, time.Now())
+	if rErr != nil {
+		fmt.Fprintf(os.Stderr, "retry list: %v\n", rErr)
+	} else if summary != "" {
+		fmt.Fprintln(os.Stderr, summary)
+	}
+
 	writeJSONLine(out, model.JSONEvent{
 		Event:     "summary",
 		Total:     grandTotalItems,
 		Completed: grandCompleted,
 		Failed:    grandFailed,
 		Cancelled: grandCancelled,
+		RetryFile: retryPath,
 	})
 
 	return model.NewPartialError("batch", allErrs)

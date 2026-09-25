@@ -13,6 +13,7 @@ import (
 
 	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 	"github.com/rajbahakdanyu/scraper/internal/model"
+	"github.com/rajbahakdanyu/scraper/internal/ui/dashboard"
 )
 
 // failedItem pairs a media item that did not download with the error that
@@ -148,4 +149,13 @@ func retryReport(dir string, failures []failedItem, now time.Time) (string, stri
 	summary := fmt.Sprintf("Failed %d item(s):\n%s\nRetry list: %s",
 		len(usable), formatFailureSummary(usable), path)
 	return path, summary, nil
+}
+
+// failuresFromDashboard converts the TUI's final failure list.
+func failuresFromDashboard(fs []dashboard.FailedItem) []failedItem {
+	out := make([]failedItem, 0, len(fs))
+	for _, f := range fs {
+		out = append(out, failedItem{Item: f.Item, Err: f.Err})
+	}
+	return out
 }

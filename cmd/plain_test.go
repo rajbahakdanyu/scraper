@@ -285,6 +285,20 @@ func TestRunPlainFailsWhenAnyDownloadFails(t *testing.T) {
 	if !strings.Contains(out, "completed good.mp4") {
 		t.Errorf("expected the successful item to still complete, got: %q", out)
 	}
+	matches, _ := filepath.Glob(filepath.Join(dest, "scraper-failed-*.txt"))
+	if len(matches) != 1 {
+		t.Fatalf("retry files = %v, want exactly one", matches)
+	}
+	data, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "https://example.com/bad.mp4") {
+		t.Errorf("retry list missing the failed item URL:\n%s", data)
+	}
+	if !strings.Contains(out, "Retry list:") {
+		t.Errorf("expected the summary to name the retry list, got: %q", out)
+	}
 }
 
 func TestRunPlainTreatsCancelledItemsAsInterrupted(t *testing.T) {
@@ -522,8 +536,9 @@ func TestRunJSONWithFailedItems(t *testing.T) {
 	}
 	fd.errs["https://example.com/a.mp4"] = fmt.Errorf("HTTP 404")
 
+	dest := t.TempDir()
 	var buf bytes.Buffer
-	_ = runJSON(fd, itemsScraper(items, nil), t.TempDir(), "album", "test", "https://example.com", "", "", &buf)
+	_ = runJSON(fd, itemsScraper(items, nil), dest, "album", "test", "https://example.com", "", "", &buf)
 
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
 	var itemEvent struct {
@@ -545,6 +560,23 @@ func TestRunJSONWithFailedItems(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected an item event, lines:\n%s", buf.String())
+	}
+
+	var summaryEvent struct {
+		Event     string
+		RetryFile string
+	}
+	for _, line := range lines {
+		_ = json.Unmarshal([]byte(line), &summaryEvent)
+		if summaryEvent.Event == "summary" {
+			break
+		}
+	}
+	if summaryEvent.Event != "summary" || summaryEvent.RetryFile == "" {
+		t.Fatalf("expected a summary event with retryFile, got: %s", buf.String())
+	}
+	if _, err := os.Stat(summaryEvent.RetryFile); err != nil {
+		t.Fatalf("retryFile does not exist: %v", err)
 	}
 }
 
