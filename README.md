@@ -197,9 +197,11 @@ media or archive extension are kept:
 - image: jpg, jpeg, png, gif, webp, bmp, avif, heic, tiff
 - archives: zip, rar, 7z, tar, gz, tgz, bz2, xz
 
-Everything else — executables, scripts, HTML, PDFs, unknown or extensionless
-files — is skipped before download, and the run prints
-`media filter: N/M items (K skipped non-media)`. YouTube is unaffected.
+Everything else — executables, scripts, HTML, PDFs, and unknown file types —
+is skipped before download. A title with no extension is kept only when the
+site's API reports a `video/`, `audio/`, or `image/` MIME type for it. When
+anything is skipped, the run prints
+`media filter: N/M items (K skipped non-media)`; YouTube is unaffected.
 
 Pass `--media-only=false` (or set `media_only: false` in the config) to
 download everything an album lists.

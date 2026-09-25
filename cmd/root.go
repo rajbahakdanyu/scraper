@@ -1006,7 +1006,10 @@ func (f *filterScraper) Name() string { return f.inner.Name() }
 
 func (f *filterScraper) Parse(ctx context.Context, url string) ([]model.MediaItem, error) {
 	items, err := f.inner.Parse(ctx, url)
-	if err != nil {
+	// A partial scrape (some pages failed) still carries usable items;
+	// dropping them here would turn a warning into an empty album. Only a
+	// total failure aborts.
+	if err != nil && len(items) == 0 {
 		return nil, err
 	}
 	if f.mediaOnly && f.inner.Name() != "youtube" {
@@ -1025,7 +1028,7 @@ func (f *filterScraper) Parse(ctx context.Context, url string) ([]model.MediaIte
 		f.diskChecked = true
 		runDiskCheck(filtered, f.outputDir, true)
 	}
-	return filtered, nil
+	return filtered, err
 }
 
 // shouldFilterMedia reports whether the media allowlist applies to a run:

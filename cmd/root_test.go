@@ -1049,6 +1049,7 @@ func TestLoadGlobalConfigIncludeOverride(t *testing.T) {
 type mockScraper struct {
 	name  string
 	items []model.MediaItem
+	err   error
 }
 
 func (m *mockScraper) Name() string {
@@ -1059,7 +1060,7 @@ func (m *mockScraper) Name() string {
 }
 
 func (m *mockScraper) Parse(ctx context.Context, url string) ([]model.MediaItem, error) {
-	return m.items, nil
+	return m.items, m.err
 }
 
 func TestFilterScraperParse(t *testing.T) {
@@ -1238,6 +1239,57 @@ func TestApplyMediaFilterSilentWhenNothingSkipped(t *testing.T) {
 	})
 	if stderr != "" {
 		t.Fatalf("expected no output when nothing was skipped, got %q", stderr)
+	}
+}
+
+func TestFilterScraperPreservesPartialResults(t *testing.T) {
+	partialErr := errors.New("page 2 failed")
+	inner := &mockScraper{
+		items: []model.MediaItem{
+			{URL: "https://cdn.example.com/a.mp4", Title: "a.mp4"},
+			{URL: "https://cdn.example.com/b.exe", Title: "b.exe"},
+		},
+		err: partialErr,
+	}
+	fs := &filterScraper{inner: inner, mediaOnly: true}
+
+	items, err := fs.Parse(context.Background(), "https://example.com/a/test")
+	if !errors.Is(err, partialErr) {
+		t.Fatalf("expected the partial error to survive filtering, got %v", err)
+	}
+	if len(items) != 1 || items[0].Title != "a.mp4" {
+		t.Fatalf("expected the parsed a.mp4 to survive alongside the error, got %+v", items)
+	}
+}
+
+func TestDryRunKeepsPartialMediaItems(t *testing.T) {
+	inner := &mockScraper{
+		items: []model.MediaItem{
+			{URL: "https://cdn.example.com/a.mp4", Title: "a.mp4"},
+			{URL: "https://cdn.example.com/b.exe", Title: "b.exe"},
+		},
+		err: errors.New("page 2 failed"),
+	}
+	wrapped := applyDryRunFilters(inner, &config.Config{MediaOnly: true})
+
+	var runErr error
+	var stderr string
+	out := captureStdout(func() {
+		stderr = captureStderr(func() {
+			runErr = runDryRunWithDiskCheck(wrapped, "https://example.com/a", t.TempDir(), false)
+		})
+	})
+	if runErr != nil {
+		t.Fatalf("a partial scrape must warn, not fail the dry-run: %v", runErr)
+	}
+	if !strings.Contains(stderr, "page 2 failed") {
+		t.Fatalf("expected the partial error as a warning, got %q", stderr)
+	}
+	if !strings.Contains(out, "a.mp4") {
+		t.Fatalf("expected the parsed media item in dry-run output, got %q", out)
+	}
+	if strings.Contains(out, "b.exe") {
+		t.Fatalf("expected the skipped non-media item to stay out of dry-run output, got %q", out)
 	}
 }
 
