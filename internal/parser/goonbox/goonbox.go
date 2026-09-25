@@ -32,6 +32,7 @@ type pageResult struct {
 	current    int
 	last       int
 	err        error
+	fetched    bool
 }
 
 func NewGoonBoxScraper() *Scraper {
@@ -96,7 +97,7 @@ func (s *Scraper) Parse(ctx context.Context, albumURL string) ([]model.MediaItem
 		}
 
 		if err := netutil.GetJSON(ctx, s.client, url, s.userAgent, &result); err != nil {
-			return pageResult{index: page - 1, err: err}
+			return pageResult{index: page - 1, err: err, fetched: true}
 		}
 
 		pageItems := make([]model.MediaItem, 0, len(result.Images))
@@ -124,6 +125,7 @@ func (s *Scraper) Parse(ctx context.Context, albumURL string) ([]model.MediaItem
 			unsafeErrs: pageUnsafeErrs,
 			current:    result.Pagination.CurrentPage,
 			last:       result.Pagination.LastPage,
+			fetched:    true,
 		}
 	}
 
@@ -195,6 +197,14 @@ func (s *Scraper) Parse(ctx context.Context, albumURL string) ([]model.MediaItem
 	var unsafeErrs []error
 	var pageErrs []error
 	for _, result := range results {
+		// Entries never fetched (a hostile/inconsistent page shrank
+		// lastPage before they were scheduled) are zero-value slots and
+		// contribute nothing. Fetched pages are always kept: breaking on
+		// the first page that claims to be last would silently discard
+		// pages that were already downloaded.
+		if !result.fetched {
+			continue
+		}
 		if result.err != nil {
 			if errors.Is(result.err, context.Canceled) {
 				return items, result.err
@@ -209,9 +219,6 @@ func (s *Scraper) Parse(ctx context.Context, albumURL string) ([]model.MediaItem
 			items = append(items, item)
 		}
 		unsafeErrs = append(unsafeErrs, result.unsafeErrs...)
-		if result.current >= result.last && result.last > 0 {
-			break
-		}
 	}
 
 	if len(items) == 0 {

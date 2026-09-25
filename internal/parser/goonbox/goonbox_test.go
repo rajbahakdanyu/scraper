@@ -374,3 +374,43 @@ func TestExtractAlbumID(t *testing.T) {
 		}
 	}
 }
+
+func TestParseGoonBoxAlbumKeepsPagesFetchedBeforeShrink(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/albums/shrink", func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("page")
+		w.Header().Set("Content-Type", "application/json")
+		last := 4
+		if page == "2" {
+			last = 2 // hostile/inconsistent: claims the album ends here
+		}
+		n := 0
+		_, _ = fmt.Sscan(page, &n)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"images": []map[string]interface{}{{
+				"original_url":      fmt.Sprintf("https://cdn.example.com/p%d.jpg", n),
+				"original_filename": fmt.Sprintf("p%d.jpg", n),
+			}},
+			"pagination": map[string]int{"current_page": n, "last_page": last},
+		})
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	scraper := newTestGoonBoxScraper()
+	scraper.baseURL = ts.URL
+
+	items, err := scraper.Parse(context.Background(), ts.URL+"/a/shrink")
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	if len(items) != 4 {
+		t.Fatalf("expected all 4 fetched pages kept, got %d items", len(items))
+	}
+	for i, item := range items {
+		want := fmt.Sprintf("p%d.jpg", i+1)
+		if item.Title != want {
+			t.Fatalf("item %d = %q, want %q", i, item.Title, want)
+		}
+	}
+}
