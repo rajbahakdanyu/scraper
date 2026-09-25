@@ -11,7 +11,13 @@ test("manifest is valid MV3 and requests only what the popup needs", () => {
   assert.equal(manifest.manifest_version, 3);
   assert.deepEqual(manifest.permissions, ["tabs", "downloads"]);
   assert.equal(manifest.action.default_popup, "popup.html");
-  assert.match(manifest.browser_specific_settings.gecko.strict_min_version, /^109\./);
+  // data_collection_permissions is only supported from Firefox 140, and
+  // Firefox for Android 142.
+  assert.match(manifest.browser_specific_settings.gecko.strict_min_version, /^142\./);
+  // Required for new Firefox extensions; the add-on collects nothing.
+  assert.deepEqual(manifest.browser_specific_settings.gecko.data_collection_permissions, {
+    required: ["none"],
+  });
 });
 
 test("every file referenced by the manifest exists", () => {
