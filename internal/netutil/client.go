@@ -337,7 +337,38 @@ func withReadTimeout(conn net.Conn, timeout time.Duration) net.Conn {
 	return &readTimeoutConn{Conn: conn, timeout: timeout}
 }
 
+// nonPublicIPBlocks are IANA special-purpose IPv4 ranges that Go's
+// IsGlobalUnicast/IsPrivate predicates do not cover (CGNAT, TEST-NETs,
+// benchmarking, and the reserved 240/4 block including broadcast).
+var nonPublicIPBlocks = func() []*net.IPNet {
+	cidrs := []string{
+		"100.64.0.0/10",   // CGNAT (RFC 6598)
+		"192.0.2.0/24",    // TEST-NET-1
+		"198.18.0.0/15",   // benchmarking (RFC 2544)
+		"198.51.100.0/24", // TEST-NET-2
+		"203.0.113.0/24",  // TEST-NET-3
+		"240.0.0.0/4",     // reserved + broadcast
+	}
+	blocks := make([]*net.IPNet, 0, len(cidrs))
+	for _, cidr := range cidrs {
+		_, block, err := net.ParseCIDR(cidr)
+		if err != nil {
+			panic(fmt.Sprintf("invalid built-in CIDR %q: %v", cidr, err))
+		}
+		blocks = append(blocks, block)
+	}
+	return blocks
+}()
+
 func isPublicIP(ip net.IP) bool {
-	return ip.IsGlobalUnicast() && !ip.IsPrivate() && !ip.IsLoopback() &&
-		!ip.IsLinkLocalUnicast() && !ip.IsLinkLocalMulticast() && !ip.IsUnspecified()
+	if !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLoopback() ||
+		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+		return false
+	}
+	for _, block := range nonPublicIPBlocks {
+		if block.Contains(ip) {
+			return false
+		}
+	}
+	return true
 }

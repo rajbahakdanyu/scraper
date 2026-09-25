@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -424,6 +425,36 @@ func TestStrictPolicyRejectsUnlistedPublicHosts(t *testing.T) {
 	} {
 		if err := policy.ValidateURL(rawURL); err == nil {
 			t.Errorf("ValidateURL(%s) accepted an unlisted host", rawURL)
+		}
+	}
+}
+
+func TestIsPublicIPRejectsSpecialPurposeRanges(t *testing.T) {
+	blocked := []string{
+		"100.64.0.1",      // CGNAT (RFC 6598)
+		"100.127.255.254", // CGNAT upper bound
+		"192.0.2.1",       // TEST-NET-1
+		"198.18.0.1",      // benchmarking (RFC 2544)
+		"198.51.100.1",    // TEST-NET-2
+		"203.0.113.1",     // TEST-NET-3
+		"240.0.0.1",       // reserved (RFC 1112)
+		"255.255.255.255", // broadcast
+	}
+	for _, addr := range blocked {
+		if isPublicIP(net.ParseIP(addr)) {
+			t.Errorf("isPublicIP(%s) = true, want false", addr)
+		}
+	}
+	allowed := []string{
+		"1.1.1.1",
+		"8.8.8.8",
+		"100.128.0.1", // just past CGNAT
+		"203.0.114.1", // just past TEST-NET-3
+		"223.255.255.255",
+	}
+	for _, addr := range allowed {
+		if !isPublicIP(net.ParseIP(addr)) {
+			t.Errorf("isPublicIP(%s) = false, want true", addr)
 		}
 	}
 }
