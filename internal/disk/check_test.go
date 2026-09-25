@@ -17,9 +17,8 @@ func TestFreeSpaceOnTempDir(t *testing.T) {
 }
 
 func TestFreeSpaceNonexistentPath(t *testing.T) {
-	_, err := FreeSpace(filepath.Join(t.TempDir(), "nonexistent"))
-	if err != nil {
-		t.Logf("expected error for nonexistent: %v", err)
+	if _, err := FreeSpace(filepath.Join(t.TempDir(), "nonexistent")); err == nil {
+		t.Fatal("expected an error for a nonexistent path")
 	}
 }
 

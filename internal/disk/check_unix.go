@@ -9,12 +9,20 @@ func FreeSpace(path string) (int64, error) {
 	if err := unix.Statfs(path, &stat); err != nil {
 		return 0, err
 	}
-	// #nosec G115 -- disk free space from statfs is bounded by filesystem size, well below int64 max on all practical systems.
-	// Use uint64 multiplication then cap to avoid overflow in the int64 cast.
-	free := uint64(stat.Bavail) * uint64(stat.Bsize)
+	return freeBytes(int64(stat.Bavail), uint64(stat.Bsize)), nil
+}
+
+// freeBytes converts a signed block count to bytes. Bavail is signed on
+// darwin and can legitimately be negative on an odd filesystem; clamping
+// first prevents the uint64 conversion from wrapping it to ~9.2 EB.
+func freeBytes(blocks int64, blockSize uint64) int64 {
+	if blocks < 0 {
+		blocks = 0
+	}
+	free := uint64(blocks) * blockSize
 	const maxInt64 = uint64(1<<63 - 1)
 	if free > maxInt64 {
 		free = maxInt64
 	}
-	return int64(free), nil
+	return int64(free)
 }
