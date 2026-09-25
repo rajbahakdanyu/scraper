@@ -159,6 +159,7 @@ per URL — same as albums).
 | `--min-size`     | (none)  | Minimum file size (e.g. `1K`, `10M`)                      |
 | `--max-size`     | (none)  | Maximum file size                                         |
 | `--disk-check`   | `true`  | Check free space before downloading                       |
+| `--media-only`   | `true`  | Only download media/archive files (`--media-only=false` allows everything) |
 | `--notify`       | `false` | Send desktop notification when download completes         |
 
 Additional subcommands:
@@ -185,6 +186,27 @@ source <(./scraper completion zsh)
 | `c`             | Cancel the selected item          |
 | `q`, `esc`, `ctrl+c` | Quit                           |
 
+### Media-only downloads (default)
+
+By default the scraper only queues media and archive files. Items whose
+filename (or, when the title carries no extension, the URL) ends in a known
+media or archive extension are kept:
+
+- video: mp4, m4v, mkv, webm, avi, mov, wmv, flv, mpg, mpeg, ts, m2ts, 3gp, ogv
+- audio: mp3, m4a, aac, flac, wav, ogg, opus, wma
+- image: jpg, jpeg, png, gif, webp, bmp, avif, heic, tiff
+- archives: zip, rar, 7z, tar, gz, tgz, bz2, xz
+
+Everything else — executables, scripts, HTML, PDFs, unknown or extensionless
+files — is skipped before download, and the run prints
+`media filter: N/M items (K skipped non-media)`. YouTube is unaffected.
+
+Pass `--media-only=false` (or set `media_only: false` in the config) to
+download everything an album lists.
+
+This is a filename/MIME allowlist, not content verification: a payload
+renamed to `video.mp4` still downloads, and archives are not inspected.
+
 ## Configuration
 
 A YAML config file can be placed at `~/.scraper.yaml`:
@@ -205,6 +227,7 @@ exclude: ["*.txt"]
 min_size: "1M"
 max_size: "10G"
 disk_check: true
+media_only: true
 notify: false
 ```
 
