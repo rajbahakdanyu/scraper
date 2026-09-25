@@ -229,3 +229,14 @@ func TestItemToJSONItemFallsBackToURL(t *testing.T) {
 		t.Errorf("expected URL as title fallback, got %q", ji.Title)
 	}
 }
+
+func TestPartialErrorZeroValueDoesNotPanic(t *testing.T) {
+	var zero PartialError
+	if got := zero.Error(); got != " incomplete" {
+		t.Fatalf("zero PartialError.Error() = %q", got)
+	}
+	op := &PartialError{Operation: "album"}
+	if got := op.Error(); got != "album incomplete" {
+		t.Fatalf("error = %q, want album incomplete", got)
+	}
+}

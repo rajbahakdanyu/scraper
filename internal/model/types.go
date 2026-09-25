@@ -126,6 +126,9 @@ func NewPartialError(operation string, errs []error) error {
 }
 
 func (e *PartialError) Error() string {
+	if len(e.Errors) == 0 {
+		return fmt.Sprintf("%s incomplete", e.Operation)
+	}
 	return fmt.Sprintf("%s incomplete: %d operation(s) failed; first error: %v", e.Operation, len(e.Errors), e.Errors[0])
 }
 
