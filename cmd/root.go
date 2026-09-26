@@ -373,13 +373,13 @@ func NewRootCmd() *cobra.Command {
 				return cmd.Help()
 			}
 
-			urls, err := collectBatchURLs(args, opts)
+			entries, err := collectBatchURLs(args, opts)
 			if err != nil {
 				return err
 			}
 
-			if len(urls) == 1 && !opts.inputFileSet {
-				targetURL := urls[0]
+			if len(entries) == 1 && !opts.inputFileSet {
+				targetURL := entries[0].URL
 				site, err := detectSite(targetURL)
 				if err != nil {
 					return err
@@ -394,7 +394,7 @@ func NewRootCmd() *cobra.Command {
 				}
 				return runWithScraperAndConfig(cfg, reg[site], targetURL, site, opts)
 			}
-			return runBatch(opts, urls)
+			return runBatch(opts, entries)
 		},
 	}
 
@@ -606,7 +606,7 @@ func runWithScraperAndConfig(cfg *config.Config, scraper model.Scraper, targetUR
 	if opts.dryRun {
 		filtered := applyDryRunFilters(scraper, cfg)
 		if opts.json {
-			return runDryRunJSONWithDiskCheck(filtered, targetURL, siteName, os.Stdout, cfg.OutputDir, cfg.DiskCheck)
+			return runDryRunJSONWithDiskCheck(filtered, targetURL, siteName, "", os.Stdout, cfg.OutputDir, cfg.DiskCheck)
 		}
 		return runDryRunWithDiskCheck(filtered, targetURL, cfg.OutputDir, cfg.DiskCheck)
 	}
@@ -750,41 +750,49 @@ func helpRequested(args []string, inputFileSet, stdinIsTTY bool) bool {
 // stdinIsTerminal is a test seam for the bare-invocation help check.
 var stdinIsTerminal = func() bool { return term.IsTerminal(int(os.Stdin.Fd())) }
 
-// collectBatchURLs gathers URLs from positional arguments, --input-file, and
-// stdin (when not a TTY and no other sources). Lines starting with "#" are
-// treated as comments and blank lines are skipped.
-func collectBatchURLs(args []string, opts globalOptions) ([]string, error) {
-	var urls []string
+// batchEntry is one input line: a URL to scrape and, optionally, the album
+// URL that item belongs to. Paired entries (retry lists) let the download
+// land in its original album folder while scraping only the item.
+type batchEntry struct {
+	URL      string
+	AlbumURL string
+}
+
+// collectBatchURLs gathers entries from positional arguments, --input-file,
+// and stdin (when not a TTY and no other sources). Lines starting with "#"
+// are treated as comments and blank lines are skipped.
+func collectBatchURLs(args []string, opts globalOptions) ([]batchEntry, error) {
+	var entries []batchEntry
 	for _, arg := range args {
 		arg = strings.TrimSpace(arg)
 		if arg != "" {
-			urls = append(urls, arg)
+			entries = append(entries, batchEntry{URL: arg})
 		}
 	}
 
 	if opts.inputFileSet {
-		fileURLs, err := readURLsFromFile(opts.inputFile)
+		fileEntries, err := readURLsFromFile(opts.inputFile)
 		if err != nil {
 			return nil, err
 		}
-		urls = append(urls, fileURLs...)
+		entries = append(entries, fileEntries...)
 	}
 
-	if len(urls) == 0 && !term.IsTerminal(int(os.Stdin.Fd())) {
-		stdinURLs, err := readURLsFromReader(os.Stdin)
+	if len(entries) == 0 && !term.IsTerminal(int(os.Stdin.Fd())) {
+		stdinEntries, err := readURLsFromReader(os.Stdin)
 		if err != nil {
 			return nil, err
 		}
-		urls = append(urls, stdinURLs...)
+		entries = append(entries, stdinEntries...)
 	}
 
-	if len(urls) == 0 {
+	if len(entries) == 0 {
 		return nil, fmt.Errorf("no URLs provided (use positional args, --input-file, or stdin)")
 	}
-	return urls, nil
+	return entries, nil
 }
 
-func readURLsFromFile(path string) ([]string, error) {
+func readURLsFromFile(path string) ([]batchEntry, error) {
 	f, err := os.Open(filepath.Clean(path))
 	if err != nil {
 		return nil, fmt.Errorf("open input file %q: %w", path, err)
@@ -793,27 +801,48 @@ func readURLsFromFile(path string) ([]string, error) {
 	return readURLsFromReader(f)
 }
 
-func readURLsFromReader(r io.Reader) ([]string, error) {
-	var urls []string
+// readURLsFromReader parses one entry per non-comment line. A line may be a
+// single URL, or an item URL and its album URL separated by a tab (the
+// retry-list format); anything after a second tab is ignored.
+func readURLsFromReader(r io.Reader) ([]batchEntry, error) {
+	var entries []batchEntry
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		urls = append(urls, line)
+		fields := strings.Split(line, "\t")
+		entry := batchEntry{URL: strings.TrimSpace(fields[0])}
+		if len(fields) > 1 {
+			entry.AlbumURL = strings.TrimSpace(fields[1])
+		}
+		if entry.URL == "" {
+			continue
+		}
+		entries = append(entries, entry)
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("read URLs: %w", err)
 	}
-	return urls, nil
+	return entries, nil
+}
+
+// batchDestSlug picks the destination folder for a batch entry: the album's
+// slug when the entry carries an album URL (a retry pair), else the entry's
+// own slug.
+func batchDestSlug(siteName string, e batchEntry) string {
+	if e.AlbumURL != "" {
+		return albumSlugFor(siteName, e.AlbumURL)
+	}
+	return albumSlugFor(siteName, e.URL)
 }
 
 // runBatch orchestrates scraping multiple album URLs with a shared download
 // queue. It scrapes albums sequentially — feeding items to the downloader as
 // soon as each album finishes — so token-based URLs from early albums don't
 // expire before later albums are scraped.
-func runBatch(opts globalOptions, urls []string) error {
+func runBatch(opts globalOptions, entries []batchEntry) error {
 	cfg, err := loadGlobalConfig(opts)
 	if err != nil {
 		return err
@@ -827,28 +856,28 @@ func runBatch(opts globalOptions, urls []string) error {
 	if opts.dryRun {
 		if opts.json {
 			var allErrs []error
-			for _, u := range urls {
-				site, sitErr := detectSite(u)
+			for _, e := range entries {
+				site, sitErr := detectSite(e.URL)
 				if sitErr != nil {
 					allErrs = append(allErrs, sitErr)
 					continue
 				}
-				if jsonErr := runDryRunJSONWithDiskCheck(applyDryRunFilters(reg[site], cfg), u, site, os.Stdout, cfg.OutputDir, cfg.DiskCheck); jsonErr != nil {
-					fmt.Fprintf(os.Stderr, "dry-run: %s: %v\n", u, jsonErr)
+				if jsonErr := runDryRunJSONWithDiskCheck(applyDryRunFilters(reg[site], cfg), e.URL, site, batchDestSlug(site, e), os.Stdout, cfg.OutputDir, cfg.DiskCheck); jsonErr != nil {
+					fmt.Fprintf(os.Stderr, "dry-run: %s: %v\n", e.URL, jsonErr)
 					allErrs = append(allErrs, jsonErr)
 				}
 			}
 			return model.NewPartialError("batch dry-run", allErrs)
 		}
 		var errs []error
-		for _, u := range urls {
-			site, sitErr := detectSite(u)
+		for _, e := range entries {
+			site, sitErr := detectSite(e.URL)
 			if sitErr != nil {
 				errs = append(errs, sitErr)
 				continue
 			}
-			if dryErr := runDryRunWithDiskCheck(applyDryRunFilters(reg[site], cfg), u, cfg.OutputDir, cfg.DiskCheck); dryErr != nil {
-				fmt.Fprintf(os.Stderr, "dry-run: %s: %v\n", u, dryErr)
+			if dryErr := runDryRunWithDiskCheck(applyDryRunFilters(reg[site], cfg), e.URL, cfg.OutputDir, cfg.DiskCheck); dryErr != nil {
+				fmt.Fprintf(os.Stderr, "dry-run: %s: %v\n", e.URL, dryErr)
 				errs = append(errs, dryErr)
 			}
 		}
@@ -856,8 +885,8 @@ func runBatch(opts globalOptions, urls []string) error {
 	}
 
 	hasYouTube, hasOther := false, false
-	for _, u := range urls {
-		site, err := detectSite(u)
+	for _, e := range entries {
+		site, err := detectSite(e.URL)
 		if err != nil {
 			return err
 		}
@@ -879,7 +908,7 @@ func runBatch(opts globalOptions, urls []string) error {
 	var dl dashboard.Downloader
 	// Build dashAlbumURL entries for the dashboard: one scraper per URL so
 	// the incremental scrape chain can call the right parser.
-	dashAlbums := make([]dashboard.DashAlbumURL, 0, len(urls))
+	dashAlbums := make([]dashboard.DashAlbumURL, 0, len(entries))
 	if hasYouTube {
 		scraper := batchYouTubeScraper()
 		ytDl, err := batchYouTubeDownloader(scraper, cfg, rateLimitBytesPerSec)
@@ -888,15 +917,15 @@ func runBatch(opts globalOptions, urls []string) error {
 		}
 		dl = ytDl
 		defer dl.Shutdown()
-		for _, u := range urls {
-			slug := albumSlugFor("youtube", u)
+		for _, e := range entries {
+			slug := albumSlugFor("youtube", e.URL)
 			dest, err := fileutil.SafeJoin(cfg.OutputDir, slug)
 			if err != nil {
 				return err
 			}
 			dashAlbums = append(dashAlbums, dashboard.DashAlbumURL{
 				Site:    "youtube",
-				URL:     u,
+				URL:     e.URL,
 				Slug:    slug,
 				Dest:    dest,
 				Scraper: scraper,
@@ -909,9 +938,9 @@ func runBatch(opts globalOptions, urls []string) error {
 		}
 		dl = genericDl
 		defer dl.Shutdown()
-		for _, u := range urls {
-			site, _ := detectSite(u)
-			slug := albumSlugFor(site, u)
+		for _, e := range entries {
+			site, _ := detectSite(e.URL)
+			slug := batchDestSlug(site, e)
 			dest, err := fileutil.SafeJoin(cfg.OutputDir, slug)
 			if err != nil {
 				return err
@@ -919,7 +948,7 @@ func runBatch(opts globalOptions, urls []string) error {
 			scraper := reg[site]
 			dashAlbums = append(dashAlbums, dashboard.DashAlbumURL{
 				Site:    site,
-				URL:     u,
+				URL:     e.URL,
 				Slug:    slug,
 				Dest:    dest,
 				Scraper: scraper,

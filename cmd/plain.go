@@ -711,7 +711,7 @@ batchLoop:
 	return model.NewPartialError("batch", allErrs)
 }
 
-func runDryRunJSONWithDiskCheck(scraper model.Scraper, targetURL, siteName string, out io.Writer, outputDir string, diskCheck bool) error {
+func runDryRunJSONWithDiskCheck(scraper model.Scraper, targetURL, siteName, slugOverride string, out io.Writer, outputDir string, diskCheck bool) error {
 	items, err := scraper.Parse(context.Background(), targetURL)
 	if err != nil && len(items) == 0 {
 		data, _ := json.Marshal(map[string]interface{}{
@@ -741,7 +741,10 @@ func runDryRunJSONWithDiskCheck(scraper model.Scraper, targetURL, siteName strin
 		}
 	}
 
-	slug := albumSlugFor(siteName, targetURL)
+	slug := slugOverride
+	if slug == "" {
+		slug = albumSlugFor(siteName, targetURL)
+	}
 	album := model.JSONAlbum{
 		Site:  siteName,
 		URL:   targetURL,
