@@ -108,8 +108,11 @@ func TestNewRootCmdRegistersSubcommands(t *testing.T) {
 	if root.PersistentFlags().Lookup("limit-rate") == nil {
 		t.Error("expected --limit-rate persistent flag")
 	}
-	if root.PersistentFlags().Lookup("no-checksums") == nil {
-		t.Error("expected --no-checksums persistent flag")
+	if root.PersistentFlags().Lookup("checksums") == nil {
+		t.Error("expected --checksums persistent flag")
+	}
+	if root.PersistentFlags().Lookup("no-checksums") != nil {
+		t.Error("--no-checksums must be gone: checksums are off by default")
 	}
 	if root.PersistentFlags().Lookup("dry-run") == nil {
 		t.Error("expected --dry-run persistent flag")
@@ -144,7 +147,7 @@ func TestExplicitSubcommandReadsInheritedOptions(t *testing.T) {
 	if err := root.PersistentFlags().Set("limit-rate", "2M"); err != nil {
 		t.Fatal(err)
 	}
-	if err := root.PersistentFlags().Set("no-checksums", "true"); err != nil {
+	if err := root.PersistentFlags().Set("checksums", "true"); err != nil {
 		t.Fatal(err)
 	}
 	if err := root.PersistentFlags().Set("dry-run", "true"); err != nil {
@@ -167,34 +170,48 @@ func TestExplicitSubcommandReadsInheritedOptions(t *testing.T) {
 		t.Fatalf("globalOptionsFromCommand failed: %v", err)
 	}
 	if opts.configPath != "/tmp/custom.yaml" || opts.output != "." || opts.concurrency != 5 ||
-		opts.rateLimit != "2M" || !opts.skipChecksums || !opts.dryRun {
+		opts.rateLimit != "2M" || !opts.checksums || !opts.dryRun {
 		t.Fatalf("explicit subcommand saw stale options: %+v", opts)
 	}
 }
 
 func TestLoadGlobalConfigHonorsExplicitDefaultValues(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
-	content := "output_dir: /from-config\nconcurrent_downloads: 9\nrate_limit: 1M\nskip_checksums: true\n"
+	content := "output_dir: /from-config\nconcurrent_downloads: 9\nrate_limit: 1M\nchecksums: true\n"
 	if err := os.WriteFile(configPath, []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
 
 	cfg, err := loadGlobalConfig(globalOptions{
-		configPath:       configPath,
-		output:           ".",
-		outputSet:        true,
-		concurrency:      5,
-		concurrencySet:   true,
-		rateLimit:        "",
-		rateLimitSet:     true,
-		skipChecksums:    false,
-		skipChecksumsSet: true,
+		configPath:     configPath,
+		output:         ".",
+		outputSet:      true,
+		concurrency:    5,
+		concurrencySet: true,
+		rateLimit:      "",
+		rateLimitSet:   true,
+		checksums:      false,
+		checksumsSet:   true,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.OutputDir != "." || cfg.ConcurrentDownloads != 5 || cfg.RateLimit != "" || cfg.SkipChecksums {
+	if cfg.OutputDir != "." || cfg.ConcurrentDownloads != 5 || cfg.RateLimit != "" || cfg.Checksums {
 		t.Fatalf("explicit defaults did not override config: %+v", cfg)
+	}
+}
+
+func TestLoadGlobalConfigChecksumsFlagEnables(t *testing.T) {
+	cfg, err := loadGlobalConfig(globalOptions{
+		configPath:   emptyTestConfig(t),
+		checksums:    true,
+		checksumsSet: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Checksums {
+		t.Fatal("expected --checksums to enable checksum sidecars")
 	}
 }
 

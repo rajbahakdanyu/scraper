@@ -112,6 +112,10 @@ func (d *Downloader) SetSkipChecksums(skip bool) {
 	d.skipChecksums = skip
 }
 
+// SkipChecksums reports whether checksum sidecar writing/verification is
+// disabled for this downloader.
+func (d *Downloader) SkipChecksums() bool { return d.skipChecksums }
+
 // Download fetches a single media item and saves it to dest. It uses a
 // temporary ".part" file during download and renames it on success.
 // Retries up to maxRetries times on transient errors; if all retries are

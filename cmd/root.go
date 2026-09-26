@@ -39,42 +39,42 @@ var version = "dev"
 // globalOptions holds flags defined on the root command that are inherited
 // by all subcommands via PersistentFlags.
 type globalOptions struct {
-	configPath       string
-	output           string
-	outputSet        bool
-	concurrency      int
-	concurrencySet   bool
-	rateLimit        string
-	rateLimitSet     bool
-	skipChecksums    bool
-	skipChecksumsSet bool
-	dryRun           bool
-	inputFile        string
-	inputFileSet     bool
-	noTui            bool
-	json             bool
-	proxy            string
-	proxySet         bool
-	cookies          string
-	cookiesSet       bool
-	quality          string
-	qualitySet       bool
-	audioOnly        string
-	audioOnlySet     bool
-	include          []string
-	includeSet       bool
-	exclude          []string
-	excludeSet       bool
-	minSize          string
-	minSizeSet       bool
-	maxSize          string
-	maxSizeSet       bool
-	diskCheck        bool
-	diskCheckSet     bool
-	mediaOnly        bool
-	mediaOnlySet     bool
-	notify           bool
-	notifySet        bool
+	configPath     string
+	output         string
+	outputSet      bool
+	concurrency    int
+	concurrencySet bool
+	rateLimit      string
+	rateLimitSet   bool
+	checksums      bool
+	checksumsSet   bool
+	dryRun         bool
+	inputFile      string
+	inputFileSet   bool
+	noTui          bool
+	json           bool
+	proxy          string
+	proxySet       bool
+	cookies        string
+	cookiesSet     bool
+	quality        string
+	qualitySet     bool
+	audioOnly      string
+	audioOnlySet   bool
+	include        []string
+	includeSet     bool
+	exclude        []string
+	excludeSet     bool
+	minSize        string
+	minSizeSet     bool
+	maxSize        string
+	maxSizeSet     bool
+	diskCheck      bool
+	diskCheckSet   bool
+	mediaOnly      bool
+	mediaOnlySet   bool
+	notify         bool
+	notifySet      bool
 }
 
 // loadGlobalConfig loads the config file and applies CLI flag overrides.
@@ -96,8 +96,8 @@ func loadGlobalConfig(opts globalOptions) (*config.Config, error) {
 	if opts.rateLimitSet {
 		cfg.RateLimit = opts.rateLimit
 	}
-	if opts.skipChecksumsSet {
-		cfg.SkipChecksums = opts.skipChecksums
+	if opts.checksumsSet {
+		cfg.Checksums = opts.checksums
 	}
 	if opts.proxySet {
 		cfg.Proxy = opts.proxy
@@ -217,7 +217,7 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 	if err != nil {
 		return globalOptions{}, err
 	}
-	skipChecksums, err := flags.GetBool("no-checksums")
+	checksums, err := flags.GetBool("checksums")
 	if err != nil {
 		return globalOptions{}, err
 	}
@@ -286,42 +286,42 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 		noTui = true
 	}
 	return globalOptions{
-		configPath:       configPath,
-		output:           output,
-		outputSet:        flags.Changed("output"),
-		concurrency:      concurrency,
-		concurrencySet:   flags.Changed("concurrent"),
-		rateLimit:        rateLimit,
-		rateLimitSet:     flags.Changed("limit-rate"),
-		skipChecksums:    skipChecksums,
-		skipChecksumsSet: flags.Changed("no-checksums"),
-		dryRun:           dryRun,
-		inputFile:        inputFile,
-		inputFileSet:     flags.Changed("input-file"),
-		noTui:            noTui,
-		json:             json,
-		proxy:            proxy,
-		proxySet:         flags.Changed("proxy"),
-		cookies:          cookies,
-		cookiesSet:       flags.Changed("cookies"),
-		quality:          quality,
-		qualitySet:       flags.Changed("quality"),
-		audioOnly:        audioOnly,
-		audioOnlySet:     flags.Changed("audio-only"),
-		include:          include,
-		includeSet:       flags.Changed("include"),
-		exclude:          exclude,
-		excludeSet:       flags.Changed("exclude"),
-		minSize:          minSize,
-		minSizeSet:       flags.Changed("min-size"),
-		maxSize:          maxSize,
-		maxSizeSet:       flags.Changed("max-size"),
-		diskCheck:        diskCheck,
-		diskCheckSet:     flags.Changed("disk-check"),
-		mediaOnly:        mediaOnly,
-		mediaOnlySet:     flags.Changed("media-only"),
-		notify:           notify,
-		notifySet:        flags.Changed("notify"),
+		configPath:     configPath,
+		output:         output,
+		outputSet:      flags.Changed("output"),
+		concurrency:    concurrency,
+		concurrencySet: flags.Changed("concurrent"),
+		rateLimit:      rateLimit,
+		rateLimitSet:   flags.Changed("limit-rate"),
+		checksums:      checksums,
+		checksumsSet:   flags.Changed("checksums"),
+		dryRun:         dryRun,
+		inputFile:      inputFile,
+		inputFileSet:   flags.Changed("input-file"),
+		noTui:          noTui,
+		json:           json,
+		proxy:          proxy,
+		proxySet:       flags.Changed("proxy"),
+		cookies:        cookies,
+		cookiesSet:     flags.Changed("cookies"),
+		quality:        quality,
+		qualitySet:     flags.Changed("quality"),
+		audioOnly:      audioOnly,
+		audioOnlySet:   flags.Changed("audio-only"),
+		include:        include,
+		includeSet:     flags.Changed("include"),
+		exclude:        exclude,
+		excludeSet:     flags.Changed("exclude"),
+		minSize:        minSize,
+		minSizeSet:     flags.Changed("min-size"),
+		maxSize:        maxSize,
+		maxSizeSet:     flags.Changed("max-size"),
+		diskCheck:      diskCheck,
+		diskCheckSet:   flags.Changed("disk-check"),
+		mediaOnly:      mediaOnly,
+		mediaOnlySet:   flags.Changed("media-only"),
+		notify:         notify,
+		notifySet:      flags.Changed("notify"),
 	}, nil
 }
 
@@ -402,7 +402,7 @@ func NewRootCmd() *cobra.Command {
 	root.PersistentFlags().StringP("output", "o", "", "Output directory (default: ~/Downloads)")
 	root.PersistentFlags().Int("concurrent", 5, "Maximum concurrent downloads")
 	root.PersistentFlags().String("limit-rate", "", "Cap total download speed (e.g. 500K, 2M, 1G; default: unlimited)")
-	root.PersistentFlags().Bool("no-checksums", false, "Don't write/verify .sha256 checksum sidecar files")
+	root.PersistentFlags().Bool("checksums", false, "Write and verify .sha256 checksum sidecar files (default: off)")
 	root.PersistentFlags().BoolP("dry-run", "n", false, "List items and total size without downloading anything")
 	root.PersistentFlags().StringP("input-file", "i", "", "Read URLs from a file (one per line; optional tab-separated album URL)")
 	root.PersistentFlags().Bool("no-tui", false, "Disable terminal UI; print plain text output")
@@ -690,7 +690,7 @@ func buildDownloader(scraper model.Scraper, siteName string, cfg *config.Config,
 			Timeout:      cfg.Timeout,
 			UserAgent:    cfg.UserAgent,
 			RateLimit:    rateLimitBytesPerSec,
-			SkipChecksum: cfg.SkipChecksums,
+			SkipChecksum: !cfg.Checksums,
 			ProxyURL:     cfg.Proxy,
 			Cookies:      cfg.ParsedCookies(),
 			Quality:      cfg.Quality,
@@ -713,7 +713,7 @@ func buildDownloader(scraper model.Scraper, siteName string, cfg *config.Config,
 		return nil, fmt.Errorf("downloader: %w", err)
 	}
 	dl.SetRateLimit(rateLimitBytesPerSec)
-	dl.SetSkipChecksums(cfg.SkipChecksums)
+	dl.SetSkipChecksums(!cfg.Checksums)
 	return dl, nil
 }
 

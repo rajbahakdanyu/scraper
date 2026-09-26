@@ -107,8 +107,8 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if cfg.RateLimit != "" {
 		t.Errorf("expected default rate limit to be unlimited (empty), got %q", cfg.RateLimit)
 	}
-	if cfg.SkipChecksums {
-		t.Error("expected checksums to be enabled by default")
+	if cfg.Checksums {
+		t.Error("expected checksums to be disabled by default")
 	}
 }
 
@@ -141,7 +141,7 @@ func TestLoadConfigRateLimitAndChecksums(t *testing.T) {
 	cfgPath := filepath.Join(tmpDir, ".scraper.yaml")
 
 	content := `rate_limit: 500K
-skip_checksums: true
+checksums: true
 `
 	if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {
 		t.Fatal(err)
@@ -155,8 +155,8 @@ skip_checksums: true
 	if cfg.RateLimit != "500K" {
 		t.Errorf("expected rate_limit 500K, got %q", cfg.RateLimit)
 	}
-	if !cfg.SkipChecksums {
-		t.Error("expected skip_checksums to be true")
+	if !cfg.Checksums {
+		t.Error("expected checksums to be true")
 	}
 }
 

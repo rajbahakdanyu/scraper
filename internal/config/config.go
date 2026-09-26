@@ -26,9 +26,10 @@ type Config struct {
 	// value like "500K", "2M", "1.5G" (binary/1024-based). Empty or "0"
 	// means unlimited. Parse with ParseRateLimit before use.
 	RateLimit string `yaml:"rate_limit"`
-	// SkipChecksums disables writing/verifying the .sha256 sidecar file
-	// that normally accompanies each completed download.
-	SkipChecksums bool `yaml:"skip_checksums"`
+	// Checksums enables writing and verifying the .sha256 sidecar file
+	// that accompanies each completed download. Off by default; enable
+	// with `checksums: true` or --checksums.
+	Checksums bool `yaml:"checksums"`
 	// Proxy is the HTTP/S proxy URL for all outbound requests.
 	// Empty means no proxy (default).
 	Proxy string `yaml:"proxy"`
@@ -154,7 +155,7 @@ func defaultConfig() *Config {
 		Timeout:             30 * time.Second,
 		UserAgent:           DefaultUserAgent,
 		RateLimit:           "",
-		SkipChecksums:       false,
+		Checksums:           false,
 		DiskCheck:           true,
 		MediaOnly:           true,
 	}

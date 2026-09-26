@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rajbahakdanyu/scraper/internal/config"
+	"github.com/rajbahakdanyu/scraper/internal/downloader"
 	"github.com/rajbahakdanyu/scraper/internal/model"
 	"github.com/rajbahakdanyu/scraper/internal/ui/dashboard"
 )
@@ -860,6 +862,41 @@ func TestRunBatchJSONProducesJSONLines(t *testing.T) {
 	var lastEvent struct{ Event string }
 	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &lastEvent); err != nil || lastEvent.Event != "summary" {
 		t.Errorf("expected summary as last line, got: %s", lines[len(lines)-1])
+	}
+}
+
+// buildDownloader must map the config's checksums setting to the
+// downloader's skip flag: off by default, skipped unless enabled.
+func TestBuildDownloaderChecksumsWiring(t *testing.T) {
+	tests := []struct {
+		name           string
+		checksums      bool
+		wantSkipChecks bool
+	}{
+		{"default off", false, true},
+		{"enabled", true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{
+				Checksums:           tt.checksums,
+				ConcurrentDownloads: 1,
+				Timeout:             30 * time.Second,
+			}
+			dl, err := buildDownloader(nil, "generic", cfg, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer dl.Shutdown()
+
+			concrete, ok := dl.(*downloader.Downloader)
+			if !ok {
+				t.Fatalf("buildDownloader returned %T, want *downloader.Downloader", dl)
+			}
+			if got := concrete.SkipChecksums(); got != tt.wantSkipChecks {
+				t.Fatalf("SkipChecksums() = %v, want %v", got, tt.wantSkipChecks)
+			}
+		})
 	}
 }
 

@@ -144,9 +144,9 @@ per URL — same as albums).
 | `-o, --output`   | `~/Downloads` | Output directory (config default)                   |
 | `--concurrent`   | `5`     | Maximum concurrent downloads                 |
 | `--config`       | (none)  | Config file path (default: `~/.scraper.yaml`)|
-| `-i, --input-file`| (none) | Read URLs from a file, one per line (batch mode) |
+| `-i, --input-file`| (none) | Read URLs from a file, one per line (batch mode); an optional tab-separated album URL per line keeps retries in the album folder |
 | `--limit-rate`   | (none)  | Cap total download speed (e.g. `500K`, `2M`, `1G`); unlimited by default |
-| `--no-checksums` | `false` | Don't write/verify `.sha256` checksum sidecar files |
+| `--checksums`    | `false` | Write and verify `.sha256` checksum sidecar files (default: off) |
 | `-n, --dry-run`  | `false` | List item count/total size without downloading anything |
 | `--no-tui`       | `false` | Disable the terminal UI; print plain text output |
 | `-j, --json`     | `false` | Output JSON Lines (one event per line); implies `--no-tui` |
@@ -249,7 +249,7 @@ concurrent_downloads: 10
 timeout: 30s
 user_agent: "Scraper/1.0"
 rate_limit: 2M
-skip_checksums: false
+checksums: false
 proxy: http://proxy:8080
 cookies: ~/.scraper-cookies.txt
 quality: "1080p"
@@ -266,11 +266,13 @@ notify: false
 CLI flags override config file values. `--proxy`/`proxy` routes every
 outbound request (scraping and downloads) through the given HTTP/S proxy.
 
-Every completed download gets a `<file>.sha256` sidecar (standard
-`sha256sum`-compatible format) next to it, unless `skip_checksums`/
-`--no-checksums` is set. If a file with a matching sidecar is already fully
-downloaded, re-running the same download skips it; if the sidecar no longer
-matches (a corrupted file), it's redownloaded instead of trusted as-is.
+Checksum sidecars are **off by default**: no `.sha256` files are written,
+and existing files are skipped with a fast size check instead of being
+re-hashed. Pass `--checksums` (or set `checksums: true`) to write a
+`<file>.sha256` sidecar (standard `sha256sum`-compatible format) next to
+each completed download; with checksums enabled, re-running a download
+verifies the existing file and redownloads it if the sidecar no longer
+matches (a corrupted file) instead of trusting it as-is.
 `rate_limit`/`--limit-rate` caps the *combined* speed across all concurrent
 downloads, not each one individually.
 
