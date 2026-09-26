@@ -17,21 +17,24 @@ import (
 )
 
 // failedItem pairs a media item that did not download with the error that
-// ended it.
+// ended it and the album URL it came from.
 type failedItem struct {
-	Item model.MediaItem
-	Err  error
+	Item     model.MediaItem
+	Err      error
+	AlbumURL string
 }
 
 // collectFailures turns per-item errors into the failures worth reporting:
-// nil errors and user cancellations are not failures.
-func collectFailures(items []model.MediaItem, errs []error) []failedItem {
+// nil errors and user cancellations are not failures. albumURL is the URL
+// the items were scraped from, recorded so a retry can restore the album
+// folder.
+func collectFailures(items []model.MediaItem, errs []error, albumURL string) []failedItem {
 	var out []failedItem
 	for i, item := range items {
 		if i >= len(errs) || errs[i] == nil || model.IsCancelled(errs[i]) {
 			continue
 		}
-		out = append(out, failedItem{Item: item, Err: errs[i]})
+		out = append(out, failedItem{Item: item, Err: errs[i], AlbumURL: albumURL})
 	}
 	return out
 }
@@ -44,6 +47,19 @@ func retryURL(item model.MediaItem) string {
 		return item.PageURL
 	}
 	u, err := url.Parse(item.URL)
+	if err != nil {
+		return ""
+	}
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String()
+}
+
+// retryAlbumURL strips any query or fragment from an album URL. The retry
+// list uses the album only for its path slug, so signed parameters must
+// not leak; an unparsable URL yields no album column.
+func retryAlbumURL(raw string) string {
+	u, err := url.Parse(raw)
 	if err != nil {
 		return ""
 	}
@@ -137,8 +153,16 @@ func retryReport(dir string, failures []failedItem, now time.Time) (string, stri
 	var list strings.Builder
 	fmt.Fprintf(&list, "# scraper retry list - %s - %d failed item(s)\n",
 		now.Format("2006-01-02 15:04:05"), len(usable))
+	list.WriteString("# Each line is: item URL [TAB album URL]. Re-running downloads\n")
+	list.WriteString("# the item into its album folder (single-column lines still work).\n")
 	for _, f := range usable {
-		list.WriteString(retryURL(f.Item) + "\n")
+		list.WriteString(retryURL(f.Item))
+		if f.AlbumURL != "" {
+			if album := retryAlbumURL(f.AlbumURL); album != "" {
+				list.WriteString("\t" + album)
+			}
+		}
+		list.WriteString("\n")
 	}
 
 	file, err := fileutil.OpenFileNoFollow(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
@@ -162,7 +186,7 @@ func retryReport(dir string, failures []failedItem, now time.Time) (string, stri
 func failuresFromDashboard(fs []dashboard.FailedItem) []failedItem {
 	out := make([]failedItem, 0, len(fs))
 	for _, f := range fs {
-		out = append(out, failedItem{Item: f.Item, Err: f.Err})
+		out = append(out, failedItem{Item: f.Item, Err: f.Err, AlbumURL: f.SourceURL})
 	}
 	return out
 }

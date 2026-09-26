@@ -404,7 +404,7 @@ func NewRootCmd() *cobra.Command {
 	root.PersistentFlags().String("limit-rate", "", "Cap total download speed (e.g. 500K, 2M, 1G; default: unlimited)")
 	root.PersistentFlags().Bool("no-checksums", false, "Don't write/verify .sha256 checksum sidecar files")
 	root.PersistentFlags().BoolP("dry-run", "n", false, "List items and total size without downloading anything")
-	root.PersistentFlags().StringP("input-file", "i", "", "Read URLs from a file (one per line)")
+	root.PersistentFlags().StringP("input-file", "i", "", "Read URLs from a file (one per line; optional tab-separated album URL)")
 	root.PersistentFlags().Bool("no-tui", false, "Disable terminal UI; print plain text output")
 	root.PersistentFlags().BoolP("json", "j", false, "Output JSON Lines (one event per line); implies --no-tui")
 	root.PersistentFlags().String("proxy", "", "HTTP/S proxy URL for all requests (e.g. http://proxy:8080)")
@@ -657,11 +657,12 @@ func runWithScraperAndConfig(cfg *config.Config, scraper model.Scraper, targetUR
 		func() error {
 			return runPlain(dl, func() ([]model.MediaItem, error) {
 				return scraperFn(context.Background())
-			}, cfg.OutputDir, slug, os.Stdout)
+			}, cfg.OutputDir, slug, targetURL, os.Stdout)
 		},
 		func() error {
 			d := dashboard.New(scraperFn, dl, cfg.OutputDir, siteName)
 			d.SetAlbumSlug(slug)
+			d.SetSourceURL(targetURL)
 
 			p := tea.NewProgram(d, tea.WithAltScreen())
 

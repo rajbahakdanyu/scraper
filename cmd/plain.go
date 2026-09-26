@@ -197,7 +197,7 @@ func startBatchScrape(ctx context.Context, abort <-chan struct{}, album dashboar
 // scraped item while printing one status line per progress event to out,
 // consuming the same progress channel the dashboard would. It returns a
 // non-nil error when any download fails so the process exits non-zero.
-func runPlain(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error), dest, slug string, out io.Writer) error {
+func runPlain(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error), dest, slug, sourceURL string, out io.Writer) error {
 	reportDir := dest
 	items, err := scrapeFn()
 	if err != nil && len(items) == 0 {
@@ -292,7 +292,7 @@ drain:
 		fmt.Fprintf(out, "failed %s: %v\n", title, errs[i])
 		realErrs = append(realErrs, errs[i])
 	}
-	if _, summary, rErr := retryReport(reportDir, collectFailures(items, errs), time.Now()); rErr != nil {
+	if _, summary, rErr := retryReport(reportDir, collectFailures(items, errs, sourceURL), time.Now()); rErr != nil {
 		fmt.Fprintf(out, "retry list: %v\n", rErr)
 	} else if summary != "" {
 		fmt.Fprintln(out, summary)
@@ -426,7 +426,7 @@ batchLoop:
 
 		<-downloadsDone
 
-		failures = append(failures, collectFailures(items, errs)...)
+		failures = append(failures, collectFailures(items, errs, a.URL)...)
 
 		for i, item := range items {
 			if errs[i] == nil {
@@ -541,7 +541,7 @@ func runJSON(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error)
 
 	completed, failed, cancelled, realItems, totalBytes := writeItemResult(out, items, errs, paths, slug, quality, audioOnly)
 
-	retryPath, summary, rErr := retryReport(dest, collectFailures(items, errs), time.Now())
+	retryPath, summary, rErr := retryReport(dest, collectFailures(items, errs, targetURL), time.Now())
 	if rErr != nil {
 		fmt.Fprintf(os.Stderr, "retry list: %v\n", rErr)
 	} else if summary != "" {
@@ -670,7 +670,7 @@ batchLoop:
 
 		<-downloadsDone
 
-		failures = append(failures, collectFailures(items, errs)...)
+		failures = append(failures, collectFailures(items, errs, a.URL)...)
 
 		completed, failed, cancelled, albumReal, _ := writeItemResult(out, items, errs, paths, a.Slug, quality, audioOnly)
 

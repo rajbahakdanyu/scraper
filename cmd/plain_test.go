@@ -99,7 +99,7 @@ func TestRunPlainRefusesSymlinkedAlbumDirectory(t *testing.T) {
 
 	dl := newFakePlainDownloader()
 	items := []model.MediaItem{{URL: "https://example.com/a", Title: "a"}, {URL: "https://example.com/b", Title: "b"}}
-	err := runPlain(dl, itemsScraper(items, nil), root, "album", &bytes.Buffer{})
+	err := runPlain(dl, itemsScraper(items, nil), root, "album", "", &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "refusing to use symlinked output directory") {
 		t.Fatalf("expected symlinked directory refusal, got %v", err)
 	}
@@ -218,7 +218,7 @@ func TestRunPlainDownloadsAllItems(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	err := runPlain(dl, itemsScraper(items, nil), dest, "album", &buf)
+	err := runPlain(dl, itemsScraper(items, nil), dest, "album", "", &buf)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -252,7 +252,7 @@ func TestRunPlainSingleItemUsesDestDirectly(t *testing.T) {
 	items := []model.MediaItem{{URL: "https://example.com/one.mp4", Title: "one.mp4"}}
 
 	var buf bytes.Buffer
-	if err := runPlain(dl, itemsScraper(items, nil), dest, "album", &buf); err != nil {
+	if err := runPlain(dl, itemsScraper(items, nil), dest, "album", "", &buf); err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
 	if len(dl.dests) != 1 || dl.dests[0] != dest {
@@ -273,7 +273,7 @@ func TestRunPlainFailsWhenAnyDownloadFails(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	err := runPlain(dl, itemsScraper(items, nil), dest, "album", &buf)
+	err := runPlain(dl, itemsScraper(items, nil), dest, "album", "https://example.com/a/album", &buf)
 	if err == nil {
 		t.Fatal("expected a non-nil error so the process exits non-zero when any download fails")
 	}
@@ -293,8 +293,8 @@ func TestRunPlainFailsWhenAnyDownloadFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "https://example.com/bad.mp4") {
-		t.Errorf("retry list missing the failed item URL:\n%s", data)
+	if !strings.Contains(string(data), "https://example.com/bad.mp4\thttps://example.com/a/album") {
+		t.Errorf("retry list missing the item/album pair:\n%s", data)
 	}
 	if !strings.Contains(out, "Retry list:") {
 		t.Errorf("expected the summary to name the retry list, got: %q", out)
@@ -307,7 +307,7 @@ func TestRunPlainTreatsCancelledItemsAsInterrupted(t *testing.T) {
 	dl.errs[item.URL] = &model.CancelledError{URL: item.URL}
 
 	var buf bytes.Buffer
-	if err := runPlain(dl, itemsScraper([]model.MediaItem{item}, nil), t.TempDir(), "", &buf); err != nil {
+	if err := runPlain(dl, itemsScraper([]model.MediaItem{item}, nil), t.TempDir(), "", "", &buf); err != nil {
 		t.Fatalf("expected cancellation not to fail the run, got: %v", err)
 	}
 
@@ -407,7 +407,7 @@ func TestRunPlainPropagatesScrapeError(t *testing.T) {
 	wantErr := fmt.Errorf("scrape boom")
 
 	var buf bytes.Buffer
-	err := runPlain(dl, itemsScraper(nil, wantErr), t.TempDir(), "album", &buf)
+	err := runPlain(dl, itemsScraper(nil, wantErr), t.TempDir(), "album", "", &buf)
 	if err != wantErr {
 		t.Errorf("expected the scrape error to propagate, got: %v", err)
 	}
@@ -420,7 +420,7 @@ func TestRunPlainNoItems(t *testing.T) {
 	dl := newFakePlainDownloader()
 
 	var buf bytes.Buffer
-	err := runPlain(dl, itemsScraper(nil, nil), t.TempDir(), "album", &buf)
+	err := runPlain(dl, itemsScraper(nil, nil), t.TempDir(), "album", "", &buf)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -438,7 +438,7 @@ func TestRunPlainTerminatesOnClosedProgressChannel(t *testing.T) {
 	items := []model.MediaItem{{URL: "https://example.com/one.mp4", Title: "one.mp4"}}
 
 	var buf bytes.Buffer
-	if err := runPlain(dl, itemsScraper(items, nil), dest, "album", &buf); err != nil {
+	if err := runPlain(dl, itemsScraper(items, nil), dest, "album", "", &buf); err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
 	if len(dl.downloaded) != 1 {
@@ -470,7 +470,7 @@ func TestRunPlainAssignsIDsLikeTheDashboard(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := runPlain(dl, itemsScraper(items, nil), dest, "album", &buf); err != nil {
+	if err := runPlain(dl, itemsScraper(items, nil), dest, "album", "", &buf); err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
 	if len(dl.downloaded) != 2 {
@@ -577,6 +577,13 @@ func TestRunJSONWithFailedItems(t *testing.T) {
 	}
 	if _, err := os.Stat(summaryEvent.RetryFile); err != nil {
 		t.Fatalf("retryFile does not exist: %v", err)
+	}
+	data, err := os.ReadFile(summaryEvent.RetryFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "https://example.com/a.mp4\thttps://example.com") {
+		t.Fatalf("retry file missing item/album pair:\n%s", data)
 	}
 }
 
@@ -853,6 +860,34 @@ func TestRunBatchJSONProducesJSONLines(t *testing.T) {
 	var lastEvent struct{ Event string }
 	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &lastEvent); err != nil || lastEvent.Event != "summary" {
 		t.Errorf("expected summary as last line, got: %s", lines[len(lines)-1])
+	}
+}
+
+func TestRunBatchJSONRetryFileCarriesAlbumURL(t *testing.T) {
+	destRoot := t.TempDir()
+	fd := newFakePlainDownloader()
+	scraper := &fakeBatchJSONScraper{items: []model.MediaItem{
+		{URL: "https://example.com/a.mp4", Title: "a.mp4", PageURL: "https://example.com/f/a"},
+	}}
+	fd.errs["https://example.com/a.mp4"] = errors.New("boom")
+
+	albums := []dashboard.DashAlbumURL{
+		{Site: "test", URL: "https://example.com/a/album1", Slug: "album1", Dest: t.TempDir(), Scraper: scraper},
+	}
+
+	var buf bytes.Buffer
+	_ = runBatchJSON(fd, albums, destRoot, "", "", &buf)
+
+	matches, _ := filepath.Glob(filepath.Join(destRoot, "scraper-failed-*.txt"))
+	if len(matches) != 1 {
+		t.Fatalf("retry files = %v, want 1", matches)
+	}
+	data, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "https://example.com/f/a\thttps://example.com/a/album1") {
+		t.Fatalf("retry file missing item/album pair:\n%s", data)
 	}
 }
 

@@ -49,6 +49,7 @@ type itemState struct {
 	isHeader  bool
 	albumName string
 	albumSite string
+	sourceURL string
 	lastErr   error
 }
 
@@ -90,6 +91,7 @@ type Dashboard struct {
 	loadingErr string
 
 	albumSlug         string
+	sourceURL         string
 	progressMu        sync.Mutex
 	pending           map[string]model.ProgressEvent
 	refreshTickActive bool
@@ -143,6 +145,12 @@ func New(scraperFn func(context.Context) ([]model.MediaItem, error), dl Download
 // SetAlbumSlug stores the URL slug for creating album subfolders.
 func (d *Dashboard) SetAlbumSlug(slug string) {
 	d.albumSlug = slug
+}
+
+// SetSourceURL records the URL a single-URL run scraped, so failed items
+// can be reported with the source they came from (retry pairs).
+func (d *Dashboard) SetSourceURL(url string) {
+	d.sourceURL = url
 }
 
 // NewBatch creates a dashboard for batch mode. Items are appended
@@ -366,7 +374,7 @@ func (d *Dashboard) handleScrapeResult(msg scrapeResultMsg) (tea.Model, tea.Cmd)
 	for i := range msg.items {
 		model.AssignIDs(msg.items[i:i+1], fmt.Sprintf("%d:", i))
 		it := msg.items[i]
-		d.states[i] = itemState{item: it, status: model.StatusPending, total: it.Size}
+		d.states[i] = itemState{item: it, status: model.StatusPending, total: it.Size, sourceURL: d.sourceURL}
 	}
 
 	// Album (multiple files): create a subfolder from the URL slug
@@ -525,9 +533,10 @@ func (d *Dashboard) handleBatchScrape(msg batchScrapeMsg) (tea.Model, tea.Cmd) {
 		model.AssignIDs(msg.items[i:i+1], fmt.Sprintf("%d:%d:", d.batchIdx-1, i))
 		it := msg.items[i]
 		st := itemState{
-			item:  it,
-			total: it.Size,
-			dest:  msg.album.Dest,
+			item:      it,
+			total:     it.Size,
+			dest:      msg.album.Dest,
+			sourceURL: msg.album.URL,
 		}
 		if it.URL == "" {
 			st.status = model.StatusCompleted
@@ -657,10 +666,12 @@ func (d *Dashboard) inspectSelected() {
 	}
 }
 
-// FailedItem pairs a media item with the error that ended its download.
+// FailedItem pairs a media item with the error that ended its download and
+// the URL it was scraped from.
 type FailedItem struct {
-	Item model.MediaItem
-	Err  error
+	Item      model.MediaItem
+	Err       error
+	SourceURL string
 }
 
 // Failures returns the items that ended in the failed state, in display
@@ -671,7 +682,11 @@ func (d *Dashboard) Failures() []FailedItem {
 		if d.states[i].isHeader || d.states[i].status != model.StatusFailed {
 			continue
 		}
-		out = append(out, FailedItem{Item: d.states[i].item, Err: d.states[i].lastErr})
+		out = append(out, FailedItem{
+			Item:      d.states[i].item,
+			Err:       d.states[i].lastErr,
+			SourceURL: d.states[i].sourceURL,
+		})
 	}
 	return out
 }

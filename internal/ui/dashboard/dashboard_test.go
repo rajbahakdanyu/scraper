@@ -1142,7 +1142,7 @@ func TestFailuresReturnsOnlyFailedItems(t *testing.T) {
 	d.states = []itemState{
 		{isHeader: true},
 		{item: model.MediaItem{URL: "https://x/1", Title: "done"}, status: model.StatusCompleted},
-		{item: model.MediaItem{URL: "https://x/2", Title: "bad"}, status: model.StatusFailed, lastErr: errors.New("boom")},
+		{item: model.MediaItem{URL: "https://x/2", Title: "bad"}, status: model.StatusFailed, lastErr: errors.New("boom"), sourceURL: "https://bunkr.cr/a/rBSKhzaL"},
 		{item: model.MediaItem{URL: "https://x/3", Title: "cancelled"}, status: model.StatusCancelled},
 	}
 
@@ -1152,5 +1152,32 @@ func TestFailuresReturnsOnlyFailedItems(t *testing.T) {
 	}
 	if got[0].Item.Title != "bad" || got[0].Err == nil || got[0].Err.Error() != "boom" {
 		t.Fatalf("Failures() = %+v, want the failed item with its error", got[0])
+	}
+	if got[0].SourceURL != "https://bunkr.cr/a/rBSKhzaL" {
+		t.Fatalf("Failures() SourceURL = %q, want the album URL", got[0].SourceURL)
+	}
+}
+
+func TestBatchScrapeRecordsAlbumSourceURL(t *testing.T) {
+	d := NewBatch(&fakeDownloader{ch: make(chan model.ProgressEvent, 1)}, t.TempDir(), nil)
+	d.phase = phaseLoading
+	updated, _ := d.handleBatchScrape(batchScrapeMsg{
+		album: DashAlbumURL{
+			Site: "bunker",
+			URL:  "https://bunkr.cr/a/rBSKhzaL",
+			Slug: "rBSKhzaL",
+			Dest: t.TempDir(),
+		},
+		items: []model.MediaItem{{URL: "https://dl.bunkr.cr/file/1", Title: "one.mp4"}},
+	})
+	got, ok := updated.(*Dashboard)
+	if !ok {
+		t.Fatal("handleBatchScrape did not return *Dashboard")
+	}
+	if len(got.states) != 2 {
+		t.Fatalf("states = %d, want header + item", len(got.states))
+	}
+	if got.states[1].sourceURL != "https://bunkr.cr/a/rBSKhzaL" {
+		t.Fatalf("item sourceURL = %q, want the album URL", got.states[1].sourceURL)
 	}
 }

@@ -112,16 +112,65 @@ func TestCollectFailuresSkipsCancelledAndNil(t *testing.T) {
 		{URL: "https://x/3"},
 	}
 	errs := []error{nil, &model.CancelledError{URL: "https://x/2"}, errors.New("boom")}
-	got := collectFailures(items, errs)
-	if len(got) != 1 || got[0].Item.URL != "https://x/3" {
-		t.Fatalf("collectFailures() = %+v, want only the failed item", got)
+	got := collectFailures(items, errs, "https://bunkr.cr/a/rBSKhzaL")
+	if len(got) != 1 || got[0].Item.URL != "https://x/3" || got[0].AlbumURL != "https://bunkr.cr/a/rBSKhzaL" {
+		t.Fatalf("collectFailures() = %+v, want the failed item with its album URL", got)
+	}
+}
+
+func TestRetryReportRedactsAlbumURLQuery(t *testing.T) {
+	dir := t.TempDir()
+	failures := []failedItem{
+		{Item: model.MediaItem{PageURL: "https://bunkr.cr/f/item1"}, Err: errors.New("boom"), AlbumURL: "https://bunkr.cr/a/rBSKhzaL?token=secret"},
+	}
+
+	path, _, err := retryReport(dir, failures, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	content := string(data)
+	if strings.Contains(content, "secret") {
+		t.Fatalf("retry list leaked an album URL token:\n%s", content)
+	}
+	if !strings.Contains(content, "https://bunkr.cr/f/item1\thttps://bunkr.cr/a/rBSKhzaL") {
+		t.Fatalf("expected a redacted album column:\n%s", content)
+	}
+}
+
+func TestRetryReportWritesItemAlbumPairs(t *testing.T) {
+	dir := t.TempDir()
+	failures := []failedItem{
+		{Item: model.MediaItem{PageURL: "https://bunkr.cr/f/item1"}, Err: errors.New("boom"), AlbumURL: "https://bunkr.cr/a/rBSKhzaL"},
+		{Item: model.MediaItem{PageURL: "https://bunkr.cr/f/item2"}, Err: errors.New("boom"), AlbumURL: "https://bunkr.cr/a/rBSKhzaL"},
+		{Item: model.MediaItem{PageURL: "https://bunkr.cr/f/item3"}, Err: errors.New("boom")},
+	}
+
+	path, _, err := retryReport(dir, failures, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	content := string(data)
+	if !strings.Contains(content, "https://bunkr.cr/f/item1\thttps://bunkr.cr/a/rBSKhzaL") {
+		t.Fatalf("expected an item/album pair line:\n%s", content)
+	}
+	if !strings.Contains(content, "\nhttps://bunkr.cr/f/item3\n") {
+		t.Fatalf("expected a single-column line for an item without an album:\n%s", content)
+	}
+	if strings.Contains(content, "item3\t") {
+		t.Fatalf("item without an album must not get a tab:\n%s", content)
 	}
 }
 
 func TestFailuresFromDashboard(t *testing.T) {
-	in := []dashboard.FailedItem{{Item: model.MediaItem{URL: "https://x/1"}, Err: errors.New("boom")}}
+	in := []dashboard.FailedItem{{
+		Item:      model.MediaItem{URL: "https://x/1"},
+		Err:       errors.New("boom"),
+		SourceURL: "https://bunkr.cr/a/rBSKhzaL",
+	}}
 	out := failuresFromDashboard(in)
-	if len(out) != 1 || out[0].Item.URL != "https://x/1" || out[0].Err == nil {
+	if len(out) != 1 || out[0].Item.URL != "https://x/1" || out[0].Err == nil || out[0].AlbumURL != "https://bunkr.cr/a/rBSKhzaL" {
 		t.Fatalf("failuresFromDashboard() = %+v", out)
 	}
 }

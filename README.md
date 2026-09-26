@@ -212,21 +212,29 @@ renamed to `video.mp4` still downloads, and archives are not inspected.
 ## Retrying failed downloads
 
 When a run finishes with failures, the scraper writes a retry list to the
-output directory: `scraper-failed-<date>-<time>.txt`, containing the page
-URL of every failed item (one per line), and prints a grouped summary of
-why they failed, for example:
+output directory: `scraper-failed-<date>-<time>.txt`, and prints a grouped
+summary of why they failed, for example:
 
-    Failed 111 item(s):
-      98 × HTTP 503 from pc9.scdn.st
-      13 × connection dropped
-    Retry list: ~/Downloads/scraper-failed-20260926-021500.txt
+    Failed 91 item(s):
+      86 × HTTP 503 from pc9.scdn.st
+      5 × connection dropped
+    Retry list: ~/Downloads/scraper-failed-20260926-060900.txt
 
-CDN hosts occasionally go down or throttle; the list makes recovery one
-command once they are healthy again:
+Each line pairs the failed item's page URL with the album it came from,
+tab-separated:
 
-    ./scraper --input-file ~/Downloads/scraper-failed-20260926-021500.txt
+    https://bunkr.cr/f/5RWka6Gp2cjOv	https://bunkr.cr/a/rBSKhzaL
 
-JSON mode adds the same path to the final `summary` event as `retryFile`.
+Re-running the list scrapes only those items but downloads them into their
+original album folder, so retried files land next to the rest of the album:
+
+    ./scraper --input-file ~/Downloads/scraper-failed-20260926-060900.txt
+
+Single-URL lines still work (extension exports, hand-written lists) and
+download to the URL's own folder; lines starting with `#` are comments.
+
+JSON mode adds the retry-list path to the final `summary` event as
+`retryFile`.
 Transient failures are retried in-run with exponential backoff (5 attempts,
 honoring `Retry-After` when the server sends it) and signed URLs are
 re-resolved once when an attempt fails, so many blips recover on their own.
