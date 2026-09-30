@@ -2,6 +2,7 @@ package pixeldrain
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -17,6 +18,7 @@ const userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/5
 type Scraper struct {
 	client  *http.Client
 	baseURL string
+	sleeper netutil.Sleeper
 }
 
 func NewPixeldrainScraper() *Scraper {
@@ -24,6 +26,7 @@ func NewPixeldrainScraper() *Scraper {
 	return &Scraper{
 		client:  client,
 		baseURL: apiBase,
+		sleeper: netutil.RealSleeper{},
 	}
 }
 
@@ -35,6 +38,7 @@ func NewPixeldrainScraperWithProxy(proxyURL string) (*Scraper, error) {
 	return &Scraper{
 		client:  client,
 		baseURL: apiBase,
+		sleeper: netutil.RealSleeper{},
 	}, nil
 }
 
@@ -46,6 +50,27 @@ func NewPixeldrainScraperWithCookies(cookies []*http.Cookie) *Scraper {
 	scraper := NewPixeldrainScraper()
 	scraper.SetCookies(cookies)
 	return scraper
+}
+
+// SetSleeper replaces the retry delay implementation. Call this before
+// parsing, not concurrently with it.
+func (s *Scraper) SetSleeper(sleeper netutil.Sleeper) { s.sleeper = sleeper }
+
+// fetchJSONWithRetry fetches and decodes JSON, retrying transient failures
+// (5xx, network errors) with backoff; non-retryable HTTP statuses (404, ...)
+// stop after one attempt.
+func fetchJSONWithRetry(ctx context.Context, s *Scraper, url string, target interface{}) error {
+	return netutil.Retry(ctx, netutil.MaxRetries, netutil.RetryBaseDelay, s.sleeper, func() error {
+		err := netutil.GetJSON(ctx, s.client, url, userAgent, target)
+		if err != nil {
+			var statusErr *netutil.HTTPStatusError
+			if errors.As(err, &statusErr) && !model.IsRetryableStatus(statusErr.StatusCode) {
+				return model.NewNonRetryable(err)
+			}
+			return err
+		}
+		return nil
+	})
 }
 
 func (s *Scraper) Name() string {
@@ -87,7 +112,7 @@ func (s *Scraper) parseList(ctx context.Context, rawURL string) ([]model.MediaIt
 		} `json:"files"`
 	}
 
-	if err := netutil.GetJSON(ctx, s.client, apiURL, userAgent, &result); err != nil {
+	if err := fetchJSONWithRetry(ctx, s, apiURL, &result); err != nil {
 		return nil, fmt.Errorf("pixeldrain list %s: %w", listID, err)
 	}
 
@@ -130,7 +155,7 @@ func (s *Scraper) parseFile(ctx context.Context, rawURL string) ([]model.MediaIt
 		HashSHA256 string `json:"hash_sha256"`
 	}
 
-	if err := netutil.GetJSON(ctx, s.client, apiURL, userAgent, &result); err != nil {
+	if err := fetchJSONWithRetry(ctx, s, apiURL, &result); err != nil {
 		return nil, fmt.Errorf("pixeldrain file %s: %w", fileID, err)
 	}
 

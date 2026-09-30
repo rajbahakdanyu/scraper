@@ -20,6 +20,7 @@ type Scraper struct {
 	client    *http.Client
 	userAgent string
 	baseURL   string
+	sleeper   netutil.Sleeper
 }
 
 // NewCyberDropScraper creates a new CyberDrop scraper using the default HTTP client.
@@ -29,6 +30,7 @@ func NewCyberDropScraper() *Scraper {
 		client:    client,
 		userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
 		baseURL:   apiBase,
+		sleeper:   netutil.RealSleeper{},
 	}
 }
 
@@ -43,6 +45,7 @@ func NewCyberDropScraperWithProxy(proxyURL string) (*Scraper, error) {
 		client:    client,
 		userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
 		baseURL:   apiBase,
+		sleeper:   netutil.RealSleeper{},
 	}, nil
 }
 
@@ -54,6 +57,27 @@ func NewCyberDropScraperWithCookies(cookies []*http.Cookie) *Scraper {
 	s := NewCyberDropScraper()
 	s.SetCookies(cookies)
 	return s
+}
+
+// SetSleeper replaces the retry delay implementation. Call this before
+// parsing, not concurrently with it.
+func (s *Scraper) SetSleeper(sleeper netutil.Sleeper) { s.sleeper = sleeper }
+
+// fetchJSONWithRetry fetches and decodes JSON, retrying transient failures
+// (5xx, network errors) with backoff; non-retryable HTTP statuses (404, ...)
+// stop after one attempt.
+func fetchJSONWithRetry(ctx context.Context, s *Scraper, url string, target interface{}) error {
+	return netutil.Retry(ctx, netutil.MaxRetries, netutil.RetryBaseDelay, s.sleeper, func() error {
+		err := netutil.GetJSON(ctx, s.client, url, s.userAgent, target)
+		if err != nil {
+			var statusErr *netutil.HTTPStatusError
+			if errors.As(err, &statusErr) && !model.IsRetryableStatus(statusErr.StatusCode) {
+				return model.NewNonRetryable(err)
+			}
+			return err
+		}
+		return nil
+	})
 }
 
 func (s *Scraper) Name() string {
@@ -187,7 +211,7 @@ func (s *Scraper) parseAlbum(ctx context.Context, albumPageURL, slug string) ([]
 			Type string `json:"type"`
 		} `json:"files"`
 	}
-	if err := netutil.GetJSON(ctx, s.client, albumURL, s.userAgent, &album); err != nil {
+	if err := fetchJSONWithRetry(ctx, s, albumURL, &album); err != nil {
 		return nil, err
 	}
 
