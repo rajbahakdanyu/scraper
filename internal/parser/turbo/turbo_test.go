@@ -9,11 +9,19 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/rajbahakdanyu/scraper/internal/model"
 	"github.com/rajbahakdanyu/scraper/internal/netutil"
 )
+
+type noopSleeper struct{}
+
+func (noopSleeper) Sleep(time.Duration) {}
+
+func (noopSleeper) SleepCtx(context.Context, time.Duration) error { return nil }
 
 func newTestScraper() *Scraper {
 	scraper := NewTurboScraper()
@@ -131,6 +139,55 @@ func TestParseAlbumEmbeddedFiles(t *testing.T) {
 	}
 	if items[1].Resolve == nil {
 		t.Fatal("expected Resolve func on embedded items")
+	}
+}
+
+func TestParseAlbumRetriesTransientFailure(t *testing.T) {
+	var attempts int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/a/flaky", func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&attempts, 1) < 2 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(`<html><body><table><tbody id="fileTbody">
+<tr class="file-row" data-id="VB8aLAF" data-name="video.mp4" data-size="123"></tr>
+</tbody></table></body></html>`))
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	scraper := newTestScraper()
+	scraper.baseURL = ts.URL
+	scraper.SetSleeper(noopSleeper{})
+
+	items, err := scraper.Parse(context.Background(), ts.URL+"/a/flaky")
+	if err != nil {
+		t.Fatalf("Parse should recover from a transient 500: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items = %d, want 1", len(items))
+	}
+}
+
+func TestParseAlbumPermanentErrorNotRetried(t *testing.T) {
+	var attempts int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&attempts, 1)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	scraper := newTestScraper()
+	scraper.baseURL = ts.URL
+	scraper.SetSleeper(noopSleeper{})
+
+	if _, err := scraper.Parse(context.Background(), ts.URL+"/a/missing"); err == nil {
+		t.Fatal("expected a 404 to fail")
+	}
+	if got := atomic.LoadInt32(&attempts); got != 1 {
+		t.Fatalf("attempts = %d, want 1 (404 is permanent)", got)
 	}
 }
 

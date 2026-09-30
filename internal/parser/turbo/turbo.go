@@ -24,13 +24,19 @@ const userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/5
 type Scraper struct {
 	client  *http.Client
 	baseURL string
+	sleeper netutil.Sleeper
 }
+
+// SetSleeper replaces the retry delay implementation. Call this before
+// parsing, not concurrently with it.
+func (s *Scraper) SetSleeper(sleeper netutil.Sleeper) { s.sleeper = sleeper }
 
 func NewTurboScraper() *Scraper {
 	client, _ := netutil.NewPublicClient(30 * time.Second)
 	return &Scraper{
 		client:  client,
 		baseURL: apiBase,
+		sleeper: netutil.RealSleeper{},
 	}
 }
 
@@ -42,6 +48,7 @@ func NewTurboScraperWithProxy(proxyURL string) (*Scraper, error) {
 	return &Scraper{
 		client:  client,
 		baseURL: apiBase,
+		sleeper: netutil.RealSleeper{},
 	}, nil
 }
 
@@ -69,8 +76,28 @@ func (s *Scraper) Parse(ctx context.Context, rawURL string) ([]model.MediaItem, 
 	return nil, fmt.Errorf("turbo: unsupported URL format (expected /a/, /d/, or /v/): %s", rawURL)
 }
 
+// fetchDocWithRetry fetches a page, retrying transient failures (5xx,
+// network errors) with backoff; non-retryable HTTP statuses (404, ...) stop
+// after one attempt.
+func fetchDocWithRetry(ctx context.Context, s *Scraper, rawURL string) (io.Reader, error) {
+	var body io.Reader
+	err := netutil.Retry(ctx, netutil.MaxRetries, netutil.RetryBaseDelay, s.sleeper, func() error {
+		var fetchErr error
+		body, fetchErr = netutil.GetDoc(ctx, s.client, rawURL, userAgent)
+		if fetchErr != nil {
+			var statusErr *netutil.HTTPStatusError
+			if errors.As(fetchErr, &statusErr) && !model.IsRetryableStatus(statusErr.StatusCode) {
+				return model.NewNonRetryable(fetchErr)
+			}
+			return fetchErr
+		}
+		return nil
+	})
+	return body, err
+}
+
 func (s *Scraper) parseAlbum(ctx context.Context, rawURL string) ([]model.MediaItem, error) {
-	body, err := netutil.GetDoc(ctx, s.client, rawURL, userAgent)
+	body, err := fetchDocWithRetry(ctx, s, rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("turbo: fetch album page: %w", err)
 	}
@@ -181,7 +208,7 @@ func (s *Scraper) parseFile(ctx context.Context, rawURL string) ([]model.MediaIt
 		return nil, fmt.Errorf("turbo: could not extract file ID from %s", rawURL)
 	}
 
-	body, err := netutil.GetDoc(ctx, s.client, rawURL, userAgent)
+	body, err := fetchDocWithRetry(ctx, s, rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("turbo: fetch file page: %w", err)
 	}
