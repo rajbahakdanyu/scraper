@@ -92,6 +92,8 @@ type Dashboard struct {
 
 	albumSlug         string
 	sourceURL         string
+	errorLog          []string
+	showErrors        bool
 	progressMu        sync.Mutex
 	pending           map[string]model.ProgressEvent
 	refreshTickActive bool
@@ -322,6 +324,9 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			d.inspectMsg = ""
 			d.cancelSelected()
 			return d, nil
+		case "e":
+			d.showErrors = !d.showErrors
+			return d, nil
 		case "enter":
 			d.inspectSelected()
 			return d, nil
@@ -358,6 +363,7 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (d *Dashboard) handleScrapeResult(msg scrapeResultMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil && len(msg.items) == 0 {
 		d.loadingErr = msg.err.Error()
+		d.appendError(msg.err.Error())
 		d.phase = phaseDone
 		return d, nil
 	}
@@ -368,6 +374,7 @@ func (d *Dashboard) handleScrapeResult(msg scrapeResultMsg) (tea.Model, tea.Cmd)
 	}
 	if msg.err != nil {
 		d.status = "warning: " + msg.err.Error()
+		d.appendError(msg.err.Error())
 	}
 
 	d.states = make([]itemState, len(msg.items))
@@ -476,6 +483,7 @@ func (d *Dashboard) applyPendingProgress() {
 func (d *Dashboard) handleBatchScrape(msg batchScrapeMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil && len(msg.items) == 0 {
 		d.loadingErr = fmt.Sprintf("%s: %v", msg.album.URL, msg.err)
+		d.appendError(d.loadingErr)
 		d.batchRemaining--
 		d.batchIdx++
 		if d.batchRemaining == 0 && len(d.states) == 0 {
@@ -483,6 +491,11 @@ func (d *Dashboard) handleBatchScrape(msg batchScrapeMsg) (tea.Model, tea.Cmd) {
 			return d, nil
 		}
 		return d, d.startNextScrape()
+	}
+
+	if msg.err != nil {
+		d.status = "warning: " + msg.err.Error()
+		d.appendError(fmt.Sprintf("%s: %v", msg.album.URL, msg.err))
 	}
 
 	d.batchRemaining--
@@ -591,9 +604,6 @@ func (d *Dashboard) handleBatchScrape(msg batchScrapeMsg) (tea.Model, tea.Cmd) {
 	}
 	if d.batchRemaining > 0 {
 		cmds = append(cmds, d.startNextScrape())
-	}
-	if msg.err != nil && len(msg.items) > 0 {
-		d.status = "warning: " + msg.err.Error()
 	}
 	return d, tea.Batch(cmds...)
 }
@@ -941,7 +951,7 @@ func (d *Dashboard) viewError(header string) string {
 func (d *Dashboard) viewBatch(header string) string {
 	tablePanel := d.theme.PanelSlim.Render(d.table.View())
 	stats := d.renderStats()
-	footer := d.theme.Footer.Render("  ↑↓ select  •  c cancel  •  r retry  •  enter inspect  •  q quit")
+	footer := d.theme.Footer.Render("  ↑↓ select  •  c cancel  •  r retry  •  enter inspect  •  e errors  •  q quit")
 
 	sections := []string{"", header, "", stats, "", tablePanel}
 	if d.status != "" {
@@ -950,8 +960,36 @@ func (d *Dashboard) viewBatch(header string) string {
 	if d.inspectMsg != "" {
 		sections = append(sections, "", d.theme.Error.Render("  "+d.inspectMsg))
 	}
+	if d.showErrors && len(d.errorLog) > 0 {
+		sections = append(sections, "", d.viewErrorPanel())
+	}
 	sections = append(sections, "", footer)
 	return lipgloss.JoinVertical(lipgloss.Left, sections...)
+}
+
+// appendError records a scrape error for the in-TUI error panel (`e`),
+// keeping the log bounded so a long batch cannot grow it without limit.
+func (d *Dashboard) appendError(line string) {
+	const maxErrors = 200
+	d.errorLog = append(d.errorLog, line)
+	if len(d.errorLog) > maxErrors {
+		d.errorLog = d.errorLog[len(d.errorLog)-maxErrors:]
+	}
+}
+
+// viewErrorPanel renders the most recent scrape errors for the `e` overlay.
+func (d *Dashboard) viewErrorPanel() string {
+	const shown = 8
+	lines := d.errorLog
+	if len(lines) > shown {
+		lines = lines[len(lines)-shown:]
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "  Errors (%d)\n", len(d.errorLog))
+	for _, line := range lines {
+		b.WriteString("  " + line + "\n")
+	}
+	return d.theme.Error.Render(b.String())
 }
 
 func (d *Dashboard) renderStats() string {

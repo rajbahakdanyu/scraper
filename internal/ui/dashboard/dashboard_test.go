@@ -1158,6 +1158,53 @@ func TestFailuresReturnsOnlyFailedItems(t *testing.T) {
 	}
 }
 
+func TestErrorPanelToggles(t *testing.T) {
+	d := NewBatch(&fakeDownloader{ch: make(chan model.ProgressEvent, 1)}, t.TempDir(), nil)
+	d.phase = phaseDownload
+	d.appendError("https://bunkr.cr/a/broken: no file links")
+
+	updated, _ := d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	got, ok := updated.(*Dashboard)
+	if !ok {
+		t.Fatal("Update did not return *Dashboard")
+	}
+	if !got.showErrors {
+		t.Fatal("pressing e should show the error panel")
+	}
+	if view := got.viewBatch("hdr"); !strings.Contains(view, "no file links") {
+		t.Fatalf("error panel missing the recorded error:\n%s", view)
+	}
+
+	updated, _ = got.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	hidden, ok := updated.(*Dashboard)
+	if !ok {
+		t.Fatal("Update did not return *Dashboard")
+	}
+	if hidden.showErrors {
+		t.Fatal("pressing e again should hide the panel")
+	}
+	if view := hidden.viewBatch("hdr"); strings.Contains(view, "Errors (") {
+		t.Fatalf("hidden panel still rendered:\n%s", view)
+	}
+}
+
+func TestBatchScrapeRecordsError(t *testing.T) {
+	d := NewBatch(&fakeDownloader{ch: make(chan model.ProgressEvent, 1)}, t.TempDir(), nil)
+	d.phase = phaseLoading
+	updated, _ := d.handleBatchScrape(batchScrapeMsg{
+		album: DashAlbumURL{Site: "bunker", URL: "https://bunkr.cr/a/broken", Slug: "broken", Dest: t.TempDir()},
+		items: []model.MediaItem{{URL: "https://dl.bunkr.cr/file/1", Title: "one.mp4"}},
+		err:   errors.New("page 2 failed"),
+	})
+	got, ok := updated.(*Dashboard)
+	if !ok {
+		t.Fatal("handleBatchScrape did not return *Dashboard")
+	}
+	if len(got.errorLog) != 1 || !strings.Contains(got.errorLog[0], "broken") || !strings.Contains(got.errorLog[0], "page 2 failed") {
+		t.Fatalf("errorLog = %v, want the album error", got.errorLog)
+	}
+}
+
 func TestBatchScrapeRecordsAlbumSourceURL(t *testing.T) {
 	d := NewBatch(&fakeDownloader{ch: make(chan model.ProgressEvent, 1)}, t.TempDir(), nil)
 	d.phase = phaseLoading
