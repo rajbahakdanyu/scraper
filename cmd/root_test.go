@@ -160,6 +160,9 @@ func TestExplicitSubcommandReadsInheritedOptions(t *testing.T) {
 	if err := root.PersistentFlags().Set("scrape-delay", "250ms"); err != nil {
 		t.Fatal(err)
 	}
+	if err := root.PersistentFlags().Set("log-file", "/tmp/run.log"); err != nil {
+		t.Fatal(err)
+	}
 	if err := root.PersistentFlags().Set("dry-run", "true"); err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +185,7 @@ func TestExplicitSubcommandReadsInheritedOptions(t *testing.T) {
 	if opts.configPath != "/tmp/custom.yaml" || opts.output != "." || opts.concurrency != 5 ||
 		opts.rateLimit != "2M" || !opts.checksums || !opts.dryRun ||
 		len(opts.allowExt) != 1 || opts.allowExt[0] != "cbz" || opts.maxAlbumItems != 5 ||
-		opts.scrapeDelay != 250*time.Millisecond {
+		opts.scrapeDelay != 250*time.Millisecond || opts.logFile != "/tmp/run.log" {
 		t.Fatalf("explicit subcommand saw stale options: %+v", opts)
 	}
 }
@@ -304,6 +307,54 @@ func (s *recordingDelaySleeper) Sleep(time.Duration) {}
 func (s *recordingDelaySleeper) SleepCtx(_ context.Context, d time.Duration) error {
 	s.delays = append(s.delays, d)
 	return nil
+}
+
+func TestExitCodeMapping(t *testing.T) {
+	if got := exitCode(nil); got != 0 {
+		t.Fatalf("exitCode(nil) = %d, want 0", got)
+	}
+	if got := exitCode(errors.New("boom")); got != 1 {
+		t.Fatalf("exitCode(total failure) = %d, want 1", got)
+	}
+	if got := exitCode(model.NewPartialError("download", []error{errors.New("one failed")})); got != 2 {
+		t.Fatalf("exitCode(partial) = %d, want 2", got)
+	}
+}
+
+func TestLogFileWritesRunLines(t *testing.T) {
+	prev := logFile
+	t.Cleanup(func() { logFile = prev })
+
+	path := filepath.Join(t.TempDir(), "run.log")
+	if err := openLogFile(path); err != nil {
+		t.Fatal(err)
+	}
+	logLine("hello %s", "world")
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "hello world") {
+		t.Fatalf("log = %q, want the logged line", data)
+	}
+}
+
+func TestLoadGlobalConfigLogFileFlag(t *testing.T) {
+	prev := logFile
+	t.Cleanup(func() { logFile = prev })
+
+	path := filepath.Join(t.TempDir(), "run.log")
+	cfg, err := loadGlobalConfig(globalOptions{configPath: emptyTestConfig(t), logFile: path, logFileSet: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.LogFile != path {
+		t.Fatalf("LogFile = %q, want %q", cfg.LogFile, path)
+	}
+	if logFile == nil {
+		t.Fatal("expected the log file to be opened")
+	}
 }
 
 func TestFilterScraperScrapeDelay(t *testing.T) {

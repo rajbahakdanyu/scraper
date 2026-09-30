@@ -69,6 +69,9 @@ type Config struct {
 	// ScrapeDelay pauses between album scrapes, easing the load on sites
 	// that rate-limit page requests. Zero means no delay.
 	ScrapeDelay time.Duration `yaml:"scrape_delay"`
+	// LogFile appends a timestamped trace of scrape errors and run
+	// summaries to this file. Empty means no log file.
+	LogFile string `yaml:"log_file"`
 	// MediaOnly restricts downloads to media and archive files. On by
 	// default; set false (or pass --media-only=false) to download
 	// everything an album lists.

@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -71,6 +72,8 @@ type globalOptions struct {
 	maxAlbumItemsSet bool
 	scrapeDelay      time.Duration
 	scrapeDelaySet   bool
+	logFile          string
+	logFileSet       bool
 	printURLs        bool
 	minSize          string
 	minSizeSet       bool
@@ -148,6 +151,14 @@ func loadGlobalConfig(opts globalOptions) (*config.Config, error) {
 	}
 	if opts.scrapeDelaySet {
 		cfg.ScrapeDelay = opts.scrapeDelay
+	}
+	if opts.logFileSet {
+		cfg.LogFile = opts.logFile
+	}
+	if cfg.LogFile != "" {
+		if err := openLogFile(cfg.LogFile); err != nil {
+			return nil, err
+		}
 	}
 	if opts.minSizeSet {
 		cfg.MinSize = opts.minSize
@@ -293,6 +304,10 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 	if err != nil {
 		return globalOptions{}, err
 	}
+	logFilePath, err := flags.GetString("log-file")
+	if err != nil {
+		return globalOptions{}, err
+	}
 	minSize, err := flags.GetString("min-size")
 	if err != nil {
 		return globalOptions{}, err
@@ -350,6 +365,8 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 		maxAlbumItemsSet: flags.Changed("max-album-items"),
 		scrapeDelay:      scrapeDelay,
 		scrapeDelaySet:   flags.Changed("scrape-delay"),
+		logFile:          logFilePath,
+		logFileSet:       flags.Changed("log-file"),
 		printURLs:        printURLs,
 		minSize:          minSize,
 		minSizeSet:       flags.Changed("min-size"),
@@ -366,8 +383,49 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 
 func Execute() {
 	if err := NewRootCmd().Execute(); err != nil {
-		os.Exit(1)
+		logLine("error: %v", err)
+		os.Exit(exitCode(err))
 	}
+}
+
+// exitCode maps a run error to a process exit code: 1 when the whole run
+// failed, 2 when only part of it did (some items or albums failed while
+// others succeeded).
+func exitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	var partial *model.PartialError
+	if errors.As(err, &partial) {
+		return 2
+	}
+	return 1
+}
+
+// logFile is the optional --log-file sink; nil when unset.
+var logFile io.Writer
+
+// openLogFile opens (appending) the optional run log. A failure is fatal so
+// a typo'd path is caught before any downloads start.
+func openLogFile(path string) error {
+	expanded, err := config.ExpandHomePath(path)
+	if err != nil {
+		return err
+	}
+	f, err := fileutil.OpenFileNoFollow(expanded, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("open log file: %w", err)
+	}
+	logFile = f
+	return nil
+}
+
+// logLine writes one timestamped line to the optional run log.
+func logLine(format string, args ...interface{}) {
+	if logFile == nil {
+		return
+	}
+	fmt.Fprintf(logFile, "%s %s\n", time.Now().Format(time.RFC3339), fmt.Sprintf(format, args...))
 }
 
 func newSiteCmd(use, short, site string, newScraper func() model.Scraper) *cobra.Command {
@@ -456,6 +514,7 @@ func NewRootCmd() *cobra.Command {
 	root.PersistentFlags().Int("max-album-items", 0, "Cap items per album (0 = unlimited; default 10000)")
 	root.PersistentFlags().Bool("print-urls", false, "Print item URLs (one per line) and exit without downloading")
 	root.PersistentFlags().Duration("scrape-delay", 0, "Pause between album scrapes (e.g. 500ms; default: none)")
+	root.PersistentFlags().String("log-file", "", "Append a timestamped run log (scrape errors, summaries) to this file")
 	root.PersistentFlags().String("min-size", "", "Skip items smaller than size (e.g. 500K, 2M)")
 	root.PersistentFlags().String("max-size", "", "Skip items larger than size (e.g. 500M, 1G)")
 	root.PersistentFlags().Bool("disk-check", true, "Warn if free disk space is less than estimated download size")
@@ -1167,6 +1226,9 @@ func (f *filterScraper) Parse(ctx context.Context, url string) ([]model.MediaIte
 	// A partial scrape (some pages failed) still carries usable items;
 	// dropping them here would turn a warning into an empty album. Only a
 	// total failure aborts.
+	if err != nil {
+		logLine("scrape error: %s: %v", url, err)
+	}
 	if err != nil && len(items) == 0 {
 		return nil, err
 	}

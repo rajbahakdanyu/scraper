@@ -115,6 +115,20 @@ func TestLoadConfigDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadConfigLogFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "log.yaml")
+	if err := os.WriteFile(path, []byte("log_file: /tmp/scraper.log\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.LogFile != "/tmp/scraper.log" {
+		t.Fatalf("LogFile = %q, want /tmp/scraper.log", cfg.LogFile)
+	}
+}
+
 func TestLoadConfigScrapeDelay(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "delay.yaml")
 	if err := os.WriteFile(path, []byte("scrape_delay: 750ms\n"), 0600); err != nil {

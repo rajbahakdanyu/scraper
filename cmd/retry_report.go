@@ -194,6 +194,7 @@ func retryReport(dir string, failures []failedItem, now time.Time) (string, stri
 
 	summary := fmt.Sprintf("Failed %d item(s):\n%s\nRetry list: %s",
 		len(usable), formatFailureSummary(usable), path)
+	logLine("retry list: %s (%d failed item(s), %d line(s))", path, len(usable), len(lines))
 	return path, summary, nil
 }
 

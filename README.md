@@ -160,6 +160,7 @@ per URL — same as albums).
 | `--max-album-items` | `10000` | Cap items contributed by one album (0 = unlimited) |
 | `--print-urls`   | `false` | Print item URLs (one per line) and exit without downloading |
 | `--scrape-delay` | (none)  | Pause between album scrapes (e.g. `500ms`) |
+| `--log-file`     | (none)  | Append a timestamped run log (scrape errors, retry summaries) |
 | `--min-size`     | (none)  | Minimum file size (e.g. `1K`, `10M`)                      |
 | `--max-size`     | (none)  | Maximum file size                                         |
 | `--disk-check`   | `true`  | Check free space before downloading                       |
@@ -275,6 +276,7 @@ exclude: ["*.txt"]
 media_extensions: []
 max_album_items: 10000
 scrape_delay: 0s
+log_file: ""
 min_size: "1M"
 max_size: "10G"
 disk_check: true
