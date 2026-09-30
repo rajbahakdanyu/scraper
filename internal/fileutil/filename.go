@@ -32,7 +32,7 @@ const (
 func SanitizeFilename(s string) string {
 	clean := make([]rune, 0, len(s))
 	for _, r := range s {
-		if r >= 32 && r != ':' && r != '<' && r != '>' && r != '|' && r != '/' && r != '\\' && r != '?' && r != '*' {
+		if r >= 32 && !isBidiControl(r) && r != ':' && r != '<' && r != '>' && r != '|' && r != '/' && r != '\\' && r != '?' && r != '*' {
 			clean = append(clean, r)
 		}
 	}
@@ -47,6 +47,21 @@ func SanitizeFilename(s string) string {
 		result = truncateFilenameWithHash(result, s)
 	}
 	return result
+}
+
+// isBidiControl reports whether r is a bidirectional text control that can
+// visually reorder a filename ("photo<RLO>gnp.exe" renders as
+// "photoexe.png"). They carry no meaning in filenames, so they are dropped.
+func isBidiControl(r rune) bool {
+	switch {
+	case r >= 0x202A && r <= 0x202E: // LRE RLE PDF LRO RLO
+		return true
+	case r >= 0x2066 && r <= 0x2069: // LRI RLI FSI PDI
+		return true
+	case r == 0x200E || r == 0x200F || r == 0x061C: // LRM RLM ALM
+		return true
+	}
+	return false
 }
 
 // isWindowsReservedName reports whether name's base (before the first dot)
