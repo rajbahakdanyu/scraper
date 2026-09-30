@@ -213,8 +213,11 @@ config:
 
     ./scraper --allow-ext cbz --allow-ext iso https://example.com/a/xyz
 
-This is a filename/MIME allowlist, not content verification: a payload
-renamed to `video.mp4` still downloads, and archives are not inspected.
+The allowlist itself is name/MIME based, but downloads get a light content
+check: the first bytes are sniffed, and HTML or executables that claim to be
+media (a payload renamed to `video.mp4`) are refused before they are kept.
+Archives are not inspected, resumed downloads are not re-sniffed, and
+non-media items requested with `--media-only=false` are left alone.
 
 ## Retrying failed downloads
 

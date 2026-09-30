@@ -434,7 +434,33 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, res
 		unknownSizeLimit = &io.LimitedReader{R: tee, N: MaxUnknownFileSize + 1}
 		source = unknownSizeLimit
 	}
+
+	// Sniff the first bytes: a payload that claims to be media but is
+	// actually HTML or an executable is refused before it is kept. A
+	// single Read (not ReadFull) is deliberate: it must never block
+	// waiting for a full prefix on a stream that stays open.
+	head := make([]byte, contentSniffLen)
+	headBytes, headErr := source.Read(head)
+	if headBytes == 0 && headErr != nil && headErr != io.EOF {
+		return "", errors.Join(headErr, out.Close())
+	}
+	head = head[:headBytes]
+	// Only fresh starts are judged: a resumed Range response begins
+	// mid-file, where any bytes are legitimate.
+	if existing == 0 {
+		if denied := deniedContentType(head); denied != "" && model.IsAllowedMediaItem(item) {
+			err := model.NewNonRetryable(fmt.Errorf("content is %s, not media: %s", denied, redactURL(resolvedURL)))
+			return "", errors.Join(err, out.Close())
+		}
+	}
+	if headBytes > 0 {
+		if _, err := out.Write(head); err != nil {
+			return "", errors.Join(err, out.Close())
+		}
+	}
+
 	copiedBytes, copyErr := io.CopyBuffer(out, source, make([]byte, 512*1024))
+	copiedBytes += int64(headBytes)
 	closeErr := out.Close()
 	if unknownSizeLimit != nil && copiedBytes > MaxUnknownFileSize {
 		err := model.NewNonRetryable(fmt.Errorf("download exceeds maximum unknown file size of %d bytes", MaxUnknownFileSize))
@@ -667,6 +693,35 @@ func redactURL(raw string) string {
 	u.RawQuery = ""
 	u.Fragment = ""
 	return u.String()
+}
+
+// contentSniffLen is the byte count http.DetectContentType inspects.
+const contentSniffLen = 512
+
+// deniedContentTypes maps sniffed content types the downloader refuses when
+// the item claims to be media: HTML and executables renamed to look like
+// media. Archives and unknown binary types are not denied.
+var deniedContentTypes = map[string]string{
+	"text/html": "HTML",
+	"application/vnd.microsoft.portable-executable": "an executable",
+	"application/x-msdownload":                      "an executable",
+	"application/x-dosexec":                         "an executable",
+	"application/x-elf":                             "an executable",
+	"application/x-mach-binary":                     "an executable",
+	"application/x-executable":                      "an executable",
+}
+
+// deniedContentType returns a human label when the sniffed bytes look like
+// content the downloader refuses, or "" when they are acceptable.
+func deniedContentType(head []byte) string {
+	if len(head) == 0 {
+		return ""
+	}
+	ct := http.DetectContentType(head)
+	if i := strings.IndexByte(ct, ';'); i >= 0 {
+		ct = strings.TrimSpace(ct[:i])
+	}
+	return deniedContentTypes[ct]
 }
 
 // parseRetryAfter interprets a Retry-After header (seconds or HTTP-date)

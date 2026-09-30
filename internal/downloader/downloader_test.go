@@ -443,6 +443,37 @@ func TestNewRequestError(t *testing.T) {
 	}
 }
 
+// A resumed download must not re-sniff: the bytes a Range response starts
+// with are mid-file, so they can look like anything and must not refuse a
+// download whose start was already accepted.
+func TestDownloadResumeSkipsContentSniff(t *testing.T) {
+	const head = "0123456789"
+	body := "<!DOCTYPE html><html><body>mid-file bytes</body></html>"
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("ETag", `"v1"`)
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", len(head), len(head)+len(body)-1, len(head)+len(body)))
+		w.WriteHeader(http.StatusPartialContent)
+		w.Write([]byte(body))
+	}))
+	defer ts.Close()
+
+	dl := newTestDownloader(1, 0, "")
+	item := model.MediaItem{URL: ts.URL, Title: "resume.mp4"}
+	dest := t.TempDir()
+	tempPath := filepath.Join(dest, "resume.mp4.part")
+	if err := os.WriteFile(tempPath, []byte(head), 0644); err != nil {
+		t.Fatalf("failed to seed partial file: %v", err)
+	}
+	if err := writeResumeMetadata(tempPath, resumeMetadata{URL: ts.URL, ETag: `"v1"`}); err != nil {
+		t.Fatalf("failed to seed resume metadata: %v", err)
+	}
+
+	if _, err := dl.Download(item, dest); err != nil {
+		t.Fatalf("resumed download must not be refused by the content sniff: %v", err)
+	}
+}
+
 func TestDownloadResumesFromPartialFile(t *testing.T) {
 	const full = "0123456789ABCDEFGHIJ"
 	var mu sync.Mutex
@@ -1978,6 +2009,69 @@ func TestDownloadRedactsSignedURLFromConnectionError(t *testing.T) {
 	}
 	if !errors.Is(err, io.EOF) {
 		t.Fatalf("expected the error to wrap io.EOF, got: %v", err)
+	}
+}
+
+func TestDownloadRejectsHTMLMasqueradingAsMedia(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte("<!DOCTYPE html><html><body>not a video</body></html>"))
+	}))
+	defer ts.Close()
+
+	dest := t.TempDir()
+	dl := newTestDownloader(1, 0, "")
+	item := model.MediaItem{URL: ts.URL + "/video.mp4", Title: "video.mp4"}
+
+	_, err := dl.Download(item, dest)
+	if err == nil {
+		t.Fatal("expected HTML content to be refused")
+	}
+	var nre *model.NonRetryableError
+	if !errors.As(err, &nre) {
+		t.Fatalf("expected a non-retryable refusal, got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), "HTML") {
+		t.Fatalf("error should name the content type, got: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dest, "video.mp4")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("refused payload must not be kept, stat err = %v", statErr)
+	}
+}
+
+func TestDownloadAllowsHTMLForNonMediaItem(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte("<!DOCTYPE html><html><body>a page</body></html>"))
+	}))
+	defer ts.Close()
+
+	dl := newTestDownloader(1, 0, "")
+	item := model.MediaItem{URL: ts.URL + "/page.html", Title: "page.html"}
+	if _, err := dl.Download(item, t.TempDir()); err != nil {
+		t.Fatalf("an explicitly requested non-media item must still download: %v", err)
+	}
+}
+
+func TestDownloadAllowsBinaryMedia(t *testing.T) {
+	payload := append([]byte{0x00, 0x00, 0x00, 0x18}, []byte("ftypisom\x00\x00\x02\x00isomiso2avc1mp41")...)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(payload)
+	}))
+	defer ts.Close()
+
+	dl := newTestDownloader(1, 0, "")
+	item := model.MediaItem{URL: ts.URL + "/clip.mp4", Title: "clip.mp4"}
+	path, err := dl.Download(item, t.TempDir())
+	if err != nil {
+		t.Fatalf("binary media must pass the content sniff: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(payload) {
+		t.Fatalf("payload mismatch: got %d bytes", len(got))
 	}
 }
 
