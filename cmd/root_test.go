@@ -153,6 +153,9 @@ func TestExplicitSubcommandReadsInheritedOptions(t *testing.T) {
 	if err := root.PersistentFlags().Set("allow-ext", "cbz"); err != nil {
 		t.Fatal(err)
 	}
+	if err := root.PersistentFlags().Set("max-album-items", "5"); err != nil {
+		t.Fatal(err)
+	}
 	if err := root.PersistentFlags().Set("dry-run", "true"); err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +177,7 @@ func TestExplicitSubcommandReadsInheritedOptions(t *testing.T) {
 	}
 	if opts.configPath != "/tmp/custom.yaml" || opts.output != "." || opts.concurrency != 5 ||
 		opts.rateLimit != "2M" || !opts.checksums || !opts.dryRun ||
-		len(opts.allowExt) != 1 || opts.allowExt[0] != "cbz" {
+		len(opts.allowExt) != 1 || opts.allowExt[0] != "cbz" || opts.maxAlbumItems != 5 {
 		t.Fatalf("explicit subcommand saw stale options: %+v", opts)
 	}
 }
@@ -234,6 +237,45 @@ func TestNewRootCmdRegistersAllowExtFlag(t *testing.T) {
 	root := NewRootCmd()
 	if root.PersistentFlags().Lookup("allow-ext") == nil {
 		t.Error("expected --allow-ext persistent flag")
+	}
+	if root.PersistentFlags().Lookup("max-album-items") == nil {
+		t.Error("expected --max-album-items persistent flag")
+	}
+}
+
+func TestApplyAlbumItemCap(t *testing.T) {
+	items := []model.MediaItem{{Title: "a.mp4"}, {Title: "b.mp4"}, {Title: "c.mp4"}}
+
+	var capped []model.MediaItem
+	stderr := captureStderr(func() {
+		capped = applyAlbumItemCap(items, 2)
+	})
+	if len(capped) != 2 || capped[0].Title != "a.mp4" || capped[1].Title != "b.mp4" {
+		t.Fatalf("applyAlbumItemCap() = %+v, want the first two items", capped)
+	}
+	if !strings.Contains(stderr, "keeping first 2 of 3") {
+		t.Fatalf("expected a cap warning, got %q", stderr)
+	}
+
+	if got := applyAlbumItemCap(items, 0); len(got) != 3 {
+		t.Fatalf("cap 0 must be unlimited, got %d items", len(got))
+	}
+	if got := applyAlbumItemCap(items, 5); len(got) != 3 {
+		t.Fatalf("cap above length must keep all items, got %d", len(got))
+	}
+}
+
+func TestLoadGlobalConfigMaxAlbumItemsFlag(t *testing.T) {
+	cfg, err := loadGlobalConfig(globalOptions{
+		configPath:       emptyTestConfig(t),
+		maxAlbumItems:    5,
+		maxAlbumItemsSet: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MaxAlbumItems != 5 {
+		t.Fatalf("MaxAlbumItems = %d, want 5", cfg.MaxAlbumItems)
 	}
 }
 

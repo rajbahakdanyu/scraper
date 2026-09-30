@@ -157,6 +157,7 @@ per URL — same as albums).
 | `--include`      | (none)  | Glob pattern(s) to filter items (e.g. `*.mp4,*.png`)      |
 | `--exclude`      | (none)  | Glob pattern(s) to exclude items                          |
 | `--allow-ext`    | (none)  | Extra file extensions to keep with `--media-only` (repeatable, e.g. `--allow-ext cbz`) |
+| `--max-album-items` | `10000` | Cap items contributed by one album (0 = unlimited) |
 | `--min-size`     | (none)  | Minimum file size (e.g. `1K`, `10M`)                      |
 | `--max-size`     | (none)  | Maximum file size                                         |
 | `--disk-check`   | `true`  | Check free space before downloading                       |
@@ -270,6 +271,7 @@ audio_only: false
 include: ["*.mp4", "*.mkv"]
 exclude: ["*.txt"]
 media_extensions: []
+max_album_items: 10000
 min_size: "1M"
 max_size: "10G"
 disk_check: true

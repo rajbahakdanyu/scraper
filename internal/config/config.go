@@ -62,6 +62,10 @@ type Config struct {
 	// MediaExtensions lists extra file extensions the --media-only filter
 	// keeps, on top of the built-in media and archive set (e.g. cbz, iso).
 	MediaExtensions []string `yaml:"media_extensions"`
+	// MaxAlbumItems caps how many items a single album may contribute to a
+	// run, so a hostile or broken page cannot turn one URL into an endless
+	// run. Zero or negative means unlimited.
+	MaxAlbumItems int `yaml:"max_album_items"`
 	// MediaOnly restricts downloads to media and archive files. On by
 	// default; set false (or pass --media-only=false) to download
 	// everything an album lists.
@@ -159,6 +163,7 @@ func defaultConfig() *Config {
 		UserAgent:           DefaultUserAgent,
 		RateLimit:           "",
 		Checksums:           false,
+		MaxAlbumItems:       10000,
 		DiskCheck:           true,
 		MediaOnly:           true,
 	}

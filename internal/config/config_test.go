@@ -110,6 +110,23 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if cfg.Checksums {
 		t.Error("expected checksums to be disabled by default")
 	}
+	if cfg.MaxAlbumItems != 10000 {
+		t.Errorf("expected the default album item cap of 10000, got %d", cfg.MaxAlbumItems)
+	}
+}
+
+func TestLoadConfigMaxAlbumItems(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cap.yaml")
+	if err := os.WriteFile(path, []byte("max_album_items: 5\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MaxAlbumItems != 5 {
+		t.Fatalf("MaxAlbumItems = %d, want 5", cfg.MaxAlbumItems)
+	}
 }
 
 func TestLoadConfigOmittingDiskCheckKeepsDefault(t *testing.T) {

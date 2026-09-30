@@ -39,44 +39,46 @@ var version = "dev"
 // globalOptions holds flags defined on the root command that are inherited
 // by all subcommands via PersistentFlags.
 type globalOptions struct {
-	configPath     string
-	output         string
-	outputSet      bool
-	concurrency    int
-	concurrencySet bool
-	rateLimit      string
-	rateLimitSet   bool
-	checksums      bool
-	checksumsSet   bool
-	dryRun         bool
-	inputFile      string
-	inputFileSet   bool
-	noTui          bool
-	json           bool
-	proxy          string
-	proxySet       bool
-	cookies        string
-	cookiesSet     bool
-	quality        string
-	qualitySet     bool
-	audioOnly      string
-	audioOnlySet   bool
-	include        []string
-	includeSet     bool
-	exclude        []string
-	excludeSet     bool
-	allowExt       []string
-	allowExtSet    bool
-	minSize        string
-	minSizeSet     bool
-	maxSize        string
-	maxSizeSet     bool
-	diskCheck      bool
-	diskCheckSet   bool
-	mediaOnly      bool
-	mediaOnlySet   bool
-	notify         bool
-	notifySet      bool
+	configPath       string
+	output           string
+	outputSet        bool
+	concurrency      int
+	concurrencySet   bool
+	rateLimit        string
+	rateLimitSet     bool
+	checksums        bool
+	checksumsSet     bool
+	dryRun           bool
+	inputFile        string
+	inputFileSet     bool
+	noTui            bool
+	json             bool
+	proxy            string
+	proxySet         bool
+	cookies          string
+	cookiesSet       bool
+	quality          string
+	qualitySet       bool
+	audioOnly        string
+	audioOnlySet     bool
+	include          []string
+	includeSet       bool
+	exclude          []string
+	excludeSet       bool
+	allowExt         []string
+	allowExtSet      bool
+	maxAlbumItems    int
+	maxAlbumItemsSet bool
+	minSize          string
+	minSizeSet       bool
+	maxSize          string
+	maxSizeSet       bool
+	diskCheck        bool
+	diskCheckSet     bool
+	mediaOnly        bool
+	mediaOnlySet     bool
+	notify           bool
+	notifySet        bool
 }
 
 // loadGlobalConfig loads the config file and applies CLI flag overrides.
@@ -137,6 +139,9 @@ func loadGlobalConfig(opts globalOptions) (*config.Config, error) {
 	}
 	if opts.allowExtSet {
 		cfg.MediaExtensions = opts.allowExt
+	}
+	if opts.maxAlbumItemsSet {
+		cfg.MaxAlbumItems = opts.maxAlbumItems
 	}
 	if opts.minSizeSet {
 		cfg.MinSize = opts.minSize
@@ -270,6 +275,10 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 	if err != nil {
 		return globalOptions{}, err
 	}
+	maxAlbumItems, err := flags.GetInt("max-album-items")
+	if err != nil {
+		return globalOptions{}, err
+	}
 	minSize, err := flags.GetString("min-size")
 	if err != nil {
 		return globalOptions{}, err
@@ -295,44 +304,46 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 		noTui = true
 	}
 	return globalOptions{
-		configPath:     configPath,
-		output:         output,
-		outputSet:      flags.Changed("output"),
-		concurrency:    concurrency,
-		concurrencySet: flags.Changed("concurrent"),
-		rateLimit:      rateLimit,
-		rateLimitSet:   flags.Changed("limit-rate"),
-		checksums:      checksums,
-		checksumsSet:   flags.Changed("checksums"),
-		dryRun:         dryRun,
-		inputFile:      inputFile,
-		inputFileSet:   flags.Changed("input-file"),
-		noTui:          noTui,
-		json:           json,
-		proxy:          proxy,
-		proxySet:       flags.Changed("proxy"),
-		cookies:        cookies,
-		cookiesSet:     flags.Changed("cookies"),
-		quality:        quality,
-		qualitySet:     flags.Changed("quality"),
-		audioOnly:      audioOnly,
-		audioOnlySet:   flags.Changed("audio-only"),
-		include:        include,
-		includeSet:     flags.Changed("include"),
-		exclude:        exclude,
-		excludeSet:     flags.Changed("exclude"),
-		allowExt:       allowExt,
-		allowExtSet:    flags.Changed("allow-ext"),
-		minSize:        minSize,
-		minSizeSet:     flags.Changed("min-size"),
-		maxSize:        maxSize,
-		maxSizeSet:     flags.Changed("max-size"),
-		diskCheck:      diskCheck,
-		diskCheckSet:   flags.Changed("disk-check"),
-		mediaOnly:      mediaOnly,
-		mediaOnlySet:   flags.Changed("media-only"),
-		notify:         notify,
-		notifySet:      flags.Changed("notify"),
+		configPath:       configPath,
+		output:           output,
+		outputSet:        flags.Changed("output"),
+		concurrency:      concurrency,
+		concurrencySet:   flags.Changed("concurrent"),
+		rateLimit:        rateLimit,
+		rateLimitSet:     flags.Changed("limit-rate"),
+		checksums:        checksums,
+		checksumsSet:     flags.Changed("checksums"),
+		dryRun:           dryRun,
+		inputFile:        inputFile,
+		inputFileSet:     flags.Changed("input-file"),
+		noTui:            noTui,
+		json:             json,
+		proxy:            proxy,
+		proxySet:         flags.Changed("proxy"),
+		cookies:          cookies,
+		cookiesSet:       flags.Changed("cookies"),
+		quality:          quality,
+		qualitySet:       flags.Changed("quality"),
+		audioOnly:        audioOnly,
+		audioOnlySet:     flags.Changed("audio-only"),
+		include:          include,
+		includeSet:       flags.Changed("include"),
+		exclude:          exclude,
+		excludeSet:       flags.Changed("exclude"),
+		allowExt:         allowExt,
+		allowExtSet:      flags.Changed("allow-ext"),
+		maxAlbumItems:    maxAlbumItems,
+		maxAlbumItemsSet: flags.Changed("max-album-items"),
+		minSize:          minSize,
+		minSizeSet:       flags.Changed("min-size"),
+		maxSize:          maxSize,
+		maxSizeSet:       flags.Changed("max-size"),
+		diskCheck:        diskCheck,
+		diskCheckSet:     flags.Changed("disk-check"),
+		mediaOnly:        mediaOnly,
+		mediaOnlySet:     flags.Changed("media-only"),
+		notify:           notify,
+		notifySet:        flags.Changed("notify"),
 	}, nil
 }
 
@@ -425,6 +436,7 @@ func NewRootCmd() *cobra.Command {
 	root.PersistentFlags().StringSlice("include", nil, "Keep only items matching glob (repeatable, e.g. -i '*.mp4' -i '*.mkv')")
 	root.PersistentFlags().StringSlice("exclude", nil, "Skip items matching glob (repeatable)")
 	root.PersistentFlags().StringSlice("allow-ext", nil, "Extra file extensions to keep with --media-only (repeatable, e.g. --allow-ext cbz)")
+	root.PersistentFlags().Int("max-album-items", 0, "Cap items per album (0 = unlimited; default 10000)")
 	root.PersistentFlags().String("min-size", "", "Skip items smaller than size (e.g. 500K, 2M)")
 	root.PersistentFlags().String("max-size", "", "Skip items larger than size (e.g. 500M, 1G)")
 	root.PersistentFlags().Bool("disk-check", true, "Warn if free disk space is less than estimated download size")
@@ -639,6 +651,7 @@ func runWithScraperAndConfig(cfg *config.Config, scraper model.Scraper, targetUR
 		if err != nil {
 			return nil, err
 		}
+		items = applyAlbumItemCap(items, cfg.MaxAlbumItems)
 		if shouldFilterMedia(cfg, siteName) {
 			items = applyMediaFilter(items, cfg.MediaExtensions)
 		}
@@ -979,6 +992,7 @@ func runBatch(opts globalOptions, entries []batchEntry) error {
 				maxSize:         cfg.MaxSizeBytes(),
 				mediaOnly:       cfg.MediaOnly,
 				mediaExtensions: cfg.MediaExtensions,
+				maxItems:        cfg.MaxAlbumItems,
 				diskCheck:       cfg.DiskCheck,
 				outputDir:       cfg.OutputDir,
 			}
@@ -1069,6 +1083,7 @@ type filterScraper struct {
 	minSize, maxSize int64
 	mediaOnly        bool
 	mediaExtensions  []string
+	maxItems         int
 	diskCheck        bool
 	outputDir        string
 	diskChecked      bool
@@ -1084,6 +1099,7 @@ func (f *filterScraper) Parse(ctx context.Context, url string) ([]model.MediaIte
 	if err != nil && len(items) == 0 {
 		return nil, err
 	}
+	items = applyAlbumItemCap(items, f.maxItems)
 	if f.mediaOnly && f.inner.Name() != "youtube" {
 		items = applyMediaFilter(items, f.mediaExtensions)
 	}
@@ -1108,6 +1124,18 @@ func (f *filterScraper) Parse(ctx context.Context, url string) ([]model.MediaIte
 // extensions and its downloader always produces media).
 func shouldFilterMedia(cfg *config.Config, siteName string) bool {
 	return cfg.MediaOnly && siteName != "youtube"
+}
+
+// applyAlbumItemCap truncates an album's item list to the configured
+// maximum, warning when it does: a hostile or broken album page can list
+// thousands of entries and turn one URL into an endless run. Zero or
+// negative means unlimited.
+func applyAlbumItemCap(items []model.MediaItem, max int) []model.MediaItem {
+	if max <= 0 || len(items) <= max {
+		return items
+	}
+	fmt.Fprintf(os.Stderr, "album item cap: keeping first %d of %d items (max_album_items)\n", max, len(items))
+	return items[:max]
 }
 
 // applyMediaFilter drops non-media items and reports the skip count, so the
@@ -1171,6 +1199,7 @@ func applyDryRunFilters(scraper model.Scraper, cfg *config.Config) model.Scraper
 		maxSize:         cfg.MaxSizeBytes(),
 		mediaOnly:       cfg.MediaOnly,
 		mediaExtensions: cfg.MediaExtensions,
+		maxItems:        cfg.MaxAlbumItems,
 		diskCheck:       false,
 	}
 }
