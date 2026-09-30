@@ -514,3 +514,10 @@ func TestIsPublicIPRejectsSpecialPurposeRanges(t *testing.T) {
 		}
 	}
 }
+
+func TestStrictPolicyNormalizesTrailingDotAllowlist(t *testing.T) {
+	p := NewStrictPolicy("https://host.")
+	if err := p.ValidateURL("https://host/file"); err != nil {
+		t.Fatalf("trailing-dot allowlist entry should match the host: %v", err)
+	}
+}

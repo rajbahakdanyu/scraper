@@ -863,3 +863,39 @@ func TestParseFilesterRejectsUnlistedCDNServer(t *testing.T) {
 		t.Fatalf("error = %v, want unsafe CDN server", err)
 	}
 }
+
+// A page that is 200-empty and then rate-limited must report the last HTTP
+// error instead of a generic "returned no items".
+func TestParseFilesterFolderReportsLastHTTPError(t *testing.T) {
+	var page2Requests int32
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/f/ratelimited", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		switch r.URL.Query().Get("page") {
+		case "2":
+			if atomic.AddInt32(&page2Requests, 1) == 1 {
+				w.Write([]byte(`<html><body></body></html>`))
+				return
+			}
+			w.WriteHeader(http.StatusTooManyRequests)
+		default:
+			w.Write([]byte(`<html><body>
+				<button id="loadAllPagesBtn" data-total="2">Load all pages</button>
+				<div class="file-item" data-name="p1.jpg" data-size="40" onclick="window.location.href='/d/p1'"></div>
+			</body></html>`))
+		}
+	})
+	mux.HandleFunc("/v2/api/public/download", downloadTokenHandler("", false))
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	scraper := newTestFilesterScraper()
+	scraper.baseURL = ts.URL
+
+	_, err := scraper.Parse(context.Background(), ts.URL+"/f/ratelimited")
+	if err == nil || !strings.Contains(err.Error(), "429") {
+		t.Fatalf("expected the last HTTP error (429) in the failure, got: %v", err)
+	}
+}

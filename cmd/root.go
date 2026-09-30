@@ -1118,7 +1118,7 @@ func applyMediaFilter(items []model.MediaItem, extraExtensions []string) []model
 	if skipped > 0 {
 		fmt.Fprintf(os.Stderr, "media filter: %d/%d items (%d skipped non-media)\n", len(kept), len(items), skipped)
 	}
-	if len(kept) == 0 {
+	if len(items) > 0 && len(kept) == 0 {
 		fmt.Fprintln(os.Stderr, "No media items found.")
 	}
 	return kept

@@ -708,7 +708,7 @@ func TestRunBatchRejectsMixedYouTubeAndGenericSites(t *testing.T) {
 
 func TestRunBatchDryRunJSONLoopsOverURLs(t *testing.T) {
 	restoreBatchFactories(t)
-	fake := &fakeDryRunScraper{items: []model.MediaItem{{URL: "https://example.com/item", Title: "item"}}}
+	fake := &fakeDryRunScraper{items: []model.MediaItem{{URL: "https://example.com/item.mp4", Title: "unique-fixture-title.mp4"}}}
 	batchScraperRegistry = func(string, []*http.Cookie) (map[string]model.Scraper, error) {
 		return map[string]model.Scraper{"cyberdrop": fake}, nil
 	}
@@ -730,8 +730,8 @@ func TestRunBatchDryRunJSONLoopsOverURLs(t *testing.T) {
 	if strings.Count(out, `"dryRun"`) != 2 {
 		t.Fatalf("expected one JSON dry-run document per URL, got %d:\n%s", strings.Count(out, `"dryRun"`), out)
 	}
-	if !strings.Contains(out, "one") || !strings.Contains(out, "two") || !strings.Contains(out, "item") {
-		t.Fatalf("expected both URLs and item output, got %q", out)
+	if !strings.Contains(out, "one") || !strings.Contains(out, "two") || !strings.Contains(out, "unique-fixture-title.mp4") {
+		t.Fatalf("expected both URLs and the item title, got %q", out)
 	}
 }
 
@@ -1323,6 +1323,18 @@ func TestApplyMediaFilterAllSkipped(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "1 skipped non-media") || !strings.Contains(stderr, "No media items found.") {
 		t.Fatalf("expected skip summary and empty notice, got %q", stderr)
+	}
+}
+
+func TestApplyMediaFilterEmptyInputIsSilent(t *testing.T) {
+	stderr := captureStderr(func() {
+		kept := applyMediaFilter(nil, nil)
+		if len(kept) != 0 {
+			t.Fatalf("expected no items, got %+v", kept)
+		}
+	})
+	if strings.Contains(stderr, "No media items found.") {
+		t.Fatalf("empty input must not print the media notice, got %q", stderr)
 	}
 }
 

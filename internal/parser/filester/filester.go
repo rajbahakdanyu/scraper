@@ -343,7 +343,7 @@ func (s *Scraper) fetchFolderPage(ctx context.Context, id string, page int) (ent
 		return nil, pageTotal, err
 	}
 
-	return nil, pageTotal, fmt.Errorf("filester: page %d of folder %s returned no items after %d attempts", page, id, maxPageRetries)
+	return nil, pageTotal, fmt.Errorf("filester: page %d of folder %s returned no items after %d attempts: %w", page, id, maxPageRetries, err)
 }
 
 // extractFileItems reads the .file-item divs from a rendered folder page,

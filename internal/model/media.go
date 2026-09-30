@@ -131,6 +131,10 @@ func extensionOf(name string) string {
 	if name == "" {
 		return ""
 	}
+	// Trailing dots and spaces are ignored by most filesystems (and
+	// Windows strips them entirely), so "setup.exe." is still an
+	// executable; strip them before looking at the extension.
+	name = strings.TrimRight(name, ". ")
 	return strings.TrimPrefix(strings.ToLower(path.Ext(name)), ".")
 }
 

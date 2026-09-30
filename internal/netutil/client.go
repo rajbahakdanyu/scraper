@@ -101,6 +101,12 @@ type Policy struct {
 	resolver            *net.Resolver
 }
 
+// normalizeHost lowercases a host and strips the DNS root label (a trailing
+// dot), matching how request hosts are normalized before comparison.
+func normalizeHost(host string) string {
+	return strings.TrimSuffix(strings.ToLower(host), ".")
+}
+
 // NewStrictPolicy returns a Policy that, in addition to the public-IP dial
 // guard, only accepts request URLs whose host is in allowedURLs or is a
 // subdomain of one. Use it where a caller intends to pin downloads to known
@@ -116,7 +122,7 @@ func NewPolicy(allowedPrivateURLs ...string) *Policy {
 	for _, rawURL := range allowedPrivateURLs {
 		u, err := url.Parse(rawURL)
 		if err == nil && u.Host != "" {
-			allowed[strings.ToLower(u.Hostname())] = struct{}{}
+			allowed[normalizeHost(u.Hostname())] = struct{}{}
 		}
 	}
 	return &Policy{allowedPrivateHosts: allowed, resolver: net.DefaultResolver}
@@ -130,7 +136,7 @@ func (p *Policy) allowDialHost(host string) {
 	if p.allowedDialHosts == nil {
 		p.allowedDialHosts = make(map[string]struct{})
 	}
-	p.allowedDialHosts[strings.ToLower(host)] = struct{}{}
+	p.allowedDialHosts[normalizeHost(host)] = struct{}{}
 }
 
 func (p *Policy) dialAllowed(host string) bool {
