@@ -441,6 +441,26 @@ func TestParseBunkerAlbumHrefResolution(t *testing.T) {
 	}
 }
 
+func TestParseBunkerAlbumJSOnlyPageGetsClearError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(`<html><body><script>
+			if (window.albumFiles && Array.isArray(window.albumFiles)) { console.log('Advanced mode'); }
+		</script></body></html>`))
+	}))
+	defer ts.Close()
+
+	scraper := newTestBunkerScraper()
+	scraper.baseURL = ts.URL
+	_, err := scraper.Parse(context.Background(), ts.URL+"/a/jsalbum")
+	if err == nil {
+		t.Fatal("expected an error for a JS-only album page")
+	}
+	if !strings.Contains(err.Error(), "JavaScript") || !strings.Contains(err.Error(), "browser") {
+		t.Fatalf("expected a JS-rendered explanation, got: %v", err)
+	}
+}
+
 func TestParseBunkerAlbumNoLinks(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")

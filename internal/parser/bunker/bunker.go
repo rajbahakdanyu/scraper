@@ -165,6 +165,9 @@ func (s *Scraper) fetchAlbumLinks(ctx context.Context, albumURL string) ([]strin
 			links = append(links, s.resolveURL(albumURL, href))
 		})
 		if len(links) == 0 {
+			if isJSAlbumPage(doc) {
+				return model.NewNonRetryable(fmt.Errorf("bunker: album %s serves its file list via JavaScript (advanced mode), which this scraper cannot read; open the album in a browser to download it", albumURL))
+			}
 			return fmt.Errorf("bunker: album page %s returned no file links", albumURL)
 		}
 		return nil
@@ -173,6 +176,14 @@ func (s *Scraper) fetchAlbumLinks(ctx context.Context, albumURL string) ([]strin
 		return nil, err
 	}
 	return links, nil
+}
+
+// isJSAlbumPage reports whether an album page is the client-rendered
+// "advanced mode" variant, whose file list is built by JavaScript from data
+// that is not in the HTML at all (the page only reads window.albumFiles).
+func isJSAlbumPage(doc *goquery.Document) bool {
+	text := doc.Text()
+	return strings.Contains(text, "albumFiles") || strings.Contains(text, "isAdvancedMode")
 }
 
 // parseFilePage visits a /f/<id> page to get the dl.bunkr.cr download link
