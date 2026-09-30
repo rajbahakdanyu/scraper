@@ -1,10 +1,14 @@
 package turbo
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -70,8 +74,12 @@ func (s *Scraper) parseAlbum(ctx context.Context, rawURL string) ([]model.MediaI
 	if err != nil {
 		return nil, fmt.Errorf("turbo: fetch album page: %w", err)
 	}
+	html, err := io.ReadAll(body)
+	if err != nil {
+		return nil, fmt.Errorf("turbo: read album page: %w", err)
+	}
 
-	doc, err := goquery.NewDocumentFromReader(body)
+	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(html))
 	if err != nil {
 		return nil, fmt.Errorf("turbo: parse album page: %w", err)
 	}
@@ -81,37 +89,83 @@ func (s *Scraper) parseAlbum(ctx context.Context, rawURL string) ([]model.MediaI
 		return nil, fmt.Errorf("turbo: could not extract album ID from %s", rawURL)
 	}
 
-	var items []model.MediaItem
-	doc.Find("tr.file-row").Each(func(_ int, sel *goquery.Selection) {
-		fileID, _ := sel.Attr("data-id")
-		fileName, _ := sel.Attr("data-name")
-		sizeStr, _ := sel.Attr("data-size")
-
-		if fileID == "" {
-			return
-		}
-
-		var size int64
-		if sizeStr != "" {
-			if n, _ := fmt.Sscanf(sizeStr, "%d", &size); n != 1 {
-				size = 0
-			}
-		}
-
-		items = append(items, model.MediaItem{
-			URL:     fmt.Sprintf("%s/d/%s", s.baseURL, fileID),
-			Title:   fileName,
-			Size:    size,
-			Type:    model.MediaTypeForName(fileName),
-			Resolve: s.resolveFile(ctx, fileID),
-		})
-	})
+	// Older pages render the file table server-side; current pages embed
+	// the list in a script and build the rows client-side.
+	items := extractRowItems(doc, ctx, s)
+	if len(items) == 0 {
+		items = extractEmbeddedItems(html, ctx, s)
+	}
 
 	if len(items) == 0 {
 		return nil, fmt.Errorf("turbo: no files found in album %s", albumID)
 	}
 
 	return items, nil
+}
+
+// extractRowItems reads the legacy server-rendered <tr class="file-row">
+// table rows.
+func extractRowItems(doc *goquery.Document, ctx context.Context, s *Scraper) []model.MediaItem {
+	var items []model.MediaItem
+	doc.Find("tr.file-row").Each(func(_ int, sel *goquery.Selection) {
+		fileID, _ := sel.Attr("data-id")
+		if fileID == "" {
+			return
+		}
+		fileName, _ := sel.Attr("data-name")
+		sizeStr, _ := sel.Attr("data-size")
+		items = append(items, albumItem(ctx, s, fileID, fileName, parseSize(sizeStr)))
+	})
+	return items
+}
+
+// turboEmbeddedFile matches one entry of the album page's embedded
+// `const FILES = [{ id:"...", name:"...", size: N, ... }, ...]` array,
+// which the page uses to render its file rows client-side.
+var turboEmbeddedFile = regexp.MustCompile(`\{\s*id:"([^"]+)"\s*,\s*name:"((?:[^"\\]|\\.)*)"\s*,\s*size:\s*(\d+)`)
+
+// extractEmbeddedItems reads the file list the page embeds for its
+// client-side rendering.
+func extractEmbeddedItems(html []byte, ctx context.Context, s *Scraper) []model.MediaItem {
+	matches := turboEmbeddedFile.FindAllSubmatch(html, -1)
+	items := make([]model.MediaItem, 0, len(matches))
+	for _, m := range matches {
+		fileID := string(m[1])
+		name := decodeJSString(string(m[2]))
+		items = append(items, albumItem(ctx, s, fileID, name, parseSize(string(m[3]))))
+	}
+	return items
+}
+
+func albumItem(ctx context.Context, s *Scraper, fileID, name string, size int64) model.MediaItem {
+	return model.MediaItem{
+		URL:     fmt.Sprintf("%s/d/%s", s.baseURL, fileID),
+		Title:   name,
+		Size:    size,
+		Type:    model.MediaTypeForName(name),
+		Resolve: s.resolveFile(ctx, fileID),
+	}
+}
+
+// parseSize parses a byte count, returning 0 for empty or unparsable input.
+func parseSize(sizeStr string) int64 {
+	if sizeStr == "" {
+		return 0
+	}
+	size, err := strconv.ParseInt(strings.TrimSpace(sizeStr), 10, 64)
+	if err != nil {
+		return 0
+	}
+	return size
+}
+
+// decodeJSString unescapes the JavaScript string escapes the payload uses
+// (\/, \uXXXX, \", ...); invalid escapes fall back to the raw text.
+func decodeJSString(raw string) string {
+	if decoded, err := strconv.Unquote(`"` + strings.ReplaceAll(raw, `\/`, `/`) + `"`); err == nil {
+		return decoded
+	}
+	return raw
 }
 
 func (s *Scraper) resolveFile(ctx context.Context, fileID string) func(context.Context) (string, error) {

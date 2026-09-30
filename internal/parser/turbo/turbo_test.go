@@ -79,6 +79,61 @@ func TestParseAlbum(t *testing.T) {
 	}
 }
 
+// The site now renders file rows client-side from an embedded
+// `const FILES = [...]` array, so the static HTML has no tr.file-row
+// elements; the parser must extract the array instead.
+func TestParseAlbumEmbeddedFiles(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/a/embedded", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(`<html><body><table><tbody id="rows"></tbody></table>
+<script>
+  const FILES = [
+    { id:"GsDH23QRIh_wI", name:"first clip.mp4", size: 28382779 , views: 0 , thumb:"https:\/\/static.scdn.st\/a.jpg", dur: 20  },
+    { id:"nQi74gllXKTgT", name:"second \u2014 clip.mp4", size: 79119041 , views: 0 , thumb:"https:\/\/static.scdn.st\/b.jpg", dur: 198  },
+  ];
+</script></body></html>`))
+	})
+
+	mux.HandleFunc("/api/sign", func(w http.ResponseWriter, r *http.Request) {
+		fileID := r.URL.Query().Get("v")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"url":     fmt.Sprintf("https://cdn.turbo.cr/%s.mp4?exp=9999&token=test", fileID),
+		})
+	})
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	scraper := newTestScraper()
+	scraper.baseURL = ts.URL
+
+	items, err := scraper.Parse(context.Background(), ts.URL+"/a/embedded")
+	if err != nil {
+		t.Fatalf("Parse album failed: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(items))
+	}
+	if items[0].Title != "first clip.mp4" || items[0].Size != 28382779 {
+		t.Errorf("item 0 = %q/%d, want first clip.mp4/28382779", items[0].Title, items[0].Size)
+	}
+	if items[0].URL != ts.URL+"/d/GsDH23QRIh_wI" {
+		t.Errorf("expected page URL, got %s", items[0].URL)
+	}
+	if items[1].Title != "second \u2014 clip.mp4" {
+		t.Errorf("expected decoded unicode title, got %q", items[1].Title)
+	}
+	if items[1].Size != 79119041 {
+		t.Errorf("expected size 79119041, got %d", items[1].Size)
+	}
+	if items[1].Resolve == nil {
+		t.Fatal("expected Resolve func on embedded items")
+	}
+}
+
 func TestParseTurboRejectsOversizedHTML(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, strings.Repeat("x", 33<<20)+`<tr class="file-row" data-id="late" data-name="late.mp4" data-size="1"></tr>`)
