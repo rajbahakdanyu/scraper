@@ -515,6 +515,34 @@ func TestParseFilesterSingleFile(t *testing.T) {
 	}
 }
 
+// The site hands out rotating cdn.cr shards (fsc1, fsc3, ...); the strict
+// allowlist must accept the whole family, not just the filester.me list.
+func TestParseFilesterSingleFileAllowsCDNFamily(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v2/api/public/download", downloadTokenHandler("https://fsc3.cdn.cr", true))
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	scraper := newTestFilesterScraper()
+	scraper.baseURL = ts.URL
+
+	items, err := scraper.Parse(context.Background(), ts.URL+"/d/Sw9EGcH")
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	resolved, err := items[0].Resolve(context.Background())
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if !strings.HasPrefix(resolved, "https://fsc3.cdn.cr/v2/") {
+		t.Fatalf("resolved URL = %q, want an fsc3.cdn.cr URL", resolved)
+	}
+}
+
 // TestParseFilesterSingleFileReResolvesFreshTokens guards against the bug
 // where the single-file resolver returned the signed URL captured at parse
 // time forever: tokens expire, so a 403-triggered re-resolve must perform a

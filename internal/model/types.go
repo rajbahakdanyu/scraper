@@ -34,7 +34,11 @@ type MediaItem struct {
 	// PageURL is the human-facing page for the item when it differs from
 	// URL (e.g. a bunkr /f/<slug> page). Retry reports prefer it so the
 	// item can be re-scraped by feeding the URL back to the CLI.
-	PageURL  string
+	PageURL string
+	// Referer, when non-empty, is sent as the Referer header for this
+	// item's download; some CDNs (goonbox's image hosts) reject hotlinks
+	// with HTTP 403 without it.
+	Referer  string
 	Title    string    // Display title of the media
 	Size     int64     // Size of the media in bytes
 	MimeType string    // MIME type of the media

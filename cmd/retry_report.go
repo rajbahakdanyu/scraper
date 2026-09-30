@@ -39,10 +39,10 @@ func collectFailures(items []model.MediaItem, errs []error, albumURL string) []f
 	return out
 }
 
-// retryURL picks the URL a retry run should use: the human-facing page
-// when the parser recorded one, else the item's URL with any query or
-// fragment stripped so signed parameters never reach the retry list.
-func retryURL(item model.MediaItem) string {
+// retryItemURL returns the item's own scrapable page URL, or its URL with
+// any query or fragment stripped so signed parameters never reach the
+// retry list.
+func retryItemURL(item model.MediaItem) string {
 	if item.PageURL != "" {
 		return item.PageURL
 	}
@@ -53,6 +53,23 @@ func retryURL(item model.MediaItem) string {
 	u.RawQuery = ""
 	u.Fragment = ""
 	return u.String()
+}
+
+// retryEntry renders one retry-list line: the item's page URL paired with
+// its album when the item has its own page, else the album URL alone.
+// Items whose URL is a direct CDN link (goonbox and friends) cannot be
+// scraped on their own, so their album is the only replayable entry.
+func retryEntry(f failedItem) string {
+	if f.Item.PageURL != "" {
+		if album := retryAlbumURL(f.AlbumURL); album != "" {
+			return f.Item.PageURL + "\t" + album
+		}
+		return f.Item.PageURL
+	}
+	if album := retryAlbumURL(f.AlbumURL); album != "" {
+		return album
+	}
+	return retryItemURL(f.Item)
 }
 
 // retryAlbumURL strips any query or fragment from an album URL. The retry
@@ -135,34 +152,32 @@ func formatFailureSummary(failures []failedItem) string {
 // its path plus a grouped summary. With no usable failures it returns
 // empty path and summary and a nil error.
 func retryReport(dir string, failures []failedItem, now time.Time) (string, string, error) {
-	usable := make([]failedItem, 0, len(failures))
+	var usable []failedItem
+	var lines []string
 	seen := map[string]bool{}
 	for _, f := range failures {
-		u := retryURL(f.Item)
-		if u == "" || seen[u] {
+		entry := retryEntry(f)
+		if entry == "" {
 			continue
 		}
-		seen[u] = true
 		usable = append(usable, f)
+		if !seen[entry] {
+			seen[entry] = true
+			lines = append(lines, entry)
+		}
 	}
-	if len(usable) == 0 {
+	if len(lines) == 0 {
 		return "", "", nil
 	}
 
 	path := filepath.Join(dir, "scraper-failed-"+now.Format("20060102-150405")+".txt")
 	var list strings.Builder
-	fmt.Fprintf(&list, "# scraper retry list - %s - %d failed item(s)\n",
-		now.Format("2006-01-02 15:04:05"), len(usable))
-	list.WriteString("# Each line is: item URL [TAB album URL]. Re-running downloads\n")
-	list.WriteString("# the item into its album folder (single-column lines still work).\n")
-	for _, f := range usable {
-		list.WriteString(retryURL(f.Item))
-		if f.AlbumURL != "" {
-			if album := retryAlbumURL(f.AlbumURL); album != "" {
-				list.WriteString("\t" + album)
-			}
-		}
-		list.WriteString("\n")
+	fmt.Fprintf(&list, "# scraper retry list - %s - %d failed item(s), %d retry line(s)\n",
+		now.Format("2006-01-02 15:04:05"), len(usable), len(lines))
+	list.WriteString("# Each line is: item URL [TAB album URL], or an album URL alone\n")
+	list.WriteString("# when the item has no page of its own. Re-running downloads missing items.\n")
+	for _, line := range lines {
+		list.WriteString(line + "\n")
 	}
 
 	file, err := fileutil.OpenFileNoFollow(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)

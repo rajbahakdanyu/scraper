@@ -16,6 +16,10 @@ import (
 
 const apiBase = "https://goonbox.cr/api"
 
+// siteOrigin is sent as the Referer on every item download: the image CDN
+// rejects requests without it (HTTP 403 "not allowed").
+const siteOrigin = "https://goonbox.cr/"
+
 // maxAlbumPages bounds pagination: far above any real album, so only a buggy or hostile API ever hits it.
 const maxAlbumPages = 1000
 
@@ -113,6 +117,7 @@ func (s *Scraper) Parse(ctx context.Context, albumURL string) ([]model.MediaItem
 			title := img.OriginalFilename
 			pageItems = append(pageItems, model.MediaItem{
 				URL:      img.OriginalURL,
+				Referer:  siteOrigin,
 				Title:    title,
 				Size:     img.SizeBytes,
 				MimeType: img.Mime,

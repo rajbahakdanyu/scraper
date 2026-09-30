@@ -232,6 +232,9 @@ original album folder, so retried files land next to the rest of the album:
 
 Single-URL lines still work (extension exports, hand-written lists) and
 download to the URL's own folder; lines starting with `#` are comments.
+Items that have no page of their own (goonbox's direct image links, for
+example) are written as their album URL alone — replaying re-scrapes that
+album and downloads only the missing items into it.
 
 JSON mode adds the retry-list path to the final `summary` event as
 `retryFile`.

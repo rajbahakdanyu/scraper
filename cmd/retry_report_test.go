@@ -118,6 +118,30 @@ func TestCollectFailuresSkipsCancelledAndNil(t *testing.T) {
 	}
 }
 
+func TestRetryReportUsesAlbumURLWhenItemHasNoPage(t *testing.T) {
+	dir := t.TempDir()
+	failures := []failedItem{
+		{Item: model.MediaItem{URL: "https://simp6.cuckcapital.cr/images4/a.jpg"}, Err: errors.New("boom"), AlbumURL: "https://goonbox.cr/a/aZsRlh"},
+		{Item: model.MediaItem{URL: "https://simp6.cuckcapital.cr/images4/b.jpg"}, Err: errors.New("boom"), AlbumURL: "https://goonbox.cr/a/aZsRlh"},
+	}
+
+	path, summary, err := retryReport(dir, failures, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	content := string(data)
+	if strings.Contains(content, "cuckcapital") {
+		t.Fatalf("retry list should not contain unscrapable CDN URLs:\n%s", content)
+	}
+	if got := strings.Count(content, "https://goonbox.cr/a/aZsRlh"); got != 1 {
+		t.Fatalf("album line written %d times, want 1:\n%s", got, content)
+	}
+	if !strings.Contains(summary, "Failed 2 item(s)") {
+		t.Fatalf("summary = %q, want the failure count", summary)
+	}
+}
+
 func TestRetryReportRedactsAlbumURLQuery(t *testing.T) {
 	dir := t.TempDir()
 	failures := []failedItem{

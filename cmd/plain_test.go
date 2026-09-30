@@ -267,7 +267,7 @@ func TestRunPlainFailsWhenAnyDownloadFails(t *testing.T) {
 	dl := newFakePlainDownloader()
 	items := []model.MediaItem{
 		{URL: "https://example.com/good.mp4", Title: "good.mp4"},
-		{URL: "https://example.com/bad.mp4", Title: "bad.mp4"},
+		{URL: "https://example.com/bad.mp4", Title: "bad.mp4", PageURL: "https://example.com/f/bad"},
 	}
 	dl.errs["https://example.com/bad.mp4"] = fmt.Errorf("boom")
 	dl.scripted["https://example.com/good.mp4"] = []model.ProgressEvent{
@@ -295,7 +295,7 @@ func TestRunPlainFailsWhenAnyDownloadFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "https://example.com/bad.mp4\thttps://example.com/a/album") {
+	if !strings.Contains(string(data), "https://example.com/f/bad\thttps://example.com/a/album") {
 		t.Errorf("retry list missing the item/album pair:\n%s", data)
 	}
 	if !strings.Contains(out, "Retry list:") {
@@ -534,7 +534,7 @@ func TestRunJSONProducesJSONLines(t *testing.T) {
 func TestRunJSONWithFailedItems(t *testing.T) {
 	fd := newFakePlainDownloader()
 	items := []model.MediaItem{
-		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100},
+		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100, PageURL: "https://example.com/f/a"},
 	}
 	fd.errs["https://example.com/a.mp4"] = fmt.Errorf("HTTP 404")
 
@@ -584,7 +584,7 @@ func TestRunJSONWithFailedItems(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "https://example.com/a.mp4\thttps://example.com") {
+	if !strings.Contains(string(data), "https://example.com/f/a\thttps://example.com") {
 		t.Fatalf("retry file missing item/album pair:\n%s", data)
 	}
 }

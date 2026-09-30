@@ -70,6 +70,14 @@ func TestParseGoonBoxAlbum(t *testing.T) {
 	if items[1].Size != 2048 {
 		t.Errorf("expected size 2048, got %d", items[1].Size)
 	}
+	// The image CDN rejects hotlinks: every item must carry the site
+	// origin as its Referer.
+	if items[0].Referer != siteOrigin {
+		t.Errorf("expected referer %q, got %q", siteOrigin, items[0].Referer)
+	}
+	if items[1].Referer != siteOrigin {
+		t.Errorf("expected referer %q, got %q", siteOrigin, items[1].Referer)
+	}
 }
 
 func TestParseGoonBoxAlbumNotFound(t *testing.T) {

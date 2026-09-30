@@ -1981,6 +1981,36 @@ func TestDownloadRedactsSignedURLFromConnectionError(t *testing.T) {
 	}
 }
 
+func TestDownloadRefererHeader(t *testing.T) {
+	tests := []struct {
+		name    string
+		referer string
+		want    string
+	}{
+		{"set", "https://goonbox.cr/", "https://goonbox.cr/"},
+		{"empty", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got string
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				got = r.Header.Get("Referer")
+				w.Write([]byte("ok"))
+			}))
+			defer ts.Close()
+
+			dl := newTestDownloader(1, 0, "")
+			item := model.MediaItem{URL: ts.URL + "/file.mp4", Title: "file.mp4", Referer: tt.referer}
+			if _, err := dl.Download(item, t.TempDir()); err != nil {
+				t.Fatalf("Download failed: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("Referer = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 type recordingSleeper struct {
 	mu     sync.Mutex
 	delays []time.Duration

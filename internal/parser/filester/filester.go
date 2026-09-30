@@ -31,6 +31,10 @@ var defaultCDNURLs = []string{
 	"https://rs2.filester.me",
 }
 
+// cdnFamilyURL allowlists every *.cdn.cr shard in the strict policy; the
+// site rotates through them (fsc1.cdn.cr, fsc3.cdn.cr, ...).
+const cdnFamilyURL = "https://cdn.cr"
+
 // maxFolderPages bounds pagination: far above any real folder, so only a
 // buggy or hostile page ever hits it (mirrors goonbox's maxAlbumPages).
 const maxFolderPages = 1000
@@ -438,7 +442,10 @@ func (s *Scraper) resolveFileOnce(ctx context.Context, slug, knownName string) (
 		// #nosec G404 -- CDN load distribution is not a security decision.
 		server = s.cdnURLs[rand.Intn(len(s.cdnURLs))]
 	}
-	allowedURLs := append([]string{s.baseURL}, s.cdnURLs...)
+	// The site hands out rotating CDN shards under cdn.cr (fsc1, fsc3, ...);
+	// allow the whole family so new shards don't break downloads. The
+	// policy matches subdomains of an allowlisted host.
+	allowedURLs := append([]string{s.baseURL, cdnFamilyURL}, s.cdnURLs...)
 	if err := netutil.NewStrictPolicy(allowedURLs...).ValidateURL(server); err != nil {
 		return model.MediaItem{}, model.NewNonRetryable(fmt.Errorf("filester: unsafe CDN server for %s: %w", slug, err))
 	}

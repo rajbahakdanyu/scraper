@@ -308,6 +308,9 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, res
 	if d.userAgent != "" {
 		req.Header.Set("User-Agent", d.userAgent)
 	}
+	if item.Referer != "" {
+		req.Header.Set("Referer", item.Referer)
+	}
 	if existing > 0 {
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", existing))
 		req.Header.Set("If-Range", resume.validator())
