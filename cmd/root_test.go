@@ -150,6 +150,9 @@ func TestExplicitSubcommandReadsInheritedOptions(t *testing.T) {
 	if err := root.PersistentFlags().Set("checksums", "true"); err != nil {
 		t.Fatal(err)
 	}
+	if err := root.PersistentFlags().Set("allow-ext", "cbz"); err != nil {
+		t.Fatal(err)
+	}
 	if err := root.PersistentFlags().Set("dry-run", "true"); err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +173,8 @@ func TestExplicitSubcommandReadsInheritedOptions(t *testing.T) {
 		t.Fatalf("globalOptionsFromCommand failed: %v", err)
 	}
 	if opts.configPath != "/tmp/custom.yaml" || opts.output != "." || opts.concurrency != 5 ||
-		opts.rateLimit != "2M" || !opts.checksums || !opts.dryRun {
+		opts.rateLimit != "2M" || !opts.checksums || !opts.dryRun ||
+		len(opts.allowExt) != 1 || opts.allowExt[0] != "cbz" {
 		t.Fatalf("explicit subcommand saw stale options: %+v", opts)
 	}
 }
@@ -198,6 +202,38 @@ func TestLoadGlobalConfigHonorsExplicitDefaultValues(t *testing.T) {
 	}
 	if cfg.OutputDir != "." || cfg.ConcurrentDownloads != 5 || cfg.RateLimit != "" || cfg.Checksums {
 		t.Fatalf("explicit defaults did not override config: %+v", cfg)
+	}
+}
+
+func TestApplyMediaFilterExtraExtensions(t *testing.T) {
+	items := []model.MediaItem{
+		{URL: "https://x/comic.cbz", Title: "comic.cbz"},
+		{URL: "https://x/tool.exe", Title: "tool.exe"},
+	}
+	kept := applyMediaFilter(items, []string{"cbz"})
+	if len(kept) != 1 || kept[0].Title != "comic.cbz" {
+		t.Fatalf("applyMediaFilter() = %+v, want only the comic", kept)
+	}
+}
+
+func TestLoadGlobalConfigAllowExtFlag(t *testing.T) {
+	cfg, err := loadGlobalConfig(globalOptions{
+		configPath:  emptyTestConfig(t),
+		allowExt:    []string{"cbz"},
+		allowExtSet: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.MediaExtensions) != 1 || cfg.MediaExtensions[0] != "cbz" {
+		t.Fatalf("MediaExtensions = %v, want [cbz]", cfg.MediaExtensions)
+	}
+}
+
+func TestNewRootCmdRegistersAllowExtFlag(t *testing.T) {
+	root := NewRootCmd()
+	if root.PersistentFlags().Lookup("allow-ext") == nil {
+		t.Error("expected --allow-ext persistent flag")
 	}
 }
 
@@ -1280,7 +1316,7 @@ func TestApplyDryRunFiltersWrapsWhenOnlyMediaOnly(t *testing.T) {
 func TestApplyMediaFilterAllSkipped(t *testing.T) {
 	var kept []model.MediaItem
 	stderr := captureStderr(func() {
-		kept = applyMediaFilter([]model.MediaItem{{Title: "setup.exe"}})
+		kept = applyMediaFilter([]model.MediaItem{{Title: "setup.exe"}}, nil)
 	})
 	if len(kept) != 0 {
 		t.Fatalf("expected no items, got %+v", kept)
@@ -1292,7 +1328,7 @@ func TestApplyMediaFilterAllSkipped(t *testing.T) {
 
 func TestApplyMediaFilterSilentWhenNothingSkipped(t *testing.T) {
 	stderr := captureStderr(func() {
-		applyMediaFilter([]model.MediaItem{{Title: "a.mp4"}})
+		applyMediaFilter([]model.MediaItem{{Title: "a.mp4"}}, nil)
 	})
 	if stderr != "" {
 		t.Fatalf("expected no output when nothing was skipped, got %q", stderr)

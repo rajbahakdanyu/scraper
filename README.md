@@ -156,6 +156,7 @@ per URL — same as albums).
 | `--audio-only`   | `false` | Download audio tracks only (no video)                     |
 | `--include`      | (none)  | Glob pattern(s) to filter items (e.g. `*.mp4,*.png`)      |
 | `--exclude`      | (none)  | Glob pattern(s) to exclude items                          |
+| `--allow-ext`    | (none)  | Extra file extensions to keep with `--media-only` (repeatable, e.g. `--allow-ext cbz`) |
 | `--min-size`     | (none)  | Minimum file size (e.g. `1K`, `10M`)                      |
 | `--max-size`     | (none)  | Maximum file size                                         |
 | `--disk-check`   | `true`  | Check free space before downloading                       |
@@ -193,9 +194,11 @@ filename (or, when the title carries no extension, the URL) ends in a known
 media or archive extension are kept:
 
 - video: mp4, m4v, mkv, webm, avi, mov, wmv, flv, mpg, mpeg, ts, m2ts, 3gp, ogv
-- audio: mp3, m4a, aac, flac, wav, ogg, opus, wma
-- image: jpg, jpeg, png, gif, webp, bmp, avif, heic, tiff
-- archives: zip, rar, 7z, tar, gz, tgz, bz2, xz
+- audio: mp3, m4a, aac, flac, wav, ogg, opus, wma, m4b, aiff
+- image: jpg, jpeg, png, gif, webp, bmp, avif, heic, heif, tiff, tif
+- archives: zip, rar, 7z, tar, gz, tgz, bz2, xz, tbz2, txz, iso
+- split-archive volumes: `.r00`–`.r99` (RAR), `.z01`–`.z99` (Zip),
+  `.001`–`.999` (7-Zip / Zip parts) — so multi-volume sets download whole
 
 Everything else — executables, scripts, HTML, PDFs, and unknown file types —
 is skipped before download. A title with no extension is kept only when the
@@ -204,7 +207,11 @@ anything is skipped, the run prints
 `media filter: N/M items (K skipped non-media)`; YouTube is unaffected.
 
 Pass `--media-only=false` (or set `media_only: false` in the config) to
-download everything an album lists.
+download everything an album lists. To keep additional file types, pass
+`--allow-ext` (repeatable) or list them under `media_extensions` in the
+config:
+
+    ./scraper --allow-ext cbz --allow-ext iso https://example.com/a/xyz
 
 This is a filename/MIME allowlist, not content verification: a payload
 renamed to `video.mp4` still downloads, and archives are not inspected.
@@ -259,6 +266,7 @@ quality: "1080p"
 audio_only: false
 include: ["*.mp4", "*.mkv"]
 exclude: ["*.txt"]
+media_extensions: []
 min_size: "1M"
 max_size: "10G"
 disk_check: true

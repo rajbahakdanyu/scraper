@@ -65,6 +65,8 @@ type globalOptions struct {
 	includeSet     bool
 	exclude        []string
 	excludeSet     bool
+	allowExt       []string
+	allowExtSet    bool
 	minSize        string
 	minSizeSet     bool
 	maxSize        string
@@ -132,6 +134,9 @@ func loadGlobalConfig(opts globalOptions) (*config.Config, error) {
 	}
 	if opts.excludeSet {
 		cfg.Exclude = opts.exclude
+	}
+	if opts.allowExtSet {
+		cfg.MediaExtensions = opts.allowExt
 	}
 	if opts.minSizeSet {
 		cfg.MinSize = opts.minSize
@@ -261,6 +266,10 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 	if err != nil {
 		return globalOptions{}, err
 	}
+	allowExt, err := flags.GetStringSlice("allow-ext")
+	if err != nil {
+		return globalOptions{}, err
+	}
 	minSize, err := flags.GetString("min-size")
 	if err != nil {
 		return globalOptions{}, err
@@ -312,6 +321,8 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 		includeSet:     flags.Changed("include"),
 		exclude:        exclude,
 		excludeSet:     flags.Changed("exclude"),
+		allowExt:       allowExt,
+		allowExtSet:    flags.Changed("allow-ext"),
 		minSize:        minSize,
 		minSizeSet:     flags.Changed("min-size"),
 		maxSize:        maxSize,
@@ -413,6 +424,7 @@ func NewRootCmd() *cobra.Command {
 	root.PersistentFlags().String("audio-only", "", "YouTube audio only; optional format: m4a (default) or mp3")
 	root.PersistentFlags().StringSlice("include", nil, "Keep only items matching glob (repeatable, e.g. -i '*.mp4' -i '*.mkv')")
 	root.PersistentFlags().StringSlice("exclude", nil, "Skip items matching glob (repeatable)")
+	root.PersistentFlags().StringSlice("allow-ext", nil, "Extra file extensions to keep with --media-only (repeatable, e.g. --allow-ext cbz)")
 	root.PersistentFlags().String("min-size", "", "Skip items smaller than size (e.g. 500K, 2M)")
 	root.PersistentFlags().String("max-size", "", "Skip items larger than size (e.g. 500M, 1G)")
 	root.PersistentFlags().Bool("disk-check", true, "Warn if free disk space is less than estimated download size")
@@ -628,7 +640,7 @@ func runWithScraperAndConfig(cfg *config.Config, scraper model.Scraper, targetUR
 			return nil, err
 		}
 		if shouldFilterMedia(cfg, siteName) {
-			items = applyMediaFilter(items)
+			items = applyMediaFilter(items, cfg.MediaExtensions)
 		}
 		if cfg.HasFilters() {
 			items, summary := model.FilterItems(items, cfg.Include, cfg.Exclude, cfg.MinSizeBytes(), cfg.MaxSizeBytes())
@@ -960,14 +972,15 @@ func runBatch(opts globalOptions, entries []batchEntry) error {
 	if cfg.HasFilters() || cfg.DiskCheck || cfg.MediaOnly {
 		for i := range dashAlbums {
 			dashAlbums[i].Scraper = &filterScraper{
-				inner:     dashAlbums[i].Scraper,
-				include:   cfg.Include,
-				exclude:   cfg.Exclude,
-				minSize:   cfg.MinSizeBytes(),
-				maxSize:   cfg.MaxSizeBytes(),
-				mediaOnly: cfg.MediaOnly,
-				diskCheck: cfg.DiskCheck,
-				outputDir: cfg.OutputDir,
+				inner:           dashAlbums[i].Scraper,
+				include:         cfg.Include,
+				exclude:         cfg.Exclude,
+				minSize:         cfg.MinSizeBytes(),
+				maxSize:         cfg.MaxSizeBytes(),
+				mediaOnly:       cfg.MediaOnly,
+				mediaExtensions: cfg.MediaExtensions,
+				diskCheck:       cfg.DiskCheck,
+				outputDir:       cfg.OutputDir,
 			}
 		}
 	}
@@ -1055,6 +1068,7 @@ type filterScraper struct {
 	include, exclude []string
 	minSize, maxSize int64
 	mediaOnly        bool
+	mediaExtensions  []string
 	diskCheck        bool
 	outputDir        string
 	diskChecked      bool
@@ -1071,7 +1085,7 @@ func (f *filterScraper) Parse(ctx context.Context, url string) ([]model.MediaIte
 		return nil, err
 	}
 	if f.mediaOnly && f.inner.Name() != "youtube" {
-		items = applyMediaFilter(items)
+		items = applyMediaFilter(items, f.mediaExtensions)
 	}
 	filtered := items
 	if len(f.include) > 0 || len(f.exclude) > 0 || f.minSize > 0 || f.maxSize > 0 {
@@ -1099,8 +1113,8 @@ func shouldFilterMedia(cfg *config.Config, siteName string) bool {
 // applyMediaFilter drops non-media items and reports the skip count, so the
 // single, batch, and dry-run paths all behave the same. The message is only
 // printed when something was actually skipped; an all-skipped album says so.
-func applyMediaFilter(items []model.MediaItem) []model.MediaItem {
-	kept, skipped := model.FilterMediaItems(items)
+func applyMediaFilter(items []model.MediaItem, extraExtensions []string) []model.MediaItem {
+	kept, skipped := model.NewMediaFilter(extraExtensions).Filter(items)
 	if skipped > 0 {
 		fmt.Fprintf(os.Stderr, "media filter: %d/%d items (%d skipped non-media)\n", len(kept), len(items), skipped)
 	}
@@ -1150,13 +1164,14 @@ func applyDryRunFilters(scraper model.Scraper, cfg *config.Config) model.Scraper
 		return scraper
 	}
 	return &filterScraper{
-		inner:     scraper,
-		include:   cfg.Include,
-		exclude:   cfg.Exclude,
-		minSize:   cfg.MinSizeBytes(),
-		maxSize:   cfg.MaxSizeBytes(),
-		mediaOnly: cfg.MediaOnly,
-		diskCheck: false,
+		inner:           scraper,
+		include:         cfg.Include,
+		exclude:         cfg.Exclude,
+		minSize:         cfg.MinSizeBytes(),
+		maxSize:         cfg.MaxSizeBytes(),
+		mediaOnly:       cfg.MediaOnly,
+		mediaExtensions: cfg.MediaExtensions,
+		diskCheck:       false,
 	}
 }
 

@@ -59,6 +59,9 @@ type Config struct {
 	DiskCheck bool `yaml:"disk_check"`
 	// Notify enables OS notification when all downloads complete.
 	Notify bool `yaml:"notify"`
+	// MediaExtensions lists extra file extensions the --media-only filter
+	// keeps, on top of the built-in media and archive set (e.g. cbz, iso).
+	MediaExtensions []string `yaml:"media_extensions"`
 	// MediaOnly restricts downloads to media and archive files. On by
 	// default; set false (or pass --media-only=false) to download
 	// everything an album lists.

@@ -160,6 +160,20 @@ checksums: true
 	}
 }
 
+func TestLoadConfigMediaExtensions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "media.yaml")
+	if err := os.WriteFile(path, []byte("media_extensions:\n  - cbz\n  - iso\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.MediaExtensions) != 2 || cfg.MediaExtensions[0] != "cbz" || cfg.MediaExtensions[1] != "iso" {
+		t.Fatalf("MediaExtensions = %v, want [cbz iso]", cfg.MediaExtensions)
+	}
+}
+
 func TestParseRateLimit(t *testing.T) {
 	tests := []struct {
 		in      string

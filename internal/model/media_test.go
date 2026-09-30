@@ -26,6 +26,22 @@ func TestIsAllowedMediaItem(t *testing.T) {
 		{"pdf", MediaItem{Title: "doc.pdf"}, false},
 		{"script", MediaItem{Title: "run.js"}, false},
 		{"extension wins over lying MIME", MediaItem{Title: "setup.exe", MimeType: "video/mp4"}, false},
+		{"rar volume r00", MediaItem{Title: "set.r00"}, true},
+		{"rar volume r99", MediaItem{Title: "set.r99"}, true},
+		{"zip volume z01", MediaItem{Title: "set.z01"}, true},
+		{"7z split 001", MediaItem{Title: "set.7z.001"}, true},
+		{"zip split 001", MediaItem{Title: "set.zip.001"}, true},
+		{"bare split 001", MediaItem{Title: "set.001"}, true},
+		{"two-digit suffix is not a volume", MediaItem{Title: "set.12"}, false},
+		{"four-digit suffix is not a volume", MediaItem{Title: "set.0001"}, false},
+		{"single-digit rar suffix is not a volume", MediaItem{Title: "set.r0"}, false},
+		{"tar bz2", MediaItem{Title: "set.tbz2"}, true},
+		{"tar xz", MediaItem{Title: "set.txz"}, true},
+		{"iso image", MediaItem{Title: "disc.iso"}, true},
+		{"tif image", MediaItem{Title: "scan.tif"}, true},
+		{"heif image", MediaItem{Title: "photo.heif"}, true},
+		{"m4b audiobook", MediaItem{Title: "book.m4b"}, true},
+		{"aiff audio", MediaItem{Title: "song.aiff"}, true},
 		{"empty item", MediaItem{}, false},
 		{"youtube-style title", MediaItem{Title: "Some Video", URL: "https://youtube.com/watch?v=x"}, false},
 	}
@@ -35,6 +51,34 @@ func TestIsAllowedMediaItem(t *testing.T) {
 				t.Fatalf("IsAllowedMediaItem(%+v) = %v, want %v", tt.item, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestMediaFilterExtraExtensions(t *testing.T) {
+	filter := NewMediaFilter([]string{"cbz", ".CBR", " iso ", ""})
+	tests := []struct {
+		name string
+		item MediaItem
+		want bool
+	}{
+		{"extra extension", MediaItem{Title: "comic.cbz"}, true},
+		{"extra extension case-insensitive", MediaItem{Title: "comic.CBR"}, true},
+		{"extra extension with dot normalized", MediaItem{Title: "disc.iso"}, true},
+		{"default still allowed", MediaItem{Title: "clip.mp4"}, true},
+		{"unknown still rejected", MediaItem{Title: "tool.exe"}, false},
+		{"extensionless extra has no MIME rescue", MediaItem{Title: "comic"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := filter.IsAllowed(tt.item); got != tt.want {
+				t.Fatalf("IsAllowed(%+v) = %v, want %v", tt.item, got, tt.want)
+			}
+		})
+	}
+
+	kept, skipped := filter.Filter([]MediaItem{{Title: "comic.cbz"}, {Title: "tool.exe"}})
+	if len(kept) != 1 || skipped != 1 {
+		t.Fatalf("Filter() = %d kept, %d skipped, want 1/1", len(kept), skipped)
 	}
 }
 
