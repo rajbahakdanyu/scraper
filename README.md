@@ -159,6 +159,7 @@ per URL — same as albums).
 | `--allow-ext`    | (none)  | Extra file extensions to keep with `--media-only` (repeatable, e.g. `--allow-ext cbz`) |
 | `--max-album-items` | `10000` | Cap items contributed by one album (0 = unlimited) |
 | `--print-urls`   | `false` | Print item URLs (one per line) and exit without downloading |
+| `--scrape-delay` | (none)  | Pause between album scrapes (e.g. `500ms`) |
 | `--min-size`     | (none)  | Minimum file size (e.g. `1K`, `10M`)                      |
 | `--max-size`     | (none)  | Maximum file size                                         |
 | `--disk-check`   | `true`  | Check free space before downloading                       |
@@ -273,6 +274,7 @@ include: ["*.mp4", "*.mkv"]
 exclude: ["*.txt"]
 media_extensions: []
 max_album_items: 10000
+scrape_delay: 0s
 min_size: "1M"
 max_size: "10G"
 disk_check: true

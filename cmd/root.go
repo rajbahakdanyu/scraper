@@ -69,6 +69,8 @@ type globalOptions struct {
 	allowExtSet      bool
 	maxAlbumItems    int
 	maxAlbumItemsSet bool
+	scrapeDelay      time.Duration
+	scrapeDelaySet   bool
 	printURLs        bool
 	minSize          string
 	minSizeSet       bool
@@ -143,6 +145,9 @@ func loadGlobalConfig(opts globalOptions) (*config.Config, error) {
 	}
 	if opts.maxAlbumItemsSet {
 		cfg.MaxAlbumItems = opts.maxAlbumItems
+	}
+	if opts.scrapeDelaySet {
+		cfg.ScrapeDelay = opts.scrapeDelay
 	}
 	if opts.minSizeSet {
 		cfg.MinSize = opts.minSize
@@ -284,6 +289,10 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 	if err != nil {
 		return globalOptions{}, err
 	}
+	scrapeDelay, err := flags.GetDuration("scrape-delay")
+	if err != nil {
+		return globalOptions{}, err
+	}
 	minSize, err := flags.GetString("min-size")
 	if err != nil {
 		return globalOptions{}, err
@@ -339,6 +348,8 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 		allowExtSet:      flags.Changed("allow-ext"),
 		maxAlbumItems:    maxAlbumItems,
 		maxAlbumItemsSet: flags.Changed("max-album-items"),
+		scrapeDelay:      scrapeDelay,
+		scrapeDelaySet:   flags.Changed("scrape-delay"),
 		printURLs:        printURLs,
 		minSize:          minSize,
 		minSizeSet:       flags.Changed("min-size"),
@@ -444,6 +455,7 @@ func NewRootCmd() *cobra.Command {
 	root.PersistentFlags().StringSlice("allow-ext", nil, "Extra file extensions to keep with --media-only (repeatable, e.g. --allow-ext cbz)")
 	root.PersistentFlags().Int("max-album-items", 0, "Cap items per album (0 = unlimited; default 10000)")
 	root.PersistentFlags().Bool("print-urls", false, "Print item URLs (one per line) and exit without downloading")
+	root.PersistentFlags().Duration("scrape-delay", 0, "Pause between album scrapes (e.g. 500ms; default: none)")
 	root.PersistentFlags().String("min-size", "", "Skip items smaller than size (e.g. 500K, 2M)")
 	root.PersistentFlags().String("max-size", "", "Skip items larger than size (e.g. 500M, 1G)")
 	root.PersistentFlags().Bool("disk-check", true, "Warn if free disk space is less than estimated download size")
@@ -1042,6 +1054,7 @@ func runBatch(opts globalOptions, entries []batchEntry) error {
 				mediaOnly:       cfg.MediaOnly,
 				mediaExtensions: cfg.MediaExtensions,
 				maxItems:        cfg.MaxAlbumItems,
+				scrapeDelay:     cfg.ScrapeDelay,
 				diskCheck:       cfg.DiskCheck,
 				outputDir:       cfg.OutputDir,
 			}
@@ -1133,14 +1146,23 @@ type filterScraper struct {
 	mediaOnly        bool
 	mediaExtensions  []string
 	maxItems         int
+	scrapeDelay      time.Duration
 	diskCheck        bool
 	outputDir        string
 	diskChecked      bool
 }
 
+// scrapeDelaySleeper is the test seam for the configured inter-scrape delay.
+var scrapeDelaySleeper netutil.Sleeper = netutil.RealSleeper{}
+
 func (f *filterScraper) Name() string { return f.inner.Name() }
 
 func (f *filterScraper) Parse(ctx context.Context, url string) ([]model.MediaItem, error) {
+	if f.scrapeDelay > 0 {
+		if err := scrapeDelaySleeper.SleepCtx(ctx, f.scrapeDelay); err != nil {
+			return nil, err
+		}
+	}
 	items, err := f.inner.Parse(ctx, url)
 	// A partial scrape (some pages failed) still carries usable items;
 	// dropping them here would turn a warning into an empty album. Only a
@@ -1260,6 +1282,7 @@ func applyDryRunFilters(scraper model.Scraper, cfg *config.Config) model.Scraper
 		mediaOnly:       cfg.MediaOnly,
 		mediaExtensions: cfg.MediaExtensions,
 		maxItems:        cfg.MaxAlbumItems,
+		scrapeDelay:     cfg.ScrapeDelay,
 		diskCheck:       false,
 	}
 }

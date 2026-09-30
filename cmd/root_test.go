@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -156,6 +157,9 @@ func TestExplicitSubcommandReadsInheritedOptions(t *testing.T) {
 	if err := root.PersistentFlags().Set("max-album-items", "5"); err != nil {
 		t.Fatal(err)
 	}
+	if err := root.PersistentFlags().Set("scrape-delay", "250ms"); err != nil {
+		t.Fatal(err)
+	}
 	if err := root.PersistentFlags().Set("dry-run", "true"); err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +181,8 @@ func TestExplicitSubcommandReadsInheritedOptions(t *testing.T) {
 	}
 	if opts.configPath != "/tmp/custom.yaml" || opts.output != "." || opts.concurrency != 5 ||
 		opts.rateLimit != "2M" || !opts.checksums || !opts.dryRun ||
-		len(opts.allowExt) != 1 || opts.allowExt[0] != "cbz" || opts.maxAlbumItems != 5 {
+		len(opts.allowExt) != 1 || opts.allowExt[0] != "cbz" || opts.maxAlbumItems != 5 ||
+		opts.scrapeDelay != 250*time.Millisecond {
 		t.Fatalf("explicit subcommand saw stale options: %+v", opts)
 	}
 }
@@ -289,6 +294,47 @@ func TestRunBatchPrintURLsRejectsJSON(t *testing.T) {
 	)
 	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
 		t.Fatalf("expected a mutual-exclusion error, got %v", err)
+	}
+}
+
+type recordingDelaySleeper struct{ delays []time.Duration }
+
+func (s *recordingDelaySleeper) Sleep(time.Duration) {}
+
+func (s *recordingDelaySleeper) SleepCtx(_ context.Context, d time.Duration) error {
+	s.delays = append(s.delays, d)
+	return nil
+}
+
+func TestFilterScraperScrapeDelay(t *testing.T) {
+	prev := scrapeDelaySleeper
+	sleeper := &recordingDelaySleeper{}
+	scrapeDelaySleeper = sleeper
+	t.Cleanup(func() { scrapeDelaySleeper = prev })
+
+	fs := &filterScraper{
+		inner:       &mockScraper{items: []model.MediaItem{{Title: "a.mp4"}}},
+		scrapeDelay: 250 * time.Millisecond,
+	}
+	if _, err := fs.Parse(context.Background(), "https://example.com/a/x"); err != nil {
+		t.Fatal(err)
+	}
+	if len(sleeper.delays) != 1 || sleeper.delays[0] != 250*time.Millisecond {
+		t.Fatalf("delays = %v, want [250ms]", sleeper.delays)
+	}
+}
+
+func TestLoadGlobalConfigScrapeDelayFlag(t *testing.T) {
+	cfg, err := loadGlobalConfig(globalOptions{
+		configPath:     emptyTestConfig(t),
+		scrapeDelay:    750 * time.Millisecond,
+		scrapeDelaySet: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ScrapeDelay != 750*time.Millisecond {
+		t.Fatalf("ScrapeDelay = %v, want 750ms", cfg.ScrapeDelay)
 	}
 }
 

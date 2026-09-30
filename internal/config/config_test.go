@@ -115,6 +115,20 @@ func TestLoadConfigDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadConfigScrapeDelay(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "delay.yaml")
+	if err := os.WriteFile(path, []byte("scrape_delay: 750ms\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ScrapeDelay != 750*time.Millisecond {
+		t.Fatalf("ScrapeDelay = %v, want 750ms", cfg.ScrapeDelay)
+	}
+}
+
 func TestLoadConfigMaxAlbumItems(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "cap.yaml")
 	if err := os.WriteFile(path, []byte("max_album_items: 5\n"), 0600); err != nil {

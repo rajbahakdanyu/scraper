@@ -66,6 +66,9 @@ type Config struct {
 	// run, so a hostile or broken page cannot turn one URL into an endless
 	// run. Zero or negative means unlimited.
 	MaxAlbumItems int `yaml:"max_album_items"`
+	// ScrapeDelay pauses between album scrapes, easing the load on sites
+	// that rate-limit page requests. Zero means no delay.
+	ScrapeDelay time.Duration `yaml:"scrape_delay"`
 	// MediaOnly restricts downloads to media and archive files. On by
 	// default; set false (or pass --media-only=false) to download
 	// everything an album lists.
