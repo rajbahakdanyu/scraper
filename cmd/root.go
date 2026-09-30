@@ -69,6 +69,7 @@ type globalOptions struct {
 	allowExtSet      bool
 	maxAlbumItems    int
 	maxAlbumItemsSet bool
+	printURLs        bool
 	minSize          string
 	minSizeSet       bool
 	maxSize          string
@@ -279,6 +280,10 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 	if err != nil {
 		return globalOptions{}, err
 	}
+	printURLs, err := flags.GetBool("print-urls")
+	if err != nil {
+		return globalOptions{}, err
+	}
 	minSize, err := flags.GetString("min-size")
 	if err != nil {
 		return globalOptions{}, err
@@ -334,6 +339,7 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 		allowExtSet:      flags.Changed("allow-ext"),
 		maxAlbumItems:    maxAlbumItems,
 		maxAlbumItemsSet: flags.Changed("max-album-items"),
+		printURLs:        printURLs,
 		minSize:          minSize,
 		minSizeSet:       flags.Changed("min-size"),
 		maxSize:          maxSize,
@@ -437,6 +443,7 @@ func NewRootCmd() *cobra.Command {
 	root.PersistentFlags().StringSlice("exclude", nil, "Skip items matching glob (repeatable)")
 	root.PersistentFlags().StringSlice("allow-ext", nil, "Extra file extensions to keep with --media-only (repeatable, e.g. --allow-ext cbz)")
 	root.PersistentFlags().Int("max-album-items", 0, "Cap items per album (0 = unlimited; default 10000)")
+	root.PersistentFlags().Bool("print-urls", false, "Print item URLs (one per line) and exit without downloading")
 	root.PersistentFlags().String("min-size", "", "Skip items smaller than size (e.g. 500K, 2M)")
 	root.PersistentFlags().String("max-size", "", "Skip items larger than size (e.g. 500M, 1G)")
 	root.PersistentFlags().Bool("disk-check", true, "Warn if free disk space is less than estimated download size")
@@ -627,24 +634,6 @@ func runWithScraperAndConfig(cfg *config.Config, scraper model.Scraper, targetUR
 		}
 	}
 
-	if opts.dryRun {
-		filtered := applyDryRunFilters(scraper, cfg)
-		if opts.json {
-			return runDryRunJSONWithDiskCheck(filtered, targetURL, siteName, "", os.Stdout, cfg.OutputDir, cfg.DiskCheck)
-		}
-		return runDryRunWithDiskCheck(filtered, targetURL, cfg.OutputDir, cfg.DiskCheck)
-	}
-	rateLimitBytesPerSec, err := config.ParseRateLimit(cfg.RateLimit)
-	if err != nil {
-		return err
-	}
-
-	dl, err := buildDownloader(scraper, siteName, cfg, rateLimitBytesPerSec)
-	if err != nil {
-		return err
-	}
-	defer dl.Shutdown()
-
 	// The scraper function runs in a background goroutine.
 	scraperFn := func(ctx context.Context) ([]model.MediaItem, error) {
 		items, err := scraper.Parse(ctx, targetURL)
@@ -667,6 +656,39 @@ func runWithScraperAndConfig(cfg *config.Config, scraper model.Scraper, targetUR
 
 		return items, nil
 	}
+
+	if opts.dryRun {
+		filtered := applyDryRunFilters(scraper, cfg)
+		if opts.json {
+			return runDryRunJSONWithDiskCheck(filtered, targetURL, siteName, "", os.Stdout, cfg.OutputDir, cfg.DiskCheck)
+		}
+		return runDryRunWithDiskCheck(filtered, targetURL, cfg.OutputDir, cfg.DiskCheck)
+	}
+
+	if opts.printURLs {
+		if opts.json {
+			return fmt.Errorf("--print-urls and --json are mutually exclusive")
+		}
+		items, err := scraperFn(context.Background())
+		if err != nil && len(items) == 0 {
+			return err
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+		}
+		printItemURLs(os.Stdout, items)
+		return nil
+	}
+	rateLimitBytesPerSec, err := config.ParseRateLimit(cfg.RateLimit)
+	if err != nil {
+		return err
+	}
+
+	dl, err := buildDownloader(scraper, siteName, cfg, rateLimitBytesPerSec)
+	if err != nil {
+		return err
+	}
+	defer dl.Shutdown()
 
 	slug := albumSlugFor(siteName, targetURL)
 
@@ -877,6 +899,33 @@ func runBatch(opts globalOptions, entries []batchEntry) error {
 	reg, err := batchScraperRegistry(cfg.Proxy, cfg.ParsedCookies())
 	if err != nil {
 		return err
+	}
+
+	if opts.printURLs {
+		if opts.json {
+			return fmt.Errorf("--print-urls and --json are mutually exclusive")
+		}
+		var errs []error
+		for _, e := range entries {
+			site, siteErr := detectSite(e.URL)
+			if siteErr != nil {
+				fmt.Fprintf(os.Stderr, "print-urls: %s: %v\n", e.URL, siteErr)
+				errs = append(errs, siteErr)
+				continue
+			}
+			scraper := applyDryRunFilters(reg[site], cfg)
+			items, parseErr := scraper.Parse(context.Background(), e.URL)
+			if parseErr != nil && len(items) == 0 {
+				fmt.Fprintf(os.Stderr, "print-urls: %s: %v\n", e.URL, parseErr)
+				errs = append(errs, parseErr)
+				continue
+			}
+			if parseErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: %v\n", parseErr)
+			}
+			printItemURLs(os.Stdout, items)
+		}
+		return model.NewPartialError("print-urls", errs)
 	}
 
 	if opts.dryRun {
@@ -1124,6 +1173,17 @@ func (f *filterScraper) Parse(ctx context.Context, url string) ([]model.MediaIte
 // extensions and its downloader always produces media).
 func shouldFilterMedia(cfg *config.Config, siteName string) bool {
 	return cfg.MediaOnly && siteName != "youtube"
+}
+
+// printItemURLs writes one item URL per line to w, skipping items without
+// a URL (nothing to fetch).
+func printItemURLs(w io.Writer, items []model.MediaItem) {
+	for _, item := range items {
+		if item.URL == "" {
+			continue
+		}
+		fmt.Fprintln(w, item.URL)
+	}
 }
 
 // applyAlbumItemCap truncates an album's item list to the configured

@@ -158,6 +158,7 @@ per URL — same as albums).
 | `--exclude`      | (none)  | Glob pattern(s) to exclude items                          |
 | `--allow-ext`    | (none)  | Extra file extensions to keep with `--media-only` (repeatable, e.g. `--allow-ext cbz`) |
 | `--max-album-items` | `10000` | Cap items contributed by one album (0 = unlimited) |
+| `--print-urls`   | `false` | Print item URLs (one per line) and exit without downloading |
 | `--min-size`     | (none)  | Minimum file size (e.g. `1K`, `10M`)                      |
 | `--max-size`     | (none)  | Maximum file size                                         |
 | `--disk-check`   | `true`  | Check free space before downloading                       |

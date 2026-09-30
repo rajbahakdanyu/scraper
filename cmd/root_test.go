@@ -241,6 +241,55 @@ func TestNewRootCmdRegistersAllowExtFlag(t *testing.T) {
 	if root.PersistentFlags().Lookup("max-album-items") == nil {
 		t.Error("expected --max-album-items persistent flag")
 	}
+	if root.PersistentFlags().Lookup("print-urls") == nil {
+		t.Error("expected --print-urls persistent flag")
+	}
+}
+
+func TestPrintItemURLs(t *testing.T) {
+	var buf bytes.Buffer
+	printItemURLs(&buf, []model.MediaItem{
+		{URL: "https://x/a.mp4"},
+		{Title: "no-url"},
+		{URL: "https://x/b.mp4"},
+	})
+	want := "https://x/a.mp4\nhttps://x/b.mp4\n"
+	if buf.String() != want {
+		t.Fatalf("printItemURLs() = %q, want %q", buf.String(), want)
+	}
+}
+
+func TestRunWithScraperAndConfigPrintURLs(t *testing.T) {
+	scraper := &mockScraper{items: []model.MediaItem{
+		{URL: "https://x/a.mp4", Title: "a.mp4"},
+		{URL: "https://x/b.mp4", Title: "b.mp4"},
+	}}
+	cfg := &config.Config{OutputDir: t.TempDir()}
+
+	var err error
+	out := captureStdout(func() {
+		err = runWithScraperAndConfig(cfg, scraper, "https://x/a/album", "test", globalOptions{printURLs: true})
+	})
+	if err != nil {
+		t.Fatalf("print-urls run failed: %v", err)
+	}
+	if !strings.Contains(out, "https://x/a.mp4") || !strings.Contains(out, "https://x/b.mp4") {
+		t.Fatalf("expected both URLs, got %q", out)
+	}
+	if strings.Contains(out, "downloading") {
+		t.Fatalf("print-urls must not start downloads, got %q", out)
+	}
+}
+
+func TestRunBatchPrintURLsRejectsJSON(t *testing.T) {
+	restoreBatchFactories(t)
+	err := runBatch(
+		globalOptions{configPath: emptyTestConfig(t), printURLs: true, json: true},
+		[]batchEntry{{URL: "https://cyberdrop.cr/a/one"}},
+	)
+	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("expected a mutual-exclusion error, got %v", err)
+	}
 }
 
 func TestApplyAlbumItemCap(t *testing.T) {
