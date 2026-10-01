@@ -262,6 +262,38 @@ func TestParseFilesterFolderResolverRetriesTransientErrors(t *testing.T) {
 	}
 }
 
+func TestResolveFileRetriesGarbledTokenResponse(t *testing.T) {
+	var calls int32
+	var ts *httptest.Server // used inside the handler, assigned after construction
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v2/api/public/download", func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			_, _ = w.Write([]byte("gateway garbage")) // truncated body
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"file": "d/abc", "token": "tok", "server": ts.URL + "/", "name": "v.mp4",
+		})
+	})
+	ts = httptest.NewServer(mux)
+	defer ts.Close()
+
+	scraper := newTestFilesterScraper()
+	scraper.baseURL = ts.URL
+	scraper.SetSleeper(noopSleeper{})
+	item, err := scraper.resolveFile(context.Background(), "abc", "")
+	if err != nil {
+		t.Fatalf("a single garbled token response must be retried, got %v", err)
+	}
+	if item.URL == "" {
+		t.Fatal("expected a resolved item")
+	}
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Fatalf("token endpoint should have been called twice, got %d", got)
+	}
+}
+
 func TestParseFilesterFolderPagination(t *testing.T) {
 	mux := http.NewServeMux()
 
@@ -649,10 +681,11 @@ func TestParseFilesterSingleFileNotFoundNotRetried(t *testing.T) {
 	}
 }
 
-// TestParseFilesterSingleFileMalformedTokenNotRetried ensures an
-// undecodable token response fails immediately: retrying the same request
-// can never make the body parse.
-func TestParseFilesterSingleFileMalformedTokenNotRetried(t *testing.T) {
+// TestParseFilesterSingleFileMalformedTokenIsRetried ensures an
+// undecodable token response is treated as transient: a gateway can
+// truncate a body for reasons that resolve on the next attempt, so the
+// request is retried up to maxResolveRetries and then fails.
+func TestParseFilesterSingleFileMalformedTokenIsRetried(t *testing.T) {
 	var tokenRequests int32
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&tokenRequests, 1)
@@ -667,15 +700,17 @@ func TestParseFilesterSingleFileMalformedTokenNotRetried(t *testing.T) {
 	if _, err := scraper.Parse(context.Background(), ts.URL+"/d/garbage"); err == nil {
 		t.Fatal("expected error for malformed token response")
 	}
-	if n := atomic.LoadInt32(&tokenRequests); n != 1 {
-		t.Errorf("expected exactly 1 token request for an undecodable response, got %d", n)
+	if n := atomic.LoadInt32(&tokenRequests); n != maxResolveRetries {
+		t.Errorf("expected %d token requests for an undecodable response, got %d", maxResolveRetries, n)
 	}
 }
 
-// TestParseFilesterSingleFileIncompleteTokenNotRetried ensures a
-// well-formed but useless token response (missing file/token fields) fails
-// immediately: validation errors can't be fixed by retrying either.
-func TestParseFilesterSingleFileIncompleteTokenNotRetried(t *testing.T) {
+// TestParseFilesterSingleFileIncompleteTokenIsRetried ensures a
+// well-formed but useless token response (missing file/token fields) is
+// treated as transient and retried up to maxResolveRetries before
+// failing: a 200 with an empty token is a server-side blip, not a
+// property of the file.
+func TestParseFilesterSingleFileIncompleteTokenIsRetried(t *testing.T) {
 	var tokenRequests int32
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&tokenRequests, 1)
@@ -690,8 +725,8 @@ func TestParseFilesterSingleFileIncompleteTokenNotRetried(t *testing.T) {
 	if _, err := scraper.Parse(context.Background(), ts.URL+"/d/incomplete"); err == nil {
 		t.Fatal("expected error for incomplete token response")
 	}
-	if n := atomic.LoadInt32(&tokenRequests); n != 1 {
-		t.Errorf("expected exactly 1 token request for an incomplete token, got %d", n)
+	if n := atomic.LoadInt32(&tokenRequests); n != maxResolveRetries {
+		t.Errorf("expected %d token requests for an incomplete token, got %d", maxResolveRetries, n)
 	}
 }
 

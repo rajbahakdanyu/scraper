@@ -428,10 +428,13 @@ func (s *Scraper) resolveFileOnce(ctx context.Context, slug, knownName string) (
 		if errors.As(err, &urlErr) {
 			return model.MediaItem{}, fmt.Errorf("filester: download token request for %s: %w", slug, err)
 		}
-		return model.MediaItem{}, model.NewNonRetryable(err)
+		// A truncated or garbled body is transient: this function runs
+		// inside netutil.Retry for exactly this. Marking it permanent
+		// made one bad response fail the file outright.
+		return model.MediaItem{}, fmt.Errorf("filester: download token response for %s: %w", slug, err)
 	}
 	if tok.File == "" || tok.Token == "" {
-		return model.MediaItem{}, model.NewNonRetryable(fmt.Errorf("filester: incomplete download token for %s", slug))
+		return model.MediaItem{}, fmt.Errorf("filester: incomplete download token for %s", slug)
 	}
 
 	server := tok.Server
