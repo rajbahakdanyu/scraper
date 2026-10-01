@@ -62,13 +62,15 @@ downloading anything or launching the TUI:
 ### Batch mode
 
 Pass multiple URLs to download them all in sequence (each scraped as it goes,
-in the order given), instead of launching a fresh TUI per URL. All URLs must
-be from the same site type — all YouTube, or all non-YouTube (which may mix
-CyberDrop, Bunker, GoonBox, and Filester):
+in the order given), instead of launching a fresh TUI per URL. Site types can
+be mixed freely — YouTube links run first as their own group, then everything
+else (CyberDrop, Bunker, GoonBox, Filester, ...) — and the non-YouTube group
+may itself mix sites:
 
 ```bash
 ./scraper https://youtu.be/VIDEO_ID "https://www.youtube.com/playlist?list=ID"
 ./scraper https://cyberdrop.cr/f/FILE_ID https://bunkr.cr/a/ALBUM_ID
+./scraper https://youtu.be/VIDEO_ID https://bunkr.cr/a/ALBUM_ID
 ```
 
 Or read URLs from a file, one per line, with `-i, --input-file`:
