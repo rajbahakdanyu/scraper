@@ -40,6 +40,8 @@ func TestReadFirefoxCookiesFiltersToSupportedSites(t *testing.T) {
 	create := exec.Command("sqlite3", db,
 		"CREATE TABLE moz_cookies (name TEXT, value TEXT, host TEXT, path TEXT, expiry INTEGER, isSecure INTEGER, isHttpOnly INTEGER);"+
 			"INSERT INTO moz_cookies VALUES ('sid','abc','.bunkr.cr','/',2000000000,1,1);"+
+			"INSERT INTO moz_cookies VALUES ('sub','abc','cdn.bunkr.cr','/',2000000000,1,1);"+
+			"INSERT INTO moz_cookies VALUES ('lookalike','zzz','.evilbunkr.cr','/',2000000000,0,0);"+
 			"INSERT INTO moz_cookies VALUES ('other','zzz','.example.com','/',2000000000,0,0);")
 	if out, err := create.CombinedOutput(); err != nil {
 		t.Fatalf("create cookies db: %v: %s", err, out)
@@ -49,7 +51,31 @@ func TestReadFirefoxCookiesFiltersToSupportedSites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cookies) != 1 || cookies[0].Name != "sid" || cookies[0].Domain != ".bunkr.cr" || !cookies[0].Secure {
-		t.Fatalf("cookies = %+v, want only the bunkr one", cookies)
+	if len(cookies) != 2 {
+		t.Fatalf("cookies = %+v, want exactly the real-domain rows (lookalike evilbunkr.cr excluded)", cookies)
+	}
+	for _, c := range cookies {
+		if c.Name == "lookalike" || c.Name == "other" {
+			t.Fatalf("unrelated/lookalike cookie %q must not be imported", c.Name)
+		}
+	}
+}
+
+func TestFirefoxProfileDirHonorsAbsoluteProfilePath(t *testing.T) {
+	root := t.TempDir()
+	ini := "[Profile0]\nName=moved\nIsRelative=0\nPath=/opt/firefox-profiles/me.default\n"
+	if err := os.WriteFile(filepath.Join(root, "profiles.ini"), []byte(ini), 0600); err != nil {
+		t.Fatal(err)
+	}
+	prev := firefoxRoot
+	firefoxRoot = func() (string, error) { return root, nil }
+	t.Cleanup(func() { firefoxRoot = prev })
+
+	got, err := firefoxProfileDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "/opt/firefox-profiles/me.default"; got != want {
+		t.Fatalf("absolute profile path mangled: got %q, want %q", got, want)
 	}
 }

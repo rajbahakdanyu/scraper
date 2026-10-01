@@ -49,37 +49,65 @@ func firefoxProfileDir() (string, error) {
 	}
 
 	type profile struct {
-		section string
-		path    string
+		section  string
+		path     string
+		relative string // "1", "0", or "" (absent: Firefox treats it as relative)
 	}
-	var profiles []profile
+	// Attributes arrive per section in any order (IsRelative can precede
+	// Path), so collect them per section first, then build the list in
+	// file order.
+	var order []string
+	sections := map[string]*profile{}
 	defaults := map[string]bool{}
 	var current string
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
 			current = strings.Trim(line, "[]")
+			if _, ok := sections[current]; !ok {
+				order = append(order, current)
+				sections[current] = &profile{section: current}
+			}
 			continue
 		}
 		if current == "" {
 			continue
 		}
 		if strings.HasPrefix(line, "Path=") {
-			profiles = append(profiles, profile{section: current, path: strings.TrimPrefix(line, "Path=")})
+			sections[current].path = strings.TrimPrefix(line, "Path=")
+			continue
+		}
+		if strings.HasPrefix(line, "IsRelative=") {
+			sections[current].relative = strings.TrimPrefix(line, "IsRelative=")
+			continue
 		}
 		if line == "Default=1" {
 			defaults[current] = true
 		}
 	}
-	if len(profiles) == 0 {
+	if len(order) == 0 {
 		return "", fmt.Errorf("no Firefox profiles found in %s", filepath.Join(root, "profiles.ini"))
+	}
+	profiles := make([]profile, 0, len(order))
+	for _, s := range order {
+		profiles = append(profiles, *sections[s])
 	}
 	for _, p := range profiles {
 		if defaults[p.section] {
-			return filepath.Join(root, filepath.FromSlash(p.path)), nil
+			return profileDir(root, p.path, p.relative), nil
 		}
 	}
-	return filepath.Join(root, filepath.FromSlash(profiles[0].path)), nil
+	return profileDir(root, profiles[0].path, profiles[0].relative), nil
+}
+
+// profileDir resolves a profile record to its directory: relative paths
+// sit under the Firefox root; IsRelative=0 means the Path is absolute.
+// Firefox writes IsRelative=1 by default; absent means relative.
+func profileDir(root string, path, relative string) string {
+	if relative == "0" && path != "" {
+		return filepath.FromSlash(path)
+	}
+	return filepath.Join(root, filepath.FromSlash(path))
 }
 
 // readFirefoxCookies reads cookies for the supported site domains out of a
@@ -92,7 +120,15 @@ func readFirefoxCookies(dbPath string) ([]*http.Cookie, error) {
 	var clauses []string
 	for _, domains := range siteDomains {
 		for _, domain := range domains {
-			clauses = append(clauses, fmt.Sprintf("host LIKE '%%%s'", domain))
+			// Exact host, dot-prefixed host, or a subdomain. A
+			// left-unanchored LIKE ('%bunkr.cr') would also match lookalike
+			// hosts like evilbunkr.cr. Domains come from the static
+			// siteDomains map, never user input.
+			clauses = append(clauses,
+				fmt.Sprintf("host = '%s'", domain),
+				fmt.Sprintf("host = '.%s'", domain),
+				fmt.Sprintf("host LIKE '%%.%s'", domain),
+			)
 		}
 	}
 	if len(clauses) == 0 {
