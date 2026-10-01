@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -2039,6 +2040,39 @@ func TestDownloadRejectsHTMLMasqueradingAsMedia(t *testing.T) {
 	}
 }
 
+func TestDownloadRejectsPaddedHTMLMasqueradingAsMedia(t *testing.T) {
+	// 4096 bytes of binary filler, then an HTML document: the
+	// pre-transfer sniff sees only filler bytes and would classify the
+	// body as application/octet-stream. The post-transfer scan must
+	// still refuse it.
+	body := bytes.Repeat([]byte{0xA5}, 4096)
+	body = append(body, []byte("<html><body><h1>not a video</h1></body></html>")...)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		w.Write(body)
+	}))
+	defer ts.Close()
+
+	dest := t.TempDir()
+	dl := newTestDownloader(1, 0, "")
+	item := model.MediaItem{URL: ts.URL + "/video.mp4", Title: "video.mp4", Size: int64(len(body))}
+
+	_, err := dl.Download(item, dest)
+	if err == nil {
+		t.Fatal("padded HTML masquerading as media must be refused")
+	}
+	var nre *model.NonRetryableError
+	if !errors.As(err, &nre) {
+		t.Fatalf("expected a non-retryable refusal, got %T: %v", err, err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dest, "video.mp4")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("refused payload must not be kept, stat err = %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(dest, "video.mp4.part")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("refused content must not leave a resumable .part, stat err = %v", statErr)
+	}
+}
+
 func TestDownloadAllowsHTMLForNonMediaItem(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
@@ -2087,9 +2121,13 @@ func TestDownloadRefererHeader(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var got string
+			// Binary body: the subject is the Referer header, and a
+			// media-named item must carry real media bytes to survive
+			// the content sniff/scan.
+			body := append([]byte{0x00, 0x00, 0x00, 0x18}, []byte("ftypisom\x00\x00\x02\x00isomiso2avc1mp41")...)
 			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				got = r.Header.Get("Referer")
-				w.Write([]byte("ok"))
+				w.Write(body)
 			}))
 			defer ts.Close()
 
