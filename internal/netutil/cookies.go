@@ -51,7 +51,9 @@ func ParseNetscapeCookies(path string) ([]*http.Cookie, error) {
 			fmt.Fprintf(os.Stderr, "cookies:%d: cannot parse expiry %q, skipping cookie %s\n", lineNo, expiryStr, name)
 			continue
 		}
-		if time.Now().Unix() > expiry {
+		// Expiry 0 is the Netscape format's session-cookie convention:
+		// no timestamp, so it must not be treated as already expired.
+		if expiry != 0 && time.Now().Unix() > expiry {
 			fmt.Fprintf(os.Stderr, "cookies:%d: expired cookie %s, skipping\n", lineNo, name)
 			continue
 		}
@@ -65,7 +67,9 @@ func ParseNetscapeCookies(path string) ([]*http.Cookie, error) {
 			Path:     path,
 			Secure:   secure,
 			HttpOnly: true,
-			Expires:  time.Unix(expiry, 0),
+		}
+		if expiry != 0 {
+			cookie.Expires = time.Unix(expiry, 0)
 		}
 		cookies = append(cookies, cookie)
 	}

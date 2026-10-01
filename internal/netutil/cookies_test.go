@@ -166,6 +166,24 @@ func TestParseNetscapeCookiesMalformedLineSkipped(t *testing.T) {
 	}
 }
 
+func TestParseNetscapeCookiesKeepsSessionCookies(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.txt")
+	line := ".example.com\tTRUE\t/\tTRUE\t0\tsession\tabc\n"
+	if err := os.WriteFile(path, []byte(line), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cookies, err := ParseNetscapeCookies(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cookies) != 1 || cookies[0].Name != "session" {
+		t.Fatalf("session cookie (expiry 0) must be kept, got %+v", cookies)
+	}
+	if !cookies[0].Expires.IsZero() {
+		t.Fatalf("session cookie must not carry an Expires timestamp, got %v", cookies[0].Expires)
+	}
+}
+
 func TestParseNetscapeCookiesSecureFlag(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "secure.txt")
 	content := ".example.com\tTRUE\t/\tTRUE\t9999999999\tsecure_cookie\tsecret\n"
