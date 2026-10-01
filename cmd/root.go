@@ -574,7 +574,10 @@ func NewRootCmd() *cobra.Command {
 	root.PersistentFlags().String("cookies", "", "Netscape-format cookies file (e.g. ~/cookies.txt)")
 	root.PersistentFlags().String("quality", "", "Max YouTube resolution (2160p, 1440p, 1080p, 720p, 480p, 360p, 240p)")
 	root.PersistentFlags().String("audio-only", "", "YouTube audio only; optional format: m4a (default) or mp3")
-	root.PersistentFlags().StringSlice("include", nil, "Keep only items matching glob (repeatable, e.g. -i '*.mp4' -i '*.mkv')")
+	// Bare --audio-only means m4a: the help text calls the format
+	// optional, so the flag must work without a value.
+	root.PersistentFlags().Lookup("audio-only").NoOptDefVal = "m4a"
+	root.PersistentFlags().StringSlice("include", nil, "Keep only items matching glob (repeatable, e.g. --include '*.mp4' --include '*.mkv')")
 	root.PersistentFlags().StringSlice("exclude", nil, "Skip items matching glob (repeatable)")
 	root.PersistentFlags().StringSlice("allow-ext", nil, "Extra file extensions to keep with --media-only (repeatable, e.g. --allow-ext cbz)")
 	root.PersistentFlags().Int("max-album-items", 0, "Cap items per album (0 = unlimited; default 10000)")

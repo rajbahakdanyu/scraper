@@ -154,9 +154,9 @@ per URL — same as albums).
 | `-j, --json`     | `false` | Output JSON Lines (one event per line); implies `--no-tui` |
 | `--proxy`        | (none)  | HTTP/S proxy URL for all requests (e.g. `http://proxy:8080`) |
 | `--cookies`      | (none)  | Netscape-format cookies file for HTTP requests |
-| `--quality`      | (auto)  | Maximum YouTube quality (`2160p`, `1080p`, `720p`, `480p`, `360p`) |
-| `--audio-only`   | `false` | Download audio tracks only (no video)                     |
-| `--include`      | (none)  | Glob pattern(s) to filter items (e.g. `*.mp4,*.png`)      |
+| `--quality`      | (auto)  | Maximum YouTube quality (`2160p`, `1440p`, `1080p`, `720p`, `480p`, `360p`, `240p`) |
+| `--audio-only`   | (off)   | YouTube audio only; optional format: `m4a` (default) or `mp3` |
+| `--include`      | (none)  | Glob pattern(s) to filter items (repeatable, e.g. `--include '*.mp4'`) |
 | `--exclude`      | (none)  | Glob pattern(s) to exclude items                          |
 | `--allow-ext`    | (none)  | Extra file extensions to keep with `--media-only` (repeatable, e.g. `--allow-ext cbz`) |
 | `--max-album-items` | `10000` | Cap items contributed by one album (0 = unlimited) |
@@ -274,7 +274,7 @@ checksums: false
 proxy: http://proxy:8080
 cookies: ~/.scraper-cookies.txt
 quality: "1080p"
-audio_only: false
+audio_only: ""  # off; or "m4a" / "mp3" — a YAML boolean here fails to load
 include: ["*.mp4", "*.mkv"]
 exclude: ["*.txt"]
 media_extensions: []

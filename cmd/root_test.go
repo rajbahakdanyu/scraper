@@ -985,6 +985,13 @@ func TestRunBatchPlainTreatsEmptyScrapeAsFailure(t *testing.T) {
 	}
 }
 
+func TestAudioOnlyFlagBareValueDefaultsToM4A(t *testing.T) {
+	root := NewRootCmd()
+	if got := root.PersistentFlags().Lookup("audio-only").NoOptDefVal; got != "m4a" {
+		t.Fatalf("audio-only NoOptDefVal = %q, want m4a (bare --audio-only must work)", got)
+	}
+}
+
 func TestRunBatchContinuesAfterGroupFailure(t *testing.T) {
 	restoreBatchFactories(t)
 	var genericCalls int
