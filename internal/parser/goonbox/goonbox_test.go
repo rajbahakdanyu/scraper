@@ -225,6 +225,43 @@ func TestParseGoonBoxAlbumParallelPagination(t *testing.T) {
 // claims another page exists cannot keep Parse fetching forever: Parse
 // stops at maxAlbumPages requests and returns the items gathered so far
 // with no error.
+func TestParseGoonBoxAlbumUnderreportedLastPageKeepsTail(t *testing.T) {
+	var requests int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/albums/under", func(w http.ResponseWriter, r *http.Request) {
+		n := 0
+		_, _ = fmt.Sscan(r.URL.Query().Get("page"), &n)
+		atomic.AddInt32(&requests, 1)
+		last := 2 // every page after the first under-reports
+		if n == 1 {
+			last = 12
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"images": []map[string]interface{}{{
+				"original_url":      fmt.Sprintf("https://cdn.example.com/p%d.jpg", n),
+				"original_filename": fmt.Sprintf("p%d.jpg", n),
+			}},
+			"pagination": map[string]int{"current_page": n, "last_page": last},
+		})
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	scraper := newTestGoonBoxScraper()
+	scraper.baseURL = ts.URL
+	items, err := scraper.Parse(context.Background(), ts.URL+"/a/under")
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	if len(items) != 12 {
+		t.Fatalf("under-reported last_page must not drop the album tail: got %d items, want 12", len(items))
+	}
+	if got := atomic.LoadInt32(&requests); got != 12 {
+		t.Fatalf("expected 12 page requests, got %d", got)
+	}
+}
+
 func TestParseGoonBoxAlbumPaginationCapped(t *testing.T) {
 	var requests int32
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

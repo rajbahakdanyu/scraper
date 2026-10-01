@@ -178,14 +178,15 @@ func (s *Scraper) Parse(ctx context.Context, albumURL string) ([]model.MediaItem
 	for pending > 0 {
 		result := <-resultCh
 		pending--
+		// lastPage only ever grows. A page that under-reports last_page
+		// (a flaky reply echoing last=current) must not silently drop
+		// the tail of the album: pages beyond the real end simply come
+		// back empty.
 		if result.last > lastPage {
 			lastPage = result.last
 			if lastPage > maxAlbumPages {
 				lastPage = maxAlbumPages
 			}
-		}
-		if result.current >= result.last && result.last > 0 && result.current < lastPage {
-			lastPage = result.current
 		}
 		if result.index >= 0 {
 			if result.index >= len(results) {
@@ -202,11 +203,8 @@ func (s *Scraper) Parse(ctx context.Context, albumURL string) ([]model.MediaItem
 	var unsafeErrs []error
 	var pageErrs []error
 	for _, result := range results {
-		// Entries never fetched (a hostile/inconsistent page shrank
-		// lastPage before they were scheduled) are zero-value slots and
-		// contribute nothing. Fetched pages are always kept: breaking on
-		// the first page that claims to be last would silently discard
-		// pages that were already downloaded.
+		// Entries never fetched (the maxAlbumPages cap stopped
+		// scheduling) are zero-value slots and contribute nothing.
 		if !result.fetched {
 			continue
 		}
