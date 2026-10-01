@@ -1158,6 +1158,70 @@ func TestFailuresReturnsOnlyFailedItems(t *testing.T) {
 	}
 }
 
+func TestRetryAllFailedResetsStates(t *testing.T) {
+	d := NewBatch(&fakeDownloader{ch: make(chan model.ProgressEvent, 1)}, t.TempDir(), nil)
+	d.states = []itemState{
+		{item: model.MediaItem{URL: "https://x/1", Title: "one"}, status: model.StatusFailed, lastErr: errors.New("boom")},
+		{item: model.MediaItem{URL: "https://x/2", Title: "two"}, status: model.StatusCompleted},
+		{item: model.MediaItem{URL: "https://x/3", Title: "three"}, status: model.StatusFailed, lastErr: errors.New("boom")},
+	}
+	d.refreshRows()
+
+	updated, cmd := d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+	got, ok := updated.(*Dashboard)
+	if !ok {
+		t.Fatal("Update did not return *Dashboard")
+	}
+	if cmd == nil {
+		t.Fatal("expected retry commands for the failed items")
+	}
+	if got.states[0].status != model.StatusPending || got.states[2].status != model.StatusPending {
+		t.Fatalf("failed items not reset: %v, %v", got.states[0].status, got.states[2].status)
+	}
+	if got.states[1].status != model.StatusCompleted {
+		t.Fatal("completed item must stay completed")
+	}
+}
+
+func TestStatsIncludeETA(t *testing.T) {
+	d := NewBatch(&fakeDownloader{ch: make(chan model.ProgressEvent, 1)}, t.TempDir(), nil)
+	d.states = []itemState{
+		{item: model.MediaItem{Title: "a.mp4", Size: 1000}, status: model.StatusDownloading, total: 1000, bytes: 500, speed: 100},
+	}
+	if !strings.Contains(d.renderStats(), "eta ") {
+		t.Fatalf("stats should include an ETA: %s", d.renderStats())
+	}
+}
+
+func TestSearchJumpsToMatch(t *testing.T) {
+	d := NewBatch(&fakeDownloader{ch: make(chan model.ProgressEvent, 1)}, t.TempDir(), nil)
+	d.states = []itemState{
+		{item: model.MediaItem{Title: "alpha.mp4"}, status: model.StatusPending},
+		{item: model.MediaItem{Title: "beta.mp4"}, status: model.StatusPending},
+		{item: model.MediaItem{Title: "gamma.mp4"}, status: model.StatusPending},
+	}
+	d.refreshRows()
+
+	updated, _ := d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	d2, ok := updated.(*Dashboard)
+	if !ok || !d2.searching {
+		t.Fatal("pressing / should start search mode")
+	}
+	updated, _ = d2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("gamma")})
+	d3, ok := updated.(*Dashboard)
+	if !ok || d3.searchQuery != "gamma" {
+		t.Fatalf("search query = %q, want gamma", d3.searchQuery)
+	}
+	updated, _ = d3.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	d4, ok := updated.(*Dashboard)
+	if !ok {
+		t.Fatal("Update did not return *Dashboard")
+	}
+	if got := d4.table.Cursor(); got != 2 {
+		t.Fatalf("cursor = %d, want 2 (gamma row)", got)
+	}
+}
+
 func TestErrorPanelToggles(t *testing.T) {
 	d := NewBatch(&fakeDownloader{ch: make(chan model.ProgressEvent, 1)}, t.TempDir(), nil)
 	d.phase = phaseDownload

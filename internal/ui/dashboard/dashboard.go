@@ -94,6 +94,8 @@ type Dashboard struct {
 	sourceURL         string
 	errorLog          []string
 	showErrors        bool
+	searching         bool
+	searchQuery       string
 	progressMu        sync.Mutex
 	pending           map[string]model.ProgressEvent
 	refreshTickActive bool
@@ -300,7 +302,22 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return d.handleBatchScrape(msg)
 
 	case tea.KeyMsg:
+		if d.searching {
+			return d.handleSearchKey(msg)
+		}
 		switch msg.String() {
+		case "/":
+			d.searching = true
+			d.searchQuery = ""
+			return d, nil
+		case "n":
+			if d.searchQuery != "" {
+				d.jumpToMatch()
+			}
+			return d, nil
+		case "R":
+			d.inspectMsg = ""
+			return d, d.retryAllFailed()
 		case "q", "ctrl+c", "esc":
 			d.quitting = true
 			if d.cancelScrape != nil {
@@ -701,6 +718,80 @@ func (d *Dashboard) Failures() []FailedItem {
 	return out
 }
 
+// handleSearchKey edits the search query while `/` search is active.
+func (d *Dashboard) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		d.searching = false
+		d.searchQuery = ""
+	case "enter":
+		d.searching = false
+		d.jumpToMatch()
+	case "backspace":
+		if runes := []rune(d.searchQuery); len(runes) > 0 {
+			d.searchQuery = string(runes[:len(runes)-1])
+		}
+	default:
+		if len(msg.Runes) > 0 {
+			d.searchQuery += string(msg.Runes)
+		}
+	}
+	return d, nil
+}
+
+// jumpToMatch moves the cursor to the next item whose title contains the
+// search query, wrapping around and skipping headers.
+func (d *Dashboard) jumpToMatch() {
+	if d.searchQuery == "" || len(d.states) == 0 {
+		return
+	}
+	query := strings.ToLower(d.searchQuery)
+	start := d.table.Cursor()
+	n := len(d.states)
+	for step := 1; step <= n; step++ {
+		idx := (start + step) % n
+		if d.states[idx].isHeader {
+			continue
+		}
+		if strings.Contains(strings.ToLower(model.TitleOf(d.states[idx].item)), query) {
+			d.table.SetCursor(idx)
+			d.table.UpdateViewport()
+			return
+		}
+	}
+}
+
+// retryAllFailed resets every failed item and starts fresh downloads for
+// them, so a batch's failures can be retried without hunting for each row.
+func (d *Dashboard) retryAllFailed() tea.Cmd {
+	if d.downloader == nil {
+		return nil
+	}
+	var cmds []tea.Cmd
+	for i := range d.states {
+		if d.states[i].isHeader || d.states[i].status != model.StatusFailed {
+			continue
+		}
+		dest := d.states[i].dest
+		if dest == "" {
+			dest = d.dest
+		}
+		d.states[i].status = model.StatusPending
+		d.states[i].bytes = 0
+		d.states[i].total = d.states[i].item.Size
+		d.states[i].speed = 0
+		d.states[i].started = time.Time{}
+		d.states[i].lastErr = nil
+		d.downloader.Prepare(d.states[i].item)
+		cmds = append(cmds, startDownload(d.downloader, d.states[i].item, dest))
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	d.refreshRows()
+	return tea.Batch(append(cmds, d.ensureRefreshTicker())...)
+}
+
 // retrySelected resets the selected failed item back to pending and
 // kicks off a fresh download attempt.
 func (d *Dashboard) retrySelected() tea.Cmd {
@@ -951,7 +1042,7 @@ func (d *Dashboard) viewError(header string) string {
 func (d *Dashboard) viewBatch(header string) string {
 	tablePanel := d.theme.PanelSlim.Render(d.table.View())
 	stats := d.renderStats()
-	footer := d.theme.Footer.Render("  ↑↓ select  •  c cancel  •  r retry  •  enter inspect  •  e errors  •  q quit")
+	footer := d.theme.Footer.Render("  ↑↓ select  •  c cancel  •  r retry  •  R retry all  •  / search  •  e errors  •  q quit")
 
 	sections := []string{"", header, "", stats, "", tablePanel}
 	if d.status != "" {
@@ -962,6 +1053,11 @@ func (d *Dashboard) viewBatch(header string) string {
 	}
 	if d.showErrors && len(d.errorLog) > 0 {
 		sections = append(sections, "", d.viewErrorPanel())
+	}
+	if d.searching {
+		sections = append(sections, "", d.theme.Dim.Render("  search: "+d.searchQuery+"▏"))
+	} else if d.searchQuery != "" {
+		sections = append(sections, "", d.theme.Dim.Render("  search: "+d.searchQuery+"  (n next)"))
 	}
 	sections = append(sections, "", footer)
 	return lipgloss.JoinVertical(lipgloss.Left, sections...)
@@ -1027,6 +1123,9 @@ func (d *Dashboard) renderStats() string {
 
 	if totalSpeed > 0 {
 		parts = append(parts, d.theme.Dim.Render("speed ")+d.theme.Cyan.Render(fmt.Sprintf("%s/s", HumanizeBytes(int64(totalSpeed)))))
+		if eta := d.remainingETA(totalSpeed); eta > 0 {
+			parts = append(parts, d.theme.Dim.Render("eta ")+d.theme.Cyan.Render(eta.Round(time.Second).String()))
+		}
 	}
 
 	if d.batchMode && d.batchRemaining > 0 {
@@ -1046,6 +1145,34 @@ func (d *Dashboard) renderStats() string {
 
 	line := icon + " " + d.theme.Dim.Render("done ") + strings.Join(parts, "  ")
 	return d.theme.StatusBar.Render(line)
+}
+
+// remainingETA estimates how long the outstanding bytes will take at the
+// current combined speed, or 0 when there is nothing outstanding.
+func (d *Dashboard) remainingETA(totalSpeed float64) time.Duration {
+	if totalSpeed <= 0 {
+		return 0
+	}
+	var remaining int64
+	for _, st := range d.states {
+		if st.isHeader {
+			continue
+		}
+		switch st.status {
+		case model.StatusDownloading:
+			if st.total > st.bytes {
+				remaining += st.total - st.bytes
+			}
+		case model.StatusPending:
+			if st.item.Size > 0 {
+				remaining += st.item.Size
+			}
+		}
+	}
+	if remaining <= 0 {
+		return 0
+	}
+	return time.Duration(float64(remaining)/totalSpeed) * time.Second
 }
 
 // spinnerActive reports whether the spinner should keep ticking: while
