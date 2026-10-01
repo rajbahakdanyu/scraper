@@ -16,6 +16,21 @@ func TestFreeSpaceOnTempDir(t *testing.T) {
 	}
 }
 
+func TestFreeSpaceNearestExistingWalksToAncestor(t *testing.T) {
+	dir := t.TempDir()
+	free, err := FreeSpaceNearestExisting(filepath.Join(dir, "album", "sub"))
+	if err != nil {
+		t.Fatalf("walk to nearest existing ancestor failed: %v", err)
+	}
+	want, err := FreeSpace(dir)
+	if err != nil {
+		t.Skipf("FreeSpace not available: %v", err)
+	}
+	if free != want {
+		t.Fatalf("nearest existing ancestor free space = %d, want %d", free, want)
+	}
+}
+
 func TestFreeSpaceNonexistentPath(t *testing.T) {
 	if _, err := FreeSpace(filepath.Join(t.TempDir(), "nonexistent")); err == nil {
 		t.Fatal("expected an error for a nonexistent path")

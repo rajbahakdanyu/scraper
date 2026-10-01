@@ -431,6 +431,10 @@ func exitCode(err error) int {
 // logFile is the optional --log-file sink; nil when unset.
 var logFile io.Writer
 
+// diskWarn is the sink for --disk-check warnings (a test seam mirroring
+// logFile).
+var diskWarn io.Writer = os.Stderr
+
 // openLogFile opens (appending) the optional run log. A failure is fatal so
 // a typo'd path is caught before any downloads start.
 func openLogFile(path string) error {
@@ -1394,9 +1398,15 @@ func runDiskCheck(items []model.MediaItem, outputDir string, diskCheck bool) {
 	if total == 0 {
 		return
 	}
-	free, err := disk.FreeSpace(outputDir)
-	if err == nil && free < total {
-		fmt.Fprintln(os.Stderr, diskWarning(total, free, unknown))
+	free, err := disk.FreeSpaceNearestExisting(outputDir)
+	if err != nil {
+		// The check was requested: failing to see the filesystem is
+		// worth a line, not silence.
+		fmt.Fprintf(diskWarn, "disk: could not check free space for %s: %v\n", outputDir, err)
+		return
+	}
+	if free < total {
+		fmt.Fprintln(diskWarn, diskWarning(total, free, unknown))
 	}
 }
 

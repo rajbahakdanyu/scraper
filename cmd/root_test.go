@@ -942,6 +942,17 @@ func TestBunkerMirrorDomainsMatchSiteDomains(t *testing.T) {
 	}
 }
 
+func TestRunDiskCheckWarnsForMissingOutputDir(t *testing.T) {
+	var buf bytes.Buffer
+	prev := diskWarn
+	diskWarn = &buf
+	t.Cleanup(func() { diskWarn = prev })
+	runDiskCheck([]model.MediaItem{{Title: "big.mp4", Size: 1 << 62}}, filepath.Join(t.TempDir(), "missing"), true)
+	if !strings.Contains(buf.String(), "short") {
+		t.Fatalf("a huge download into a fresh directory must warn, got %q", buf.String())
+	}
+}
+
 func TestRunBatchContinuesAfterGroupFailure(t *testing.T) {
 	restoreBatchFactories(t)
 	var genericCalls int
