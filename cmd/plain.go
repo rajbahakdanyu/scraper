@@ -55,17 +55,17 @@ func newPlainPrinter(w io.Writer) *plainPrinter {
 	return &plainPrinter{w: w, last: map[string]string{}}
 }
 
-// watchSignals shuts the downloader down when SIGINT or SIGTERM arrives.
-// The returned done channel closes once the watcher exits — after a
-// signal, or when stop is called. stop releases the signal registration
-// and its goroutine: without it, every --watch interval leaks one, each
-// still receiving every signal.
 // ErrNoItems marks a scrape that returned zero items (a dead URL, a DOM
 // change) as distinct from "everything was filtered out": the first is a
 // failure and must exit non-zero, the second is the user's filter doing
 // its job.
 var ErrNoItems = errors.New("no media items found")
 
+// watchSignals shuts the downloader down when SIGINT or SIGTERM arrives.
+// The returned done channel closes once the watcher exits — after a
+// signal, or when stop is called. stop releases the signal registration
+// and its goroutine: without it, every --watch interval leaks one, each
+// still receiving every signal.
 func watchSignals(dl dashboard.Downloader) (done <-chan struct{}, stop func()) {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
@@ -738,6 +738,19 @@ batchLoop:
 func runDryRunJSONWithDiskCheck(scraper model.Scraper, targetURL, siteName, slugOverride string, out io.Writer, outputDir string, diskCheck bool) error {
 	items, err := scraper.Parse(context.Background(), targetURL)
 	if err != nil && len(items) == 0 {
+		if errors.Is(err, ErrNoItems) {
+			// Dry-run is informational: a URL that yields nothing
+			// emits an empty summary and exits 0.
+			data, _ := json.Marshal(map[string]interface{}{
+				"dryRun":  true,
+				"url":     targetURL,
+				"site":    siteName,
+				"items":   []model.JSONItem{},
+				"summary": map[string]interface{}{"total": 0, "completed": 0, "failed": 0, "cancelled": 0},
+			})
+			fmt.Fprintln(out, string(data))
+			return nil
+		}
 		data, _ := json.Marshal(map[string]interface{}{
 			"dryRun": true,
 			"error":  err.Error(),

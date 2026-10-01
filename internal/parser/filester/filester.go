@@ -381,9 +381,10 @@ func extractFileItems(doc *goquery.Document) []folderEntry {
 // much burstier pattern than the paced page-listing phase, and one that
 // was found to hit the same kind of rate limiting with zero retry
 // coverage at all. Retries with backoff+jitter before giving up — except
-// for permanent failures (a 4xx other than 408/429, an undecodable or
-// invalid token response), which no amount of retrying can fix and so are
-// returned immediately.
+// for permanent failures (a 4xx other than 408/429), which no amount of
+// retrying can fix and so are returned immediately. A garbled or
+// incomplete token body is treated as transient: gateways truncate
+// responses for reasons that resolve on the next attempt.
 func (s *Scraper) resolveFile(ctx context.Context, slug, knownName string) (model.MediaItem, error) {
 	var item model.MediaItem
 	err := netutil.Retry(ctx, maxResolveRetries, resolveRetryBaseDelay, s.sleeper, func() error {

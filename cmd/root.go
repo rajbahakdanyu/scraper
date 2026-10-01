@@ -1258,6 +1258,12 @@ func runDryRunWithDiskCheck(scraper model.Scraper, targetURL, outputDir string, 
 
 	items, err := scraper.Parse(context.Background(), targetURL)
 	if err != nil && len(items) == 0 {
+		if errors.Is(err, ErrNoItems) {
+			// Dry-run is informational: a URL that yields nothing
+			// prints the empty message and exits 0.
+			fmt.Println("No items found.")
+			return nil
+		}
 		return err
 	}
 	if err != nil {

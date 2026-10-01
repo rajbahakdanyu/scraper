@@ -2073,6 +2073,23 @@ func TestDownloadRejectsPaddedHTMLMasqueradingAsMedia(t *testing.T) {
 	}
 }
 
+func TestDownloadKeepsEmptyBodyForMediaItem(t *testing.T) {
+	// A zero-byte response is tolerated like the pre-transfer sniff
+	// tolerates an empty head: the scan must not invent a
+	// classification for it.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "0")
+	}))
+	defer ts.Close()
+
+	dest := t.TempDir()
+	dl := newTestDownloader(1, 0, "")
+	item := model.MediaItem{URL: ts.URL + "/video.mp4", Title: "video.mp4"}
+	if _, err := dl.Download(item, dest); err != nil {
+		t.Fatalf("an empty body must not be reclassified as text, got %v", err)
+	}
+}
+
 func TestDownloadAllowsHTMLForNonMediaItem(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")

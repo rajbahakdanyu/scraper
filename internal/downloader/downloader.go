@@ -772,6 +772,11 @@ func refuseSuspiciousContent(tempPath string, item model.MediaItem, rawURL strin
 		return readErr
 	}
 	head = head[:n]
+	if n == 0 {
+		// An empty body carries nothing to classify; mirror the
+		// pre-transfer sniff, which tolerates an empty head.
+		return nil
+	}
 
 	sniffed := head
 	if len(sniffed) > contentSniffLen {

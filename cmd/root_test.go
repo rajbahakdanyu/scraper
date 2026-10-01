@@ -956,6 +956,45 @@ func TestRunDiskCheckWarnsForMissingOutputDir(t *testing.T) {
 	}
 }
 
+func TestRunDryRunEmptyScrapeIsInformational(t *testing.T) {
+	// Dry-run is informational: a URL that scrapes zero items (wrapped
+	// by the filter scraper under the default media-only config) must
+	// print the empty message and exit 0, not fail the run.
+	cfg, err := config.Load(emptyTestConfig(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	scraper := applyDryRunFilters(&fakeDryRunScraper{}, cfg)
+
+	out := captureStdout(func() {
+		if err := runDryRunWithDiskCheck(scraper, "https://cyberdrop.cr/a/empty", t.TempDir(), false); err != nil {
+			t.Errorf("dry-run of an empty scrape must exit 0, got %v", err)
+		}
+	})
+	if !strings.Contains(out, "No items found.") {
+		t.Fatalf("expected the empty message, got: %s", out)
+	}
+}
+
+func TestRunDryRunJSONEmptyScrapeIsInformational(t *testing.T) {
+	cfg, err := config.Load(emptyTestConfig(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	scraper := applyDryRunFilters(&fakeDryRunScraper{}, cfg)
+
+	var buf bytes.Buffer
+	if err := runDryRunJSONWithDiskCheck(scraper, "https://cyberdrop.cr/a/empty", "cyberdrop", "", &buf, t.TempDir(), false); err != nil {
+		t.Fatalf("dry-run of an empty scrape must exit 0, got %v", err)
+	}
+	if strings.Contains(buf.String(), `"error"`) {
+		t.Fatalf("expected an empty dry-run summary without an error event, got: %s", buf.String())
+	}
+	if !strings.Contains(buf.String(), `"dryRun"`) {
+		t.Fatalf("expected a dry-run document, got: %s", buf.String())
+	}
+}
+
 func TestRunPlainNoItemsIsAnError(t *testing.T) {
 	var buf bytes.Buffer
 	err := runPlain(newFakePlainDownloader(), func() ([]model.MediaItem, error) {

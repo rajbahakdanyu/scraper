@@ -63,8 +63,9 @@ var mirrorOrigins = func() []string {
 // bunkr mirror and its subdomains (e.g. dl.bunkr.cr), plus the page's
 // own host — the same origin the user asked to scrape. The signed CDN
 // URL the API returns deliberately stays on the public-IP policy: the
-// bunkr CDN family rotates too widely to pin (recorded decision in
-// docs/IMPROVEMENTS.md).
+// bunkr CDN family rotates too widely to pin, and pinning it broke real
+// downloads when the family gained new shards (deliberate decision from
+// the 2026-10-01 review fixes).
 func dlPolicyFor(pageURL string) *netutil.Policy {
 	allowed := make([]string, 0, len(mirrorOrigins)+1)
 	allowed = append(allowed, mirrorOrigins...)
