@@ -55,25 +55,32 @@ func newPlainPrinter(w io.Writer) *plainPrinter {
 	return &plainPrinter{w: w, last: map[string]string{}}
 }
 
-func watchSignals(dl dashboard.Downloader) <-chan struct{} {
+// watchSignals shuts the downloader down when SIGINT or SIGTERM arrives.
+// The returned done channel closes once the watcher exits — after a
+// signal, or when stop is called. stop releases the signal registration
+// and its goroutine: without it, every --watch interval leaks one, each
+// still receiving every signal.
+func watchSignals(dl dashboard.Downloader) (done <-chan struct{}, stop func()) {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
-	done := make(chan struct{})
+	stopped := make(chan struct{})
+	finished := make(chan struct{})
 	go func() {
 		defer signal.Stop(signals)
-		<-signals
-		defer func() { _ = recover() }()
-		dl.Shutdown()
-		close(done)
+		defer close(finished)
+		select {
+		case <-signals:
+			defer func() { _ = recover() }()
+			dl.Shutdown()
+		case <-stopped:
+		}
 	}()
-	return done
-}
-
-func watchPlainShutdown(signals <-chan os.Signal, done <-chan struct{}, shutdown func()) {
-	select {
-	case <-signals:
-		shutdown()
-	case <-done:
+	var once sync.Once
+	return finished, func() {
+		once.Do(func() {
+			signal.Stop(signals)
+			close(stopped)
+		})
 	}
 }
 
@@ -238,7 +245,8 @@ func runPlain(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error
 	// closes, which ends the consumer loop below. signal.Notify runs here
 	// (not inside the watcher goroutine) so no signal can arrive before the
 	// handler is registered.
-	_ = watchSignals(dl)
+	_, stopSignals := watchSignals(dl)
+	defer stopSignals()
 
 	printer := newPlainPrinter(out)
 	errs := make([]error, len(items))
@@ -307,7 +315,8 @@ func runBatchPlain(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, des
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	abort := make(chan struct{})
-	signalDone := watchSignals(dl)
+	signalDone, stopSignals := watchSignals(dl)
+	defer stopSignals()
 	go func() {
 		<-signalDone
 		close(abort)
@@ -514,7 +523,8 @@ func runJSON(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error)
 
 	writeJSONLine(out, model.JSONEvent{Event: "album_start", Site: site, URL: targetURL, Slug: slug, Total: len(items)})
 
-	signalDone := watchSignals(dl)
+	signalDone, stopSignals := watchSignals(dl)
+	defer stopSignals()
 
 	progressDone := make(chan struct{})
 	go func() {
@@ -567,7 +577,8 @@ func runBatchJSON(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, dest
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	abort := make(chan struct{})
-	signalDone := watchSignals(dl)
+	signalDone, stopSignals := watchSignals(dl)
+	defer stopSignals()
 	go func() {
 		<-signalDone
 		close(abort)

@@ -448,17 +448,38 @@ func TestRunPlainTerminatesOnClosedProgressChannel(t *testing.T) {
 	}
 }
 
-func TestRunPlainShutsDownOnInterrupt(t *testing.T) {
-	signals := make(chan os.Signal, 1)
-	done := make(chan struct{})
-	shutdown := make(chan struct{})
-	go watchPlainShutdown(signals, done, func() { close(shutdown) })
-	signals <- os.Interrupt
+func TestWatchSignalsShutsDownOnInterrupt(t *testing.T) {
+	dl := newFakePlainDownloader()
+	done, stop := watchSignals(dl)
+	defer stop()
+
+	if err := syscall.Kill(syscall.Getpid(), syscall.SIGINT); err != nil {
+		t.Fatal(err)
+	}
 	select {
-	case <-shutdown:
-	case <-time.After(time.Second):
+	case <-done:
+	case <-time.After(2 * time.Second):
 		t.Fatal("interrupt watcher did not shut down downloader")
 	}
+	select {
+	case _, ok := <-dl.progress:
+		if ok {
+			t.Fatal("expected the downloader's progress channel to be closed by Shutdown")
+		}
+	default:
+		t.Fatal("Shutdown must have closed the progress channel after the signal")
+	}
+}
+
+func TestWatchSignalsStopReleasesWatcher(t *testing.T) {
+	done, stop := watchSignals(newFakePlainDownloader())
+	stop()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("stop() must release the signal watcher goroutine")
+	}
+	stop() // idempotent
 }
 
 func TestRunPlainAssignsIDsLikeTheDashboard(t *testing.T) {
