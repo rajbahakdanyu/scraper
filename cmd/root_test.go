@@ -929,6 +929,33 @@ func TestRunBatchRejectsMixedYouTubeAndGenericSites(t *testing.T) {
 	}
 }
 
+func TestRunBatchContinuesAfterGroupFailure(t *testing.T) {
+	restoreBatchFactories(t)
+	var genericCalls int
+	batchScraperRegistry = func(string, []*http.Cookie) (map[string]model.Scraper, error) {
+		return map[string]model.Scraper{"cyberdrop": &fakeDryRunScraper{}}, nil
+	}
+	batchYouTubeScraper = func() model.Scraper { return &fakeDryRunScraper{} }
+	batchYouTubeDownloader = func(model.Scraper, *config.Config, int64) (dashboard.Downloader, error) {
+		return nil, errors.New("youtube downloader exploded")
+	}
+	batchGenericDownloader = func(*config.Config, int64) (dashboard.Downloader, error) {
+		genericCalls++
+		return newFakePlainDownloader(), nil
+	}
+
+	err := runBatch(globalOptions{configPath: emptyTestConfig(t), noTui: true}, []batchEntry{
+		{URL: "https://youtube.com/watch?v=abc"},
+		{URL: "https://cyberdrop.cr/a/album"},
+	})
+	if err == nil {
+		t.Fatal("the youtube group failure must surface")
+	}
+	if genericCalls != 1 {
+		t.Fatalf("generic group must still run after a youtube group failure, ran %d times", genericCalls)
+	}
+}
+
 func TestRunBatchDryRunJSONLoopsOverURLs(t *testing.T) {
 	restoreBatchFactories(t)
 	fake := &fakeDryRunScraper{items: []model.MediaItem{{URL: "https://example.com/item.mp4", Title: "unique-fixture-title.mp4"}}}

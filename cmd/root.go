@@ -1113,18 +1113,21 @@ func runBatch(opts globalOptions, entries []batchEntry) error {
 	}
 
 	// Mixed lists run as sequential same-type groups, each with its own
-	// downloader: the dashboard expects a single downloader per run.
+	// downloader: the dashboard expects a single downloader per run. A
+	// failed group never stops the next one — one dead YouTube video
+	// must not silently skip every other URL in the list.
+	var groupErrs []error
 	if len(youtubeEntries) > 0 {
 		if err := runBatchGroup(cfg, opts, reg, youtubeEntries, true, rateLimitBytesPerSec); err != nil {
-			return err
+			groupErrs = append(groupErrs, err)
 		}
 	}
 	if len(genericEntries) > 0 {
 		if err := runBatchGroup(cfg, opts, reg, genericEntries, false, rateLimitBytesPerSec); err != nil {
-			return err
+			groupErrs = append(groupErrs, err)
 		}
 	}
-	return nil
+	return model.NewPartialError("batch", groupErrs)
 }
 
 // runBatchGroup runs one same-type group of batch entries with its own
