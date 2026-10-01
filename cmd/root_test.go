@@ -309,6 +309,27 @@ func (s *recordingDelaySleeper) SleepCtx(_ context.Context, d time.Duration) err
 	return nil
 }
 
+func TestApplyWatchDefaultsForcesNoTUI(t *testing.T) {
+	got := applyWatchDefaults(globalOptions{watch: time.Minute})
+	if !got.noTui {
+		t.Fatal("watch mode must imply --no-tui")
+	}
+}
+
+func TestWatchFlagParses(t *testing.T) {
+	root := NewRootCmd()
+	if err := root.PersistentFlags().Set("watch", "5m"); err != nil {
+		t.Fatal(err)
+	}
+	opts, err := globalOptionsFromCommand(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.watch != 5*time.Minute {
+		t.Fatalf("watch = %v, want 5m", opts.watch)
+	}
+}
+
 func TestExitCodeMapping(t *testing.T) {
 	if got := exitCode(nil); got != 0 {
 		t.Fatalf("exitCode(nil) = %d, want 0", got)

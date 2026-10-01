@@ -10,8 +10,10 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -75,6 +77,7 @@ type globalOptions struct {
 	logFile          string
 	logFileSet       bool
 	printURLs        bool
+	watch            time.Duration
 	minSize          string
 	minSizeSet       bool
 	maxSize          string
@@ -308,6 +311,10 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 	if err != nil {
 		return globalOptions{}, err
 	}
+	watch, err := flags.GetDuration("watch")
+	if err != nil {
+		return globalOptions{}, err
+	}
 	minSize, err := flags.GetString("min-size")
 	if err != nil {
 		return globalOptions{}, err
@@ -368,6 +375,7 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 		logFile:          logFilePath,
 		logFileSet:       flags.Changed("log-file"),
 		printURLs:        printURLs,
+		watch:            watch,
 		minSize:          minSize,
 		minSizeSet:       flags.Changed("min-size"),
 		maxSize:          maxSize,
@@ -418,6 +426,34 @@ func openLogFile(path string) error {
 	}
 	logFile = f
 	return nil
+}
+
+// applyWatchDefaults makes watch mode non-interactive: a TUI cannot restart
+// itself per interval.
+func applyWatchDefaults(opts globalOptions) globalOptions {
+	opts.noTui = true
+	return opts
+}
+
+// watchLoop runs the list once, then re-runs it every interval until
+// interrupted. Run failures are reported and the loop keeps watching.
+func watchLoop(runOnce func() error, interval time.Duration) error {
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signals)
+
+	for {
+		if err := runOnce(); err != nil {
+			fmt.Fprintf(os.Stderr, "watch: %v\n", err)
+			logLine("watch error: %v", err)
+		}
+		fmt.Fprintf(os.Stderr, "watch: next run in %s (Ctrl+C to stop)\n", interval)
+		select {
+		case <-signals:
+			return nil
+		case <-time.After(interval):
+		}
+	}
 }
 
 // logLine writes one timestamped line to the optional run log.
@@ -475,23 +511,31 @@ func NewRootCmd() *cobra.Command {
 				return err
 			}
 
-			if len(entries) == 1 && !opts.inputFileSet {
-				targetURL := entries[0].URL
-				site, err := detectSite(targetURL)
-				if err != nil {
-					return err
+			runOnce := func() error {
+				if len(entries) == 1 && !opts.inputFileSet {
+					targetURL := entries[0].URL
+					site, err := detectSite(targetURL)
+					if err != nil {
+						return err
+					}
+					cfg, err := loadGlobalConfig(opts)
+					if err != nil {
+						return err
+					}
+					reg, err := scraperRegistry(cfg.Proxy, nil)
+					if err != nil {
+						return err
+					}
+					return runWithScraperAndConfig(cfg, reg[site], targetURL, site, opts)
 				}
-				cfg, err := loadGlobalConfig(opts)
-				if err != nil {
-					return err
-				}
-				reg, err := scraperRegistry(cfg.Proxy, nil)
-				if err != nil {
-					return err
-				}
-				return runWithScraperAndConfig(cfg, reg[site], targetURL, site, opts)
+				return runBatch(opts, entries)
 			}
-			return runBatch(opts, entries)
+
+			if opts.watch > 0 {
+				opts = applyWatchDefaults(opts)
+				return watchLoop(runOnce, opts.watch)
+			}
+			return runOnce()
 		},
 	}
 
@@ -515,6 +559,7 @@ func NewRootCmd() *cobra.Command {
 	root.PersistentFlags().Bool("print-urls", false, "Print item URLs (one per line) and exit without downloading")
 	root.PersistentFlags().Duration("scrape-delay", 0, "Pause between album scrapes (e.g. 500ms; default: none)")
 	root.PersistentFlags().String("log-file", "", "Append a timestamped run log (scrape errors, summaries) to this file")
+	root.PersistentFlags().Duration("watch", 0, "Re-run the input list every interval until interrupted (implies --no-tui)")
 	root.PersistentFlags().String("min-size", "", "Skip items smaller than size (e.g. 500K, 2M)")
 	root.PersistentFlags().String("max-size", "", "Skip items larger than size (e.g. 500M, 1G)")
 	root.PersistentFlags().Bool("disk-check", true, "Warn if free disk space is less than estimated download size")

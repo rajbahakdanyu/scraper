@@ -161,6 +161,7 @@ per URL — same as albums).
 | `--print-urls`   | `false` | Print item URLs (one per line) and exit without downloading |
 | `--scrape-delay` | (none)  | Pause between album scrapes (e.g. `500ms`) |
 | `--log-file`     | (none)  | Append a timestamped run log (scrape errors, retry summaries) |
+| `--watch`        | (none)  | Re-run the input list every interval until interrupted (implies `--no-tui`) |
 | `--min-size`     | (none)  | Minimum file size (e.g. `1K`, `10M`)                      |
 | `--max-size`     | (none)  | Maximum file size                                         |
 | `--disk-check`   | `true`  | Check free space before downloading                       |
