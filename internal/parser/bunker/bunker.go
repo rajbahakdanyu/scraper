@@ -36,6 +36,42 @@ const (
 	albumRetryBaseDelay = 1500 * time.Millisecond
 )
 
+// mirrorDomains are the bunkr mirror hosts accepted as download and API
+// hosts. Keep in sync with cmd's siteDomains["bunker"]: cmd/root_test.go
+// asserts the two lists match.
+var mirrorDomains = []string{
+	"bunkr.cr", "bunkr.su", "bunkrr.su", "bunkr.si", "bunkr.la",
+	"bunkr.is", "bunkr.to", "bunkr.ru", "bunkr.black", "bunkr.red",
+	"bunkr.ph", "bunkr.site", "bunkr.fi", "bunkr.pk", "bunkr.ac",
+}
+
+// MirrorDomains returns the bunkr mirror hosts the scraper accepts
+// download links from.
+func MirrorDomains() []string { return append([]string(nil), mirrorDomains...) }
+
+// mirrorOrigins are https origins for mirrorDomains, used to pin the
+// download-link and API host to the bunkr mirror family.
+var mirrorOrigins = func() []string {
+	origins := make([]string, 0, len(mirrorDomains))
+	for _, d := range mirrorDomains {
+		origins = append(origins, "https://"+d)
+	}
+	return origins
+}()
+
+// dlPolicyFor returns the host-pinning policy for one file page: any
+// bunkr mirror and its subdomains (e.g. dl.bunkr.cr), plus the page's
+// own host — the same origin the user asked to scrape. The signed CDN
+// URL the API returns deliberately stays on the public-IP policy: the
+// bunkr CDN family rotates too widely to pin (recorded decision in
+// docs/IMPROVEMENTS.md).
+func dlPolicyFor(pageURL string) *netutil.Policy {
+	allowed := make([]string, 0, len(mirrorOrigins)+1)
+	allowed = append(allowed, mirrorOrigins...)
+	allowed = append(allowed, pageURL)
+	return netutil.NewStrictPolicy(allowed...)
+}
+
 // NewBunkerScraper creates a new Bunker scraper using the default HTTP client.
 func NewBunkerScraper() *Scraper {
 	client, _ := netutil.NewPublicClient(30 * time.Second)
@@ -201,7 +237,11 @@ func (s *Scraper) parseFilePage(ctx context.Context, fileURL string) (model.Medi
 		title = strings.TrimSpace(title[:idx])
 	}
 
-	// Find the download link (dl.bunkr.cr link or any /file/ link)
+	// Find the download link: an anchor on a bunkr mirror whose path is
+	// /file/<id>. The old first-substring match accepted any href that
+	// merely contained "/file/", which a modified page could aim at any
+	// host — the POST target and the Referer/file ID would follow it.
+	dlPolicy := dlPolicyFor(fileURL)
 	var dlLink string
 	doc.Find(`a`).Each(func(_ int, sel *goquery.Selection) {
 		if dlLink != "" {
@@ -211,7 +251,7 @@ func (s *Scraper) parseFilePage(ctx context.Context, fileURL string) (model.Medi
 		if !ok || href == "" {
 			return
 		}
-		if strings.Contains(href, "dl.bunkr") || strings.Contains(href, "/file/") {
+		if isDownloadAnchor(href, fileURL, dlPolicy) {
 			dlLink = href
 		}
 	})
@@ -239,7 +279,7 @@ func (s *Scraper) parseFilePage(ctx context.Context, fileURL string) (model.Medi
 	if fileID == "" || fileID == "/" || fileID == "." {
 		return model.MediaItem{}, fmt.Errorf("could not extract file ID from %s", dlLink)
 	}
-	if err := netutil.NewPolicy(s.baseURL).ValidateURL(dlURL.String()); err != nil {
+	if err := dlPolicy.ValidateURL(dlURL.String()); err != nil {
 		return model.MediaItem{}, fmt.Errorf("bunker: unsafe download API URL: %w", err)
 	}
 
@@ -261,6 +301,28 @@ func (s *Scraper) parseFilePage(ctx context.Context, fileURL string) (model.Medi
 			return signedURL, model.WrapPermanent(err)
 		},
 	}, nil
+}
+
+// isDownloadAnchor reports whether href resolves to a /file/<id> path on
+// a host the page's pinning policy allows: a bunkr mirror (or one of its
+// subdomains, e.g. dl.bunkr.cr) or the page's own host. Relative hrefs
+// are resolved against the page URL.
+func isDownloadAnchor(href, pageURL string, policy *netutil.Policy) bool {
+	u, err := url.Parse(href)
+	if err != nil {
+		return false
+	}
+	if !u.IsAbs() {
+		base, baseErr := url.Parse(pageURL)
+		if baseErr != nil {
+			return false
+		}
+		u = base.ResolveReference(u)
+	}
+	if u.Host == "" || !strings.HasPrefix(u.Path, "/file/") || u.Path == "/file/" {
+		return false
+	}
+	return policy.ValidateURL(u.String()) == nil
 }
 
 // getSignedMediaURL replicates the bunkr download flow:

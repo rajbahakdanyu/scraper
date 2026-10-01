@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +19,7 @@ import (
 
 	"github.com/rajbahakdanyu/scraper/internal/config"
 	"github.com/rajbahakdanyu/scraper/internal/model"
+	"github.com/rajbahakdanyu/scraper/internal/parser/bunker"
 	"github.com/rajbahakdanyu/scraper/internal/parser/youtube"
 	"github.com/rajbahakdanyu/scraper/internal/ui/dashboard"
 )
@@ -926,6 +929,16 @@ func TestRunBatchRejectsMixedYouTubeAndGenericSites(t *testing.T) {
 	}
 	if genericCalls != 1 || youtubeCalls != 1 {
 		t.Fatalf("expected one run per group, got generic=%d youtube=%d", genericCalls, youtubeCalls)
+	}
+}
+
+func TestBunkerMirrorDomainsMatchSiteDomains(t *testing.T) {
+	want := append([]string(nil), siteDomains["bunker"]...)
+	got := bunker.MirrorDomains()
+	sort.Strings(want)
+	sort.Strings(got)
+	if !reflect.DeepEqual(want, got) {
+		t.Fatalf("bunker.MirrorDomains drifted from siteDomains[bunker]:\n got %v\nwant %v", got, want)
 	}
 }
 

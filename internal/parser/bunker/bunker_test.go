@@ -31,6 +31,31 @@ func newTestBunkerScraper() *Scraper {
 	return scraper
 }
 
+func TestParseFilePageSkipsDecoyDownloadAnchors(t *testing.T) {
+	const page = `<!doctype html><html><head><title>v.mp4 | Bunkr</title></head><body>
+		<a href="https://evil.example/file/1">related</a>
+		<a href="https://dl.bunkr.cr/file/61567794">Get your file</a>
+		</body></html>`
+	mux := http.NewServeMux()
+	mux.HandleFunc("/f/abc123", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(page))
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	scraper := newTestBunkerScraper()
+	items, err := scraper.Parse(context.Background(), ts.URL+"/f/abc123")
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if items[0].URL != "https://dl.bunkr.cr/file/61567794" {
+		t.Fatalf("a decoy anchor must never become the download/API host, got %s", items[0].URL)
+	}
+}
+
 func TestParseBunkerRejectsOversizedHTML(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
