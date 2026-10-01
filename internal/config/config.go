@@ -72,6 +72,9 @@ type Config struct {
 	// LogFile appends a timestamped trace of scrape errors and run
 	// summaries to this file. Empty means no log file.
 	LogFile string `yaml:"log_file"`
+	// CookiesFromBrowser imports cookies for the supported sites from a
+	// local browser profile ("firefox"). Empty means none.
+	CookiesFromBrowser string `yaml:"cookies_from_browser"`
 	// MediaOnly restricts downloads to media and archive files. On by
 	// default; set false (or pass --media-only=false) to download
 	// everything an album lists.

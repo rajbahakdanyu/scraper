@@ -42,52 +42,54 @@ var version = "dev"
 // globalOptions holds flags defined on the root command that are inherited
 // by all subcommands via PersistentFlags.
 type globalOptions struct {
-	configPath       string
-	output           string
-	outputSet        bool
-	concurrency      int
-	concurrencySet   bool
-	rateLimit        string
-	rateLimitSet     bool
-	checksums        bool
-	checksumsSet     bool
-	dryRun           bool
-	inputFile        string
-	inputFileSet     bool
-	noTui            bool
-	json             bool
-	proxy            string
-	proxySet         bool
-	cookies          string
-	cookiesSet       bool
-	quality          string
-	qualitySet       bool
-	audioOnly        string
-	audioOnlySet     bool
-	include          []string
-	includeSet       bool
-	exclude          []string
-	excludeSet       bool
-	allowExt         []string
-	allowExtSet      bool
-	maxAlbumItems    int
-	maxAlbumItemsSet bool
-	scrapeDelay      time.Duration
-	scrapeDelaySet   bool
-	logFile          string
-	logFileSet       bool
-	printURLs        bool
-	watch            time.Duration
-	minSize          string
-	minSizeSet       bool
-	maxSize          string
-	maxSizeSet       bool
-	diskCheck        bool
-	diskCheckSet     bool
-	mediaOnly        bool
-	mediaOnlySet     bool
-	notify           bool
-	notifySet        bool
+	configPath            string
+	output                string
+	outputSet             bool
+	concurrency           int
+	concurrencySet        bool
+	rateLimit             string
+	rateLimitSet          bool
+	checksums             bool
+	checksumsSet          bool
+	dryRun                bool
+	inputFile             string
+	inputFileSet          bool
+	noTui                 bool
+	json                  bool
+	proxy                 string
+	proxySet              bool
+	cookies               string
+	cookiesSet            bool
+	quality               string
+	qualitySet            bool
+	audioOnly             string
+	audioOnlySet          bool
+	include               []string
+	includeSet            bool
+	exclude               []string
+	excludeSet            bool
+	allowExt              []string
+	allowExtSet           bool
+	maxAlbumItems         int
+	maxAlbumItemsSet      bool
+	scrapeDelay           time.Duration
+	scrapeDelaySet        bool
+	logFile               string
+	logFileSet            bool
+	printURLs             bool
+	watch                 time.Duration
+	cookiesFromBrowser    string
+	cookiesFromBrowserSet bool
+	minSize               string
+	minSizeSet            bool
+	maxSize               string
+	maxSizeSet            bool
+	diskCheck             bool
+	diskCheckSet          bool
+	mediaOnly             bool
+	mediaOnlySet          bool
+	notify                bool
+	notifySet             bool
 }
 
 // loadGlobalConfig loads the config file and applies CLI flag overrides.
@@ -216,6 +218,16 @@ func loadGlobalConfig(opts globalOptions) (*config.Config, error) {
 		}
 		cfg.SetParsedCookies(parsed)
 	}
+	if opts.cookiesFromBrowserSet {
+		cfg.CookiesFromBrowser = opts.cookiesFromBrowser
+	}
+	if cfg.CookiesFromBrowser != "" {
+		imported, err := importBrowserCookies(cfg.CookiesFromBrowser)
+		if err != nil {
+			return nil, err
+		}
+		cfg.SetParsedCookies(append(cfg.ParsedCookies(), imported...))
+	}
 
 	// Single choke point covering both the --output flag and the config
 	// file's output_dir: the flag override above bypasses config.Load's own
@@ -315,6 +327,10 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 	if err != nil {
 		return globalOptions{}, err
 	}
+	cookiesFromBrowser, err := flags.GetString("cookies-from-browser")
+	if err != nil {
+		return globalOptions{}, err
+	}
 	minSize, err := flags.GetString("min-size")
 	if err != nil {
 		return globalOptions{}, err
@@ -340,52 +356,54 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 		noTui = true
 	}
 	return globalOptions{
-		configPath:       configPath,
-		output:           output,
-		outputSet:        flags.Changed("output"),
-		concurrency:      concurrency,
-		concurrencySet:   flags.Changed("concurrent"),
-		rateLimit:        rateLimit,
-		rateLimitSet:     flags.Changed("limit-rate"),
-		checksums:        checksums,
-		checksumsSet:     flags.Changed("checksums"),
-		dryRun:           dryRun,
-		inputFile:        inputFile,
-		inputFileSet:     flags.Changed("input-file"),
-		noTui:            noTui,
-		json:             json,
-		proxy:            proxy,
-		proxySet:         flags.Changed("proxy"),
-		cookies:          cookies,
-		cookiesSet:       flags.Changed("cookies"),
-		quality:          quality,
-		qualitySet:       flags.Changed("quality"),
-		audioOnly:        audioOnly,
-		audioOnlySet:     flags.Changed("audio-only"),
-		include:          include,
-		includeSet:       flags.Changed("include"),
-		exclude:          exclude,
-		excludeSet:       flags.Changed("exclude"),
-		allowExt:         allowExt,
-		allowExtSet:      flags.Changed("allow-ext"),
-		maxAlbumItems:    maxAlbumItems,
-		maxAlbumItemsSet: flags.Changed("max-album-items"),
-		scrapeDelay:      scrapeDelay,
-		scrapeDelaySet:   flags.Changed("scrape-delay"),
-		logFile:          logFilePath,
-		logFileSet:       flags.Changed("log-file"),
-		printURLs:        printURLs,
-		watch:            watch,
-		minSize:          minSize,
-		minSizeSet:       flags.Changed("min-size"),
-		maxSize:          maxSize,
-		maxSizeSet:       flags.Changed("max-size"),
-		diskCheck:        diskCheck,
-		diskCheckSet:     flags.Changed("disk-check"),
-		mediaOnly:        mediaOnly,
-		mediaOnlySet:     flags.Changed("media-only"),
-		notify:           notify,
-		notifySet:        flags.Changed("notify"),
+		configPath:            configPath,
+		output:                output,
+		outputSet:             flags.Changed("output"),
+		concurrency:           concurrency,
+		concurrencySet:        flags.Changed("concurrent"),
+		rateLimit:             rateLimit,
+		rateLimitSet:          flags.Changed("limit-rate"),
+		checksums:             checksums,
+		checksumsSet:          flags.Changed("checksums"),
+		dryRun:                dryRun,
+		inputFile:             inputFile,
+		inputFileSet:          flags.Changed("input-file"),
+		noTui:                 noTui,
+		json:                  json,
+		proxy:                 proxy,
+		proxySet:              flags.Changed("proxy"),
+		cookies:               cookies,
+		cookiesSet:            flags.Changed("cookies"),
+		quality:               quality,
+		qualitySet:            flags.Changed("quality"),
+		audioOnly:             audioOnly,
+		audioOnlySet:          flags.Changed("audio-only"),
+		include:               include,
+		includeSet:            flags.Changed("include"),
+		exclude:               exclude,
+		excludeSet:            flags.Changed("exclude"),
+		allowExt:              allowExt,
+		allowExtSet:           flags.Changed("allow-ext"),
+		maxAlbumItems:         maxAlbumItems,
+		maxAlbumItemsSet:      flags.Changed("max-album-items"),
+		scrapeDelay:           scrapeDelay,
+		scrapeDelaySet:        flags.Changed("scrape-delay"),
+		logFile:               logFilePath,
+		logFileSet:            flags.Changed("log-file"),
+		printURLs:             printURLs,
+		watch:                 watch,
+		cookiesFromBrowser:    cookiesFromBrowser,
+		cookiesFromBrowserSet: flags.Changed("cookies-from-browser"),
+		minSize:               minSize,
+		minSizeSet:            flags.Changed("min-size"),
+		maxSize:               maxSize,
+		maxSizeSet:            flags.Changed("max-size"),
+		diskCheck:             diskCheck,
+		diskCheckSet:          flags.Changed("disk-check"),
+		mediaOnly:             mediaOnly,
+		mediaOnlySet:          flags.Changed("media-only"),
+		notify:                notify,
+		notifySet:             flags.Changed("notify"),
 	}, nil
 }
 
@@ -560,6 +578,7 @@ func NewRootCmd() *cobra.Command {
 	root.PersistentFlags().Duration("scrape-delay", 0, "Pause between album scrapes (e.g. 500ms; default: none)")
 	root.PersistentFlags().String("log-file", "", "Append a timestamped run log (scrape errors, summaries) to this file")
 	root.PersistentFlags().Duration("watch", 0, "Re-run the input list every interval until interrupted (implies --no-tui)")
+	root.PersistentFlags().String("cookies-from-browser", "", "Import cookies for the supported sites from a local browser profile (firefox)")
 	root.PersistentFlags().String("min-size", "", "Skip items smaller than size (e.g. 500K, 2M)")
 	root.PersistentFlags().String("max-size", "", "Skip items larger than size (e.g. 500M, 1G)")
 	root.PersistentFlags().Bool("disk-check", true, "Warn if free disk space is less than estimated download size")
