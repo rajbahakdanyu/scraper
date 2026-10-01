@@ -22,6 +22,20 @@ func (e *HTTPStatusError) Error() string {
 	return fmt.Sprintf("unexpected status %d from %s", e.StatusCode, e.URL)
 }
 
+// newHTTPStatusError builds a status error whose URL never carries
+// userinfo, query, or fragment: signed tokens and credentials must not
+// reach error messages, logs, or retry reports.
+func newHTTPStatusError(statusCode int, rawURL string) *HTTPStatusError {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return &HTTPStatusError{StatusCode: statusCode, URL: rawURL}
+	}
+	u.User = nil
+	u.RawQuery = ""
+	u.Fragment = ""
+	return &HTTPStatusError{StatusCode: statusCode, URL: u.String()}
+}
+
 // GetJSON performs a GET request to url with the given client, checks for a
 // 2xx response, and decodes the JSON body into target.
 func GetJSON(ctx context.Context, client *http.Client, url, userAgent string, target interface{}) error {
@@ -38,7 +52,7 @@ func GetJSON(ctx context.Context, client *http.Client, url, userAgent string, ta
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return &HTTPStatusError{StatusCode: resp.StatusCode, URL: url}
+		return newHTTPStatusError(resp.StatusCode, url)
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 10<<20)).Decode(target); err != nil {
 		return fmt.Errorf("decode response: %w", err)
@@ -62,7 +76,7 @@ func PostJSON(ctx context.Context, client *http.Client, url string, headers map[
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return &HTTPStatusError{StatusCode: resp.StatusCode, URL: url}
+		return newHTTPStatusError(resp.StatusCode, url)
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 10<<20)).Decode(target); err != nil {
 		return fmt.Errorf("decode response: %w", err)
@@ -85,7 +99,7 @@ func GetDoc(ctx context.Context, client *http.Client, url, userAgent string) (io
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, &HTTPStatusError{StatusCode: resp.StatusCode, URL: url}
+		return nil, newHTTPStatusError(resp.StatusCode, url)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
 	if err != nil {

@@ -14,6 +14,28 @@ import (
 	"time"
 )
 
+func TestHTTPStatusErrorRedactsURL(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/boom", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	var target map[string]interface{}
+	err := GetJSON(context.Background(), ts.Client(), ts.URL+"/boom?token=SECRET", "ua", &target)
+	var se *HTTPStatusError
+	if !errors.As(err, &se) {
+		t.Fatalf("expected HTTPStatusError, got %T", err)
+	}
+	if strings.Contains(se.Error(), "token=SECRET") {
+		t.Fatalf("status error must not carry the query string: %s", se.Error())
+	}
+	if !strings.Contains(se.Error(), ts.URL+"/boom") {
+		t.Fatalf("status error should keep the path: %s", se.Error())
+	}
+}
+
 func TestGetJSONRejectsOversizedResponse(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, `{"data":"`+strings.Repeat("x", 10<<20)+`"}`)
