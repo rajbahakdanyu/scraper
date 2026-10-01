@@ -779,6 +779,11 @@ func runWithScraperAndConfig(cfg *config.Config, scraper model.Scraper, targetUR
 		if err != nil {
 			return nil, err
 		}
+		if len(items) == 0 {
+			// The scrape itself found nothing: a dead URL or a changed
+			// page must not look like a successful run.
+			return nil, ErrNoItems
+		}
 		items = applyAlbumItemCap(items, cfg.MaxAlbumItems)
 		if shouldFilterMedia(cfg, siteName) {
 			items = applyMediaFilter(items, cfg.MediaExtensions)
@@ -1317,6 +1322,11 @@ func (f *filterScraper) Parse(ctx context.Context, url string) ([]model.MediaIte
 	}
 	if err != nil && len(items) == 0 {
 		return nil, err
+	}
+	if len(items) == 0 && err == nil {
+		// The scrape itself found nothing (a dead URL or a changed
+		// page): the batch must report it, not print a quiet warning.
+		return nil, ErrNoItems
 	}
 	items = applyAlbumItemCap(items, f.maxItems)
 	if f.mediaOnly && f.inner.Name() != "youtube" {

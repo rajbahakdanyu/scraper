@@ -900,7 +900,7 @@ func TestRunDryRunJSONEmptyItems(t *testing.T) {
 	}
 }
 
-func TestRunBatchRejectsMixedYouTubeAndGenericSites(t *testing.T) {
+func TestRunBatchRunsMixedSitesSequentially(t *testing.T) {
 	restoreBatchFactories(t)
 	batchScraperRegistry = func(string, []*http.Cookie) (map[string]model.Scraper, error) {
 		return map[string]model.Scraper{
@@ -924,8 +924,11 @@ func TestRunBatchRejectsMixedYouTubeAndGenericSites(t *testing.T) {
 		{URL: "https://youtube.com/watch?v=abc"},
 		{URL: "https://cyberdrop.cr/a/album"},
 	})
-	if err != nil {
-		t.Fatalf("mixed batch failed: %v", err)
+	// The fake scrapers return zero items, so the run ends in the
+	// no-items partial error (Task: empty scrapes exit non-zero); the
+	// assertion that matters here is that BOTH groups ran.
+	if err != nil && !strings.Contains(err.Error(), "no media items found") {
+		t.Fatalf("mixed batch failed unexpectedly: %v", err)
 	}
 	if genericCalls != 1 || youtubeCalls != 1 {
 		t.Fatalf("expected one run per group, got generic=%d youtube=%d", genericCalls, youtubeCalls)
@@ -950,6 +953,35 @@ func TestRunDiskCheckWarnsForMissingOutputDir(t *testing.T) {
 	runDiskCheck([]model.MediaItem{{Title: "big.mp4", Size: 1 << 62}}, filepath.Join(t.TempDir(), "missing"), true)
 	if !strings.Contains(buf.String(), "short") {
 		t.Fatalf("a huge download into a fresh directory must warn, got %q", buf.String())
+	}
+}
+
+func TestRunPlainNoItemsIsAnError(t *testing.T) {
+	var buf bytes.Buffer
+	err := runPlain(newFakePlainDownloader(), func() ([]model.MediaItem, error) {
+		return nil, ErrNoItems
+	}, t.TempDir(), "", "", &buf)
+	if !errors.Is(err, ErrNoItems) {
+		t.Fatalf("runPlain should surface ErrNoItems, got %v", err)
+	}
+	if !strings.Contains(buf.String(), "No items found") {
+		t.Fatalf("output should still say no items were found: %q", buf.String())
+	}
+}
+
+func TestRunBatchPlainTreatsEmptyScrapeAsFailure(t *testing.T) {
+	// An album that scrapes zero items (dead URL, DOM change) must fail
+	// the batch instead of looking successful.
+	restoreBatchFactories(t)
+	batchScraperRegistry = func(string, []*http.Cookie) (map[string]model.Scraper, error) {
+		return map[string]model.Scraper{"cyberdrop": &fakeDryRunScraper{}}, nil
+	}
+
+	err := runBatch(globalOptions{configPath: emptyTestConfig(t), noTui: true}, []batchEntry{
+		{URL: "https://cyberdrop.cr/a/empty"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "no media items found") {
+		t.Fatalf("an empty scrape must fail the batch, got %v", err)
 	}
 }
 

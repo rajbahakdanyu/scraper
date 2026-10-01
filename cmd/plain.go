@@ -60,6 +60,12 @@ func newPlainPrinter(w io.Writer) *plainPrinter {
 // signal, or when stop is called. stop releases the signal registration
 // and its goroutine: without it, every --watch interval leaks one, each
 // still receiving every signal.
+// ErrNoItems marks a scrape that returned zero items (a dead URL, a DOM
+// change) as distinct from "everything was filtered out": the first is a
+// failure and must exit non-zero, the second is the user's filter doing
+// its job.
+var ErrNoItems = errors.New("no media items found")
+
 func watchSignals(dl dashboard.Downloader) (done <-chan struct{}, stop func()) {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
@@ -208,6 +214,9 @@ func runPlain(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error
 	reportDir := dest
 	items, err := scrapeFn()
 	if err != nil && len(items) == 0 {
+		if errors.Is(err, ErrNoItems) {
+			fmt.Fprintln(out, "No items found.")
+		}
 		return err
 	}
 	if err != nil {
@@ -374,7 +383,11 @@ batchLoop:
 			break batchLoop
 		}
 		if err != nil && len(items) == 0 {
-			printCh <- fmt.Sprintf("failed: %v\n", err)
+			if errors.Is(err, ErrNoItems) {
+				printCh <- "No items found.\n"
+			} else {
+				printCh <- fmt.Sprintf("failed: %v\n", err)
+			}
 			allErrs = append(allErrs, err)
 			if albumIdx+1 < len(albums) {
 				scrapeCh = startBatchScrape(ctx, abort, albums[albumIdx+1])
