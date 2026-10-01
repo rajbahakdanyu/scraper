@@ -1123,7 +1123,10 @@ func (d *Dashboard) renderStats() string {
 
 	if totalSpeed > 0 {
 		parts = append(parts, d.theme.Dim.Render("speed ")+d.theme.Cyan.Render(fmt.Sprintf("%s/s", HumanizeBytes(int64(totalSpeed)))))
-		if eta := d.remainingETA(totalSpeed); eta > 0 {
+		// A confident ETA that ignores the unknown-size backlog is
+		// worse than none: hide it while any outstanding item's size
+		// is unknown.
+		if eta, unknown := d.remainingETA(totalSpeed); eta > 0 && !unknown {
 			parts = append(parts, d.theme.Dim.Render("eta ")+d.theme.Cyan.Render(eta.Round(time.Second).String()))
 		}
 	}
@@ -1148,10 +1151,13 @@ func (d *Dashboard) renderStats() string {
 }
 
 // remainingETA estimates how long the outstanding bytes will take at the
-// current combined speed, or 0 when there is nothing outstanding.
-func (d *Dashboard) remainingETA(totalSpeed float64) time.Duration {
+// current combined speed, and whether any outstanding item has an
+// unknown size. When unknown is true the estimate ignores that backlog
+// entirely, so the caller hides the ETA rather than show a confident
+// number that is too low.
+func (d *Dashboard) remainingETA(totalSpeed float64) (eta time.Duration, unknown bool) {
 	if totalSpeed <= 0 {
-		return 0
+		return 0, false
 	}
 	var remaining int64
 	for _, st := range d.states {
@@ -1160,19 +1166,25 @@ func (d *Dashboard) remainingETA(totalSpeed float64) time.Duration {
 		}
 		switch st.status {
 		case model.StatusDownloading:
-			if st.total > st.bytes {
-				remaining += st.total - st.bytes
+			if st.total > 0 {
+				if st.total > st.bytes {
+					remaining += st.total - st.bytes
+				}
+			} else {
+				unknown = true
 			}
 		case model.StatusPending:
 			if st.item.Size > 0 {
 				remaining += st.item.Size
+			} else {
+				unknown = true
 			}
 		}
 	}
 	if remaining <= 0 {
-		return 0
+		return 0, unknown
 	}
-	return time.Duration(float64(remaining)/totalSpeed) * time.Second
+	return time.Duration(float64(remaining)/totalSpeed) * time.Second, unknown
 }
 
 // spinnerActive reports whether the spinner should keep ticking: while

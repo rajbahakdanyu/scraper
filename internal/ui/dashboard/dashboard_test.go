@@ -1222,6 +1222,17 @@ func TestSearchJumpsToMatch(t *testing.T) {
 	}
 }
 
+func TestStatsHideETAWhenSizesUnknown(t *testing.T) {
+	d := NewBatch(&fakeDownloader{ch: make(chan model.ProgressEvent, 1)}, t.TempDir(), nil)
+	d.states = []itemState{
+		{item: model.MediaItem{Title: "a.mp4", Size: 1000}, status: model.StatusDownloading, total: 1000, bytes: 500, speed: 100},
+		{item: model.MediaItem{Title: "b.mp4"}, status: model.StatusPending},
+	}
+	if strings.Contains(d.renderStats(), "eta ") {
+		t.Fatal("ETA must be hidden when queued items have unknown size")
+	}
+}
+
 func TestErrorPanelToggles(t *testing.T) {
 	d := NewBatch(&fakeDownloader{ch: make(chan model.ProgressEvent, 1)}, t.TempDir(), nil)
 	d.phase = phaseDownload
