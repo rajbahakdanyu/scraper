@@ -1075,20 +1075,17 @@ func runBatch(opts globalOptions, entries []batchEntry) error {
 		return model.NewPartialError("batch dry-run", errs)
 	}
 
-	hasYouTube, hasOther := false, false
+	var youtubeEntries, genericEntries []batchEntry
 	for _, e := range entries {
 		site, err := detectSite(e.URL)
 		if err != nil {
 			return err
 		}
 		if site == "youtube" {
-			hasYouTube = true
+			youtubeEntries = append(youtubeEntries, e)
 		} else {
-			hasOther = true
+			genericEntries = append(genericEntries, e)
 		}
-	}
-	if hasYouTube && hasOther {
-		return fmt.Errorf("batch mode only supports URLs from the same site type (all YouTube or all non-YouTube)")
 	}
 
 	rateLimitBytesPerSec, err := config.ParseRateLimit(cfg.RateLimit)
@@ -1096,11 +1093,29 @@ func runBatch(opts globalOptions, entries []batchEntry) error {
 		return err
 	}
 
+	// Mixed lists run as sequential same-type groups, each with its own
+	// downloader: the dashboard expects a single downloader per run.
+	if len(youtubeEntries) > 0 {
+		if err := runBatchGroup(cfg, opts, reg, youtubeEntries, true, rateLimitBytesPerSec); err != nil {
+			return err
+		}
+	}
+	if len(genericEntries) > 0 {
+		if err := runBatchGroup(cfg, opts, reg, genericEntries, false, rateLimitBytesPerSec); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// runBatchGroup runs one same-type group of batch entries with its own
+// downloader and dashboard run.
+func runBatchGroup(cfg *config.Config, opts globalOptions, reg map[string]model.Scraper, entries []batchEntry, youtube bool, rateLimitBytesPerSec int64) error {
 	var dl dashboard.Downloader
 	// Build dashAlbumURL entries for the dashboard: one scraper per URL so
 	// the incremental scrape chain can call the right parser.
 	dashAlbums := make([]dashboard.DashAlbumURL, 0, len(entries))
-	if hasYouTube {
+	if youtube {
 		scraper := batchYouTubeScraper()
 		ytDl, err := batchYouTubeDownloader(scraper, cfg, rateLimitBytesPerSec)
 		if err != nil {

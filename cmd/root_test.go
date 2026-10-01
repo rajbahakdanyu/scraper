@@ -906,12 +906,26 @@ func TestRunBatchRejectsMixedYouTubeAndGenericSites(t *testing.T) {
 		}, nil
 	}
 
-	err := runBatch(globalOptions{configPath: emptyTestConfig(t)}, []batchEntry{
+	var genericCalls, youtubeCalls int
+	batchYouTubeScraper = func() model.Scraper { return &fakeDryRunScraper{} }
+	batchYouTubeDownloader = func(model.Scraper, *config.Config, int64) (dashboard.Downloader, error) {
+		youtubeCalls++
+		return newFakePlainDownloader(), nil
+	}
+	batchGenericDownloader = func(*config.Config, int64) (dashboard.Downloader, error) {
+		genericCalls++
+		return newFakePlainDownloader(), nil
+	}
+
+	err := runBatch(globalOptions{configPath: emptyTestConfig(t), noTui: true}, []batchEntry{
 		{URL: "https://youtube.com/watch?v=abc"},
 		{URL: "https://cyberdrop.cr/a/album"},
 	})
-	if err == nil || !strings.Contains(err.Error(), "same site type") {
-		t.Fatalf("expected mixed-site rejection, got %v", err)
+	if err != nil {
+		t.Fatalf("mixed batch failed: %v", err)
+	}
+	if genericCalls != 1 || youtubeCalls != 1 {
+		t.Fatalf("expected one run per group, got generic=%d youtube=%d", genericCalls, youtubeCalls)
 	}
 }
 
