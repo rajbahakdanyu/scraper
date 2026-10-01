@@ -44,7 +44,7 @@ func collectFailures(items []model.MediaItem, errs []error, albumURL string) []f
 // retry list.
 func retryItemURL(item model.MediaItem) string {
 	if item.PageURL != "" {
-		return item.PageURL
+		return stripQueryFragment(item.PageURL)
 	}
 	u, err := url.Parse(item.URL)
 	if err != nil {
@@ -60,11 +60,11 @@ func retryItemURL(item model.MediaItem) string {
 // Items whose URL is a direct CDN link (goonbox and friends) cannot be
 // scraped on their own, so their album is the only replayable entry.
 func retryEntry(f failedItem) string {
-	if f.Item.PageURL != "" {
+	if page := stripQueryFragment(f.Item.PageURL); page != "" {
 		if album := retryAlbumURL(f.AlbumURL); album != "" {
-			return f.Item.PageURL + "\t" + album
+			return page + "\t" + album
 		}
-		return f.Item.PageURL
+		return page
 	}
 	if album := retryAlbumURL(f.AlbumURL); album != "" {
 		return album
@@ -76,6 +76,13 @@ func retryEntry(f failedItem) string {
 // list uses the album only for its path slug, so signed parameters must
 // not leak; an unparsable URL yields no album column.
 func retryAlbumURL(raw string) string {
+	return stripQueryFragment(raw)
+}
+
+// stripQueryFragment removes any query string and fragment from a URL so
+// signed parameters never reach the retry list. An unparsable URL
+// yields "".
+func stripQueryFragment(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return ""

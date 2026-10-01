@@ -162,6 +162,29 @@ func TestRetryReportRedactsAlbumURLQuery(t *testing.T) {
 	}
 }
 
+func TestRetryReportRedactsPageURLQuery(t *testing.T) {
+	dir := t.TempDir()
+	failures := []failedItem{
+		{Item: model.MediaItem{
+			URL:     "https://cdn.example.com/files/v.mp4?token=SECRET",
+			PageURL: "https://bunkr.cr/f/abc?token=SECRET",
+		}, Err: errors.New("boom"), AlbumURL: "https://bunkr.cr/a/rBSKhzaL"},
+	}
+
+	path, _, err := retryReport(dir, failures, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	content := string(data)
+	if strings.Contains(content, "token=SECRET") {
+		t.Fatalf("PageURL query must be redacted, got:\n%s", content)
+	}
+	if !strings.Contains(content, "https://bunkr.cr/f/abc\thttps://bunkr.cr/a/rBSKhzaL") {
+		t.Fatalf("redacted PageURL must still pair with its album, got:\n%s", content)
+	}
+}
+
 func TestRetryReportWritesItemAlbumPairs(t *testing.T) {
 	dir := t.TempDir()
 	failures := []failedItem{
