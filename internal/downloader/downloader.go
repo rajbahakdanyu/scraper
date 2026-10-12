@@ -489,6 +489,16 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, res
 	// exempt — their first bytes are mid-file (trusted, recorded
 	// decision).
 	if existing == 0 {
+		// A fresh download that carries no bytes at all is a CDN glitch (a
+		// 200 with an empty body), not a file: recording it as a success
+		// renames an empty .part into place and silently loses the download.
+		// Fail retryably instead, so the retry machinery either gets bytes
+		// or fails loudly into the retry list. Resumed downloads are exempt
+		// — they already have bytes on disk.
+		if existing == 0 && copiedBytes == 0 && model.IsAllowedMediaItem(item) {
+			return "", fmt.Errorf("empty response body (0 bytes) from %s", redactURL(resolvedURL))
+		}
+
 		if denyErr := refuseSuspiciousContent(tempPath, item, resolvedURL); denyErr != nil {
 			_ = os.Remove(tempPath) // a refused payload must never resume
 			return "", denyErr

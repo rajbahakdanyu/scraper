@@ -98,8 +98,8 @@ func TestLoadConfigDefaults(t *testing.T) {
 		t.Fatalf("Load failed: %v", err)
 	}
 
-	if cfg.ConcurrentDownloads != 5 {
-		t.Errorf("expected default 5 concurrent downloads, got %d", cfg.ConcurrentDownloads)
+	if cfg.ConcurrentDownloads != 3 {
+		t.Errorf("expected default 3 concurrent downloads, got %d", cfg.ConcurrentDownloads)
 	}
 	if cfg.Timeout != 30*time.Second {
 		t.Errorf("expected default 30s timeout, got %v", cfg.Timeout)
@@ -169,8 +169,8 @@ func TestLoadConfigOmittingDiskCheckKeepsDefault(t *testing.T) {
 	if !cfg.DiskCheck {
 		t.Error("disk_check omitted from the config file must keep the true default")
 	}
-	if cfg.ConcurrentDownloads != 5 {
-		t.Errorf("concurrent_downloads omitted must keep default 5, got %d", cfg.ConcurrentDownloads)
+	if cfg.ConcurrentDownloads != 3 {
+		t.Errorf("concurrent_downloads omitted must keep default 3, got %d", cfg.ConcurrentDownloads)
 	}
 }
 
@@ -285,7 +285,7 @@ func TestLoadDefaultsNonpositiveConcurrency(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ConcurrentDownloads != 5 {
+	if cfg.ConcurrentDownloads != 3 {
 		t.Fatalf("ConcurrentDownloads = %d", cfg.ConcurrentDownloads)
 	}
 }

@@ -2073,10 +2073,10 @@ func TestDownloadRejectsPaddedHTMLMasqueradingAsMedia(t *testing.T) {
 	}
 }
 
-func TestDownloadKeepsEmptyBodyForMediaItem(t *testing.T) {
-	// A zero-byte response is tolerated like the pre-transfer sniff
-	// tolerates an empty head: the scan must not invent a
-	// classification for it.
+func TestDownloadRejectsEmptyBodyForMediaItem(t *testing.T) {
+	// A 200 with no bytes is a CDN glitch, not a file: recording it as a
+	// success silently loses the download (real-world: 0-byte .mp4 files
+	// that "completed" green). It must fail retryably instead.
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", "0")
 	}))
@@ -2085,8 +2085,15 @@ func TestDownloadKeepsEmptyBodyForMediaItem(t *testing.T) {
 	dest := t.TempDir()
 	dl := newTestDownloader(1, 0, "")
 	item := model.MediaItem{URL: ts.URL + "/video.mp4", Title: "video.mp4"}
-	if _, err := dl.Download(item, dest); err != nil {
-		t.Fatalf("an empty body must not be reclassified as text, got %v", err)
+	_, err := dl.Download(item, dest)
+	if err == nil {
+		t.Fatal("an empty body for a media item must not be recorded as success")
+	}
+	if !strings.Contains(err.Error(), "empty response body") {
+		t.Fatalf("error should name the empty body, got: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dest, "video.mp4")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("no file may be kept for an empty body, stat err = %v", statErr)
 	}
 }
 

@@ -137,7 +137,7 @@ func Load(path string) (*Config, error) {
 	// Clamps still apply to explicit zero/negative values in the config
 	// file, which overwrite the seeded defaults above.
 	if cfg.ConcurrentDownloads <= 0 {
-		cfg.ConcurrentDownloads = 5
+		cfg.ConcurrentDownloads = 3
 	}
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = 30 * time.Second
@@ -167,7 +167,7 @@ func ExpandHomePath(path string) (string, error) {
 func defaultConfig() *Config {
 	return &Config{
 		OutputDir:           defaultOutputDir(),
-		ConcurrentDownloads: 5,
+		ConcurrentDownloads: 3,
 		Timeout:             30 * time.Second,
 		UserAgent:           DefaultUserAgent,
 		RateLimit:           "",

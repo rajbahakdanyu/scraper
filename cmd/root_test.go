@@ -1031,6 +1031,13 @@ func TestAudioOnlyFlagBareValueDefaultsToM4A(t *testing.T) {
 	}
 }
 
+func TestConcurrentFlagDefaultsTo3(t *testing.T) {
+	root := NewRootCmd()
+	if got := root.PersistentFlags().Lookup("concurrent").DefValue; got != "3" {
+		t.Fatalf("concurrent default = %q, want 3", got)
+	}
+}
+
 func TestRunBatchContinuesAfterGroupFailure(t *testing.T) {
 	restoreBatchFactories(t)
 	var genericCalls int

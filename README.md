@@ -144,7 +144,7 @@ per URL — same as albums).
 |------------------|---------|-----------------------------------------------|
 | `-u, --url`      | (none)  | Content URL (alternative to positional arg; subcommand-only) |
 | `-o, --output`   | `~/Downloads` | Output directory (config default)                   |
-| `--concurrent`   | `5`     | Maximum concurrent downloads                 |
+| `--concurrent`   | `3`     | Maximum concurrent downloads                 |
 | `--config`       | (none)  | Config file path (default: `~/.scraper.yaml`)|
 | `-i, --input-file`| (none) | Read URLs from a file, one per line (batch mode); an optional tab-separated album URL per line keeps retries in the album folder |
 | `--limit-rate`   | (none)  | Cap total download speed (e.g. `500K`, `2M`, `1G`); unlimited by default |
