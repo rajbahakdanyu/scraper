@@ -36,6 +36,16 @@ const (
 	phaseLoading phase = iota
 	phaseDownload
 	phaseDone
+	phaseSummary
+)
+
+type listFilter int
+
+const (
+	filterAll listFilter = iota
+	filterFailed
+	filterActive
+	filterPending
 )
 
 type itemState struct {
@@ -74,6 +84,8 @@ type Dashboard struct {
 	stateIndex    map[string]int
 	indexedStates int
 	rows          []table.Row
+	visible       []int
+	visibleReady  bool
 	dirtyRows     map[int]struct{}
 	downloader    Downloader
 	dest          string
@@ -82,10 +94,12 @@ type Dashboard struct {
 	height int
 	ready  bool
 
-	quitting bool
-	status   string
-	site     string
-	phase    phase
+	quitting    bool
+	status      string
+	statusSeq   int
+	autoClearIn int
+	site        string
+	phase       phase
 
 	scraperFn  func(context.Context) ([]model.MediaItem, error)
 	loadingErr string
@@ -107,7 +121,11 @@ type Dashboard struct {
 	scrapeCtx      context.Context
 	cancelScrape   context.CancelFunc
 
-	inspectMsg string
+	inspectMsg       string
+	folded           map[int]bool
+	manuallyUnfolded map[int]bool
+	filter           listFilter
+	writeRetryList   func([]FailedItem) (string, error)
 }
 
 // Futuristic logo — clean, minimal
@@ -116,9 +134,9 @@ const logo = "◢◤  SCRAPER  ◢◤"
 func New(scraperFn func(context.Context) ([]model.MediaItem, error), dl Downloader, dest string, site string) *Dashboard {
 	columns := []table.Column{
 		{Title: "", Width: 2},
-		{Title: "FILE", Width: 42},
+		{Title: "FILE", Width: 34},
 		{Title: "STATUS", Width: 12},
-		{Title: "PROGRESS", Width: 16},
+		{Title: "PROGRESS", Width: 26},
 	}
 
 	t := table.New(
@@ -157,14 +175,17 @@ func (d *Dashboard) SetSourceURL(url string) {
 	d.sourceURL = url
 }
 
+// SetRetryWriter installs the CLI callback used by the summary screen.
+func (d *Dashboard) SetRetryWriter(fn func([]FailedItem) (string, error)) { d.writeRetryList = fn }
+
 // NewBatch creates a dashboard for batch mode. Items are appended
 // incrementally as each album is scraped via the scrape-chain in Init.
 func NewBatch(dl Downloader, destRoot string, urls []DashAlbumURL) *Dashboard {
 	columns := []table.Column{
 		{Title: "", Width: 2},
-		{Title: "FILE", Width: 42},
+		{Title: "FILE", Width: 34},
 		{Title: "STATUS", Width: 12},
-		{Title: "PROGRESS", Width: 16},
+		{Title: "PROGRESS", Width: 26},
 	}
 
 	t := table.New(
@@ -215,6 +236,7 @@ type downloadDoneMsg struct {
 	key string
 	err error
 }
+type statusClearMsg struct{ seq int }
 type tickMsg time.Time
 type scrapeResultMsg struct {
 	items []model.MediaItem
@@ -297,10 +319,18 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return d, tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg { return tickMsg(t) })
 
 	case scrapeResultMsg:
-		return d.handleScrapeResult(msg)
+		m, cmd := d.handleScrapeResult(msg)
+		if d.status != "" {
+			return m, tea.Batch(cmd, d.statusClearCmd())
+		}
+		return m, cmd
 
 	case batchScrapeMsg:
-		return d.handleBatchScrape(msg)
+		m, cmd := d.handleBatchScrape(msg)
+		if d.status != "" {
+			return m, tea.Batch(cmd, d.statusClearCmd())
+		}
+		return m, cmd
 
 	case tea.KeyMsg:
 		if d.searching {
@@ -316,8 +346,39 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				d.jumpToMatch()
 			}
 			return d, nil
+		case "F":
+			d.inspectMsg = ""
+			d.jumpIf(func(st itemState) bool { return st.status == model.StatusFailed })
+			return d, nil
+		case "C":
+			d.cancelAll()
+			return d, nil
+		case "f":
+			d.filter = (d.filter + 1) % 4
+			d.rebuildVisible()
+			d.refreshRows()
+			d.fitTableHeight()
+			return d, nil
+		case tea.KeyTab.String():
+			d.toggleFoldAtCursor()
+			return d, nil
+		case "L":
+			if d.phase == phaseSummary && d.writeRetryList != nil {
+				if path, err := d.writeRetryList(d.Failures()); err != nil {
+					d.setStatus("retry list: %v", err)
+				} else {
+					d.setStatus("retry list written: %s", path)
+				}
+				return d, d.statusClearCmd()
+			}
+			return d, nil
 		case "R":
 			d.inspectMsg = ""
+			if d.phase == phaseSummary && len(d.Failures()) > 0 {
+				d.phase = phaseDownload
+			} else if d.phase == phaseSummary {
+				return d, nil
+			}
 			return d, d.retryAllFailed()
 		case "q", "ctrl+c", "esc":
 			d.quitting = true
@@ -352,15 +413,31 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			d.inspectMsg = ""
 			return d, d.retrySelected()
 		}
+	case tea.MouseMsg:
+		switch msg.Type {
+		case tea.MouseWheelUp:
+			d.moveUpSkippingHeaders()
+		case tea.MouseWheelDown:
+			d.moveDownSkippingHeaders()
+		}
+		return d, nil
 
 	case progressMsg:
 		d.applyProgress(model.ProgressEvent(msg))
+		d.rebuildVisible()
 		d.refreshRows()
 		return d, nil
 
 	case refreshTickMsg:
 		d.applyPendingProgress()
+		d.autoFoldCompletedAlbums()
+		d.rebuildVisible()
 		d.refreshRows()
+		if d.phase == phaseDownload && d.batchRemaining == 0 && len(d.states) > 0 && d.settled() {
+			d.phase = phaseSummary
+			d.refreshTickActive = false
+			return d, nil
+		}
 		if d.spinnerActive() || d.hasPending() {
 			return d, tea.Tick(time.Second/15, func(t time.Time) tea.Msg { return refreshTickMsg{} })
 		}
@@ -369,7 +446,16 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case downloadDoneMsg:
 		d.applyDone(msg)
+		d.rebuildVisible()
 		d.refreshRows()
+		if d.status != "" {
+			return d, d.statusClearCmd()
+		}
+		return d, nil
+	case statusClearMsg:
+		if msg.seq == d.statusSeq && msg.seq == d.autoClearIn {
+			d.status = ""
+		}
 		return d, nil
 	}
 
@@ -391,7 +477,7 @@ func (d *Dashboard) handleScrapeResult(msg scrapeResultMsg) (tea.Model, tea.Cmd)
 		return d, nil
 	}
 	if msg.err != nil {
-		d.status = "warning: " + msg.err.Error()
+		d.setStatus("warning: %v", msg.err)
 		d.appendError(msg.err.Error())
 	}
 
@@ -434,6 +520,7 @@ func (d *Dashboard) handleScrapeResult(msg scrapeResultMsg) (tea.Model, tea.Cmd)
 	}
 
 	d.phase = phaseDownload
+	d.rebuildVisible()
 	d.refreshRows()
 	d.fitTableHeight()
 
@@ -504,7 +591,7 @@ func (d *Dashboard) handleBatchScrape(msg batchScrapeMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if msg.err != nil {
-		d.status = "warning: " + msg.err.Error()
+		d.setStatus("warning: %v", msg.err)
 		d.appendError(fmt.Sprintf("%s: %v", msg.album.URL, msg.err))
 	}
 
@@ -513,7 +600,7 @@ func (d *Dashboard) handleBatchScrape(msg batchScrapeMsg) (tea.Model, tea.Cmd) {
 
 	if len(msg.items) == 0 {
 		if msg.err != nil {
-			d.status = "warning: " + msg.err.Error()
+			d.setStatus("warning: %v", msg.err)
 		}
 		d.refreshRows()
 		if d.batchRemaining > 0 {
@@ -571,6 +658,7 @@ func (d *Dashboard) handleBatchScrape(msg batchScrapeMsg) (tea.Model, tea.Cmd) {
 
 	if wasFirstAlbum {
 		d.phase = phaseDownload
+		d.rebuildVisible()
 		d.refreshRows()
 		d.fitTableHeight()
 
@@ -587,6 +675,7 @@ func (d *Dashboard) handleBatchScrape(msg batchScrapeMsg) (tea.Model, tea.Cmd) {
 
 	// Subsequent album: items were appended. Start downloads only for the
 	// new items, and kick off the next scrape if applicable.
+	d.rebuildVisible()
 	d.refreshRows()
 	d.fitTableHeight()
 	totalRows := len(d.states)
@@ -608,6 +697,23 @@ func (d *Dashboard) handleBatchScrape(msg batchScrapeMsg) (tea.Model, tea.Cmd) {
 }
 
 func (d *Dashboard) moveUpSkippingHeaders() {
+	if d.visibleReady && len(d.visible) == 0 {
+		return
+	}
+	if len(d.visible) > 0 {
+		idx := d.table.Cursor() - 1
+		for idx >= 0 && d.states[d.stateAt(idx)].isHeader {
+			idx--
+		}
+		if idx < 0 {
+			for idx = 0; idx < len(d.visible) && d.states[d.stateAt(idx)].isHeader; idx++ {
+			}
+		}
+		if idx >= 0 && idx < len(d.visible) {
+			d.table.SetCursor(idx)
+		}
+		return
+	}
 	d.table.MoveUp(1)
 	for idx := d.table.Cursor(); idx > 0 && idx < len(d.states) && d.states[idx].isHeader; {
 		d.table.MoveUp(1)
@@ -627,6 +733,22 @@ func (d *Dashboard) moveUpSkippingHeaders() {
 }
 
 func (d *Dashboard) moveDownSkippingHeaders() {
+	if d.visibleReady && len(d.visible) == 0 {
+		return
+	}
+	if len(d.visible) > 0 {
+		idx := d.table.Cursor() + 1
+		for idx < len(d.visible) && d.states[d.stateAt(idx)].isHeader {
+			idx++
+		}
+		if idx >= len(d.visible) {
+			idx = d.table.Cursor()
+		}
+		if idx >= 0 && idx < len(d.visible) {
+			d.table.SetCursor(idx)
+		}
+		return
+	}
 	d.table.MoveDown(1)
 	idx := d.table.Cursor()
 	for idx >= 0 && idx < len(d.states) && d.states[idx].isHeader {
@@ -643,7 +765,7 @@ func (d *Dashboard) cancelSelected() {
 	if d.downloader == nil {
 		return
 	}
-	idx := d.table.Cursor()
+	idx := d.stateAt(d.table.Cursor())
 	if idx < 0 || idx >= len(d.states) {
 		return
 	}
@@ -655,12 +777,29 @@ func (d *Dashboard) cancelSelected() {
 	}
 	d.downloader.Cancel(d.states[idx].item)
 	d.states[idx].status = model.StatusCancelled
+	d.rebuildVisible()
+	d.refreshRows()
+}
+
+func (d *Dashboard) cancelAll() {
+	if d.downloader == nil {
+		return
+	}
+	for i := range d.states {
+		st := &d.states[i]
+		if st.isHeader || (st.status != model.StatusPending && st.status != model.StatusDownloading) {
+			continue
+		}
+		d.downloader.Cancel(st.item)
+		st.status = model.StatusCancelled
+	}
+	d.rebuildVisible()
 	d.refreshRows()
 }
 
 func (d *Dashboard) inspectSelected() {
 	d.inspectMsg = ""
-	idx := d.table.Cursor()
+	idx := d.stateAt(d.table.Cursor())
 	if idx < 0 || idx >= len(d.states) {
 		return
 	}
@@ -728,15 +867,20 @@ func (d *Dashboard) jumpToMatch() {
 		return
 	}
 	query := strings.ToLower(d.searchQuery)
+	d.jumpIf(func(st itemState) bool { return strings.Contains(strings.ToLower(model.TitleOf(st.item)), query) })
+}
+
+func (d *Dashboard) jumpIf(match func(itemState) bool) {
+	if len(d.visible) == 0 {
+		return
+	}
 	start := d.table.Cursor()
-	n := len(d.states)
-	for step := 1; step <= n; step++ {
-		idx := (start + step) % n
-		if d.states[idx].isHeader {
-			continue
-		}
-		if strings.Contains(strings.ToLower(model.TitleOf(d.states[idx].item)), query) {
-			d.table.SetCursor(idx)
+	for step := 1; step <= len(d.visible); step++ {
+		row := (start + step) % len(d.visible)
+		idx := d.stateAt(row)
+		st := d.states[idx]
+		if !st.isHeader && match(st) {
+			d.table.SetCursor(row)
 			d.table.UpdateViewport()
 			return
 		}
@@ -770,6 +914,7 @@ func (d *Dashboard) retryAllFailed() tea.Cmd {
 	if len(cmds) == 0 {
 		return nil
 	}
+	d.rebuildVisible()
 	d.refreshRows()
 	return tea.Batch(append(cmds, d.ensureRefreshTicker())...)
 }
@@ -780,7 +925,7 @@ func (d *Dashboard) retrySelected() tea.Cmd {
 	if d.downloader == nil {
 		return nil
 	}
-	idx := d.table.Cursor()
+	idx := d.stateAt(d.table.Cursor())
 	if idx < 0 || idx >= len(d.states) {
 		return nil
 	}
@@ -801,6 +946,7 @@ func (d *Dashboard) retrySelected() tea.Cmd {
 	d.states[idx].started = time.Time{}
 	d.states[idx].lastErr = nil
 	d.downloader.Prepare(d.states[idx].item)
+	d.rebuildVisible()
 	d.refreshRows()
 	return tea.Batch(startDownload(d.downloader, d.states[idx].item, dest), d.ensureRefreshTicker())
 }
@@ -883,6 +1029,7 @@ func (d *Dashboard) applyDone(msg downloadDoneMsg) {
 	default:
 		d.states[i].status = model.StatusFailed
 		d.states[i].lastErr = msg.err
+		d.setStatus("✗ %s: %v", model.TitleOf(d.states[i].item), msg.err)
 	}
 	d.markDirty(i)
 }
@@ -890,17 +1037,21 @@ func (d *Dashboard) applyDone(msg downloadDoneMsg) {
 // --- Rendering ---
 
 func (d *Dashboard) refreshRows() {
-	if len(d.rows) != len(d.states) {
-		d.rows = make([]table.Row, len(d.states))
-		d.dirtyRows = make(map[int]struct{}, len(d.states))
-		for i := range d.states {
-			d.dirtyRows[i] = struct{}{}
+	if !d.visibleReady {
+		d.rebuildVisible()
+	}
+	if len(d.rows) != len(d.visible) {
+		d.rows = make([]table.Row, len(d.visible))
+		d.dirtyRows = make(map[int]struct{}, len(d.visible))
+		for row := range d.visible {
+			d.dirtyRows[row] = struct{}{}
 		}
 	}
-	for i := range d.dirtyRows {
+	for row := range d.dirtyRows {
+		i := d.stateAt(row)
 		st := d.states[i]
 		if st.isHeader {
-			var done, active int
+			var done, failed int
 			for j := i + 1; j < len(d.states); j++ {
 				if d.states[j].isHeader {
 					break
@@ -908,8 +1059,8 @@ func (d *Dashboard) refreshRows() {
 				switch d.states[j].status {
 				case model.StatusCompleted:
 					done++
-				case model.StatusDownloading:
-					active++
+				case model.StatusFailed:
+					failed++
 				}
 			}
 			total := 0
@@ -919,16 +1070,20 @@ func (d *Dashboard) refreshRows() {
 				}
 				total++
 			}
-			headerText := fmt.Sprintf("▾ %s  (%s)  —  %d items", st.albumName, st.albumSite, total)
+			pct := 0
 			if total > 0 {
-				if done == total {
-					headerText += fmt.Sprintf(", %d done", done)
-				} else {
-					headerText += fmt.Sprintf(", %d done, %d active", done, active)
-				}
+				pct = 100 * done / total
+			}
+			chevron := "▾"
+			if d.folded[i] {
+				chevron = "▸"
+			}
+			headerText := fmt.Sprintf("%s %s  (%s)  —  %d/%d %s %d%%", chevron, st.albumName, st.albumSite, done, total, renderBar(int64(done), int64(total), 10), pct)
+			if failed > 0 {
+				headerText += fmt.Sprintf("  (%d failed)", failed)
 			}
 			styled := d.theme.Cyan.Bold(true).Render(headerText)
-			d.rows[i] = table.Row{"", styled, "", ""}
+			d.rows[row] = table.Row{"", styled, "", ""}
 			continue
 		}
 
@@ -946,7 +1101,16 @@ func (d *Dashboard) refreshRows() {
 			mark = "·"
 		}
 
-		d.rows[i] = table.Row{mark, truncate(st.item.Title, 40), statusShort(st.status), miniBar(st)}
+		progressText := miniBar(st)
+		if st.status == model.StatusDownloading && st.speed > 0 {
+			progressText += fmt.Sprintf("  %s/s", HumanizeBytes(int64(st.speed)))
+		}
+		if st.status == model.StatusPending {
+			if q := d.pendingQueueNumber(i); q > 0 {
+				progressText = fmt.Sprintf("queued #%d", q)
+			}
+		}
+		d.rows[row] = table.Row{mark, truncate(st.item.Title, 32), statusShort(st.status), progressText}
 	}
 	d.dirtyRows = make(map[int]struct{})
 	d.table.SetRows(d.rows)
@@ -968,16 +1132,274 @@ func (d *Dashboard) ensureStateIndex() {
 }
 
 func (d *Dashboard) markDirty(i int) {
-	if d.dirtyRows == nil {
-		d.dirtyRows = make(map[int]struct{})
+	if row, ok := d.rowOfState(i); ok {
+		if d.dirtyRows == nil {
+			d.dirtyRows = make(map[int]struct{})
+		}
+		d.dirtyRows[row] = struct{}{}
 	}
-	d.dirtyRows[i] = struct{}{}
 	for i > 0 && !d.states[i-1].isHeader {
 		i--
 	}
 	if d.states[i].isHeader {
+		if row, ok := d.rowOfState(i); ok {
+			d.dirtyRows[row] = struct{}{}
+		}
+	}
+}
+
+func (d *Dashboard) rebuildVisible() {
+	oldState := -1
+	if len(d.visible) > 0 && d.table.Cursor() >= 0 && d.table.Cursor() < len(d.visible) {
+		oldState = d.visible[d.table.Cursor()]
+	}
+	if d.folded == nil {
+		d.folded = make(map[int]bool)
+	}
+	if d.manuallyUnfolded == nil {
+		d.manuallyUnfolded = make(map[int]bool)
+	}
+	match := func(st itemState) bool {
+		switch d.filter {
+		case filterFailed:
+			return st.status == model.StatusFailed
+		case filterActive:
+			return st.status == model.StatusDownloading
+		case filterPending:
+			return st.status == model.StatusPending
+		default:
+			return true
+		}
+	}
+	var visible []int
+	for i := 0; i < len(d.states); i++ {
+		st := d.states[i]
+		if !st.isHeader {
+			if match(st) {
+				visible = append(visible, i)
+			}
+			continue
+		}
+		end := i + 1
+		for end < len(d.states) && !d.states[end].isHeader {
+			end++
+		}
+		children := make([]int, 0, end-i-1)
+		for j := i + 1; j < end; j++ {
+			if match(d.states[j]) {
+				children = append(children, j)
+			}
+		}
+		if len(children) > 0 {
+			visible = append(visible, i)
+			if !d.folded[i] {
+				visible = append(visible, children...)
+			}
+		}
+		i = end - 1
+	}
+	// Single-item runs have no album header and must remain visible.
+	if len(d.states) > 0 && len(visible) == 0 && d.filter == filterAll {
+		for i := range d.states {
+			visible = append(visible, i)
+		}
+	}
+	d.visible = visible
+	d.visibleReady = true
+	d.rows = make([]table.Row, len(visible))
+	d.dirtyRows = make(map[int]struct{}, len(visible))
+	for i := range visible {
 		d.dirtyRows[i] = struct{}{}
 	}
+	if len(visible) > 0 {
+		row := 0
+		if oldState >= 0 {
+			if r, ok := d.rowOfState(oldState); ok {
+				row = r
+			} else {
+				for h := oldState; h >= 0; h-- {
+					if d.states[h].isHeader {
+						if r, ok := d.rowOfState(h); ok {
+							row = r
+						}
+						break
+					}
+				}
+			}
+		}
+		if row >= len(visible) {
+			row = len(visible) - 1
+		}
+		d.table.SetCursor(row)
+	} else {
+		d.table.SetCursor(0)
+	}
+}
+
+func (d *Dashboard) stateAt(row int) int {
+	if d.visibleReady && len(d.visible) == 0 {
+		return -1
+	}
+	if !d.visibleReady {
+		if row < 0 {
+			return 0
+		}
+		if row >= len(d.states) {
+			return len(d.states) - 1
+		}
+		return row
+	}
+	if row < 0 {
+		row = 0
+	}
+	if row >= len(d.visible) {
+		row = len(d.visible) - 1
+	}
+	return d.visible[row]
+}
+
+func (d *Dashboard) rowOfState(stateIdx int) (int, bool) {
+	for row, idx := range d.visible {
+		if idx == stateIdx {
+			return row, true
+		}
+	}
+	return 0, false
+}
+
+func (d *Dashboard) pendingQueueNumber(stateIdx int) int {
+	queue := 0
+	for i := range d.states {
+		if d.states[i].isHeader || d.states[i].status != model.StatusPending {
+			continue
+		}
+		queue++
+		if i == stateIdx {
+			return queue
+		}
+	}
+	return 0
+}
+
+func renderBar(done, total int64, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	fraction := 0.0
+	if total > 0 {
+		fraction = float64(done) / float64(total)
+	}
+	if fraction > 1 {
+		fraction = 1
+	}
+	if fraction < 0 {
+		fraction = 0
+	}
+	filled := int(fraction * float64(width))
+	return strings.Repeat("▓", filled) + strings.Repeat("░", width-filled)
+}
+
+func (d *Dashboard) runProgressSums() (done, total int64, unknown int) {
+	for _, st := range d.states {
+		if st.isHeader {
+			continue
+		}
+		size := st.total
+		if size <= 0 {
+			size = st.item.Size
+		}
+		if size > 0 {
+			total += size
+			if st.status == model.StatusCompleted {
+				done += size
+			} else {
+				done += st.bytes
+			}
+		} else if st.status != model.StatusCompleted {
+			unknown++
+		}
+	}
+	return
+}
+
+func (d *Dashboard) setStatus(format string, args ...any) {
+	d.statusSeq++
+	d.status = fmt.Sprintf(format, args...)
+	d.autoClearIn = d.statusSeq
+}
+func (d *Dashboard) statusClearCmd() tea.Cmd {
+	seq := d.statusSeq
+	return tea.Tick(3*time.Second, func(time.Time) tea.Msg { return statusClearMsg{seq: seq} })
+}
+
+func (d *Dashboard) settled() bool {
+	for _, st := range d.states {
+		if !st.isHeader && (st.status == model.StatusDownloading || st.status == model.StatusPending) {
+			return false
+		}
+	}
+	return true
+}
+
+func (d *Dashboard) autoFoldCompletedAlbums() {
+	if d.folded == nil {
+		d.folded = make(map[int]bool)
+	}
+	if d.manuallyUnfolded == nil {
+		d.manuallyUnfolded = make(map[int]bool)
+	}
+	changed := false
+	for i, st := range d.states {
+		if !st.isHeader || d.manuallyUnfolded[i] || d.folded[i] {
+			continue
+		}
+		end := i + 1
+		failed, any, complete := false, false, true
+		for end < len(d.states) && !d.states[end].isHeader {
+			child := d.states[end]
+			any = true
+			if child.status == model.StatusFailed {
+				failed = true
+			}
+			if child.status == model.StatusDownloading || child.status == model.StatusPending {
+				complete = false
+			}
+			end++
+		}
+		if any && complete && !failed {
+			d.folded[i] = true
+			changed = true
+		}
+	}
+	if changed {
+		d.rebuildVisible()
+	}
+}
+
+func (d *Dashboard) toggleFoldAtCursor() {
+	if len(d.states) == 0 {
+		return
+	}
+	idx := d.stateAt(d.table.Cursor())
+	if idx < 0 || idx >= len(d.states) {
+		return
+	}
+	header := idx
+	for header >= 0 && !d.states[header].isHeader {
+		header--
+	}
+	if header < 0 {
+		return
+	}
+	if d.folded[header] {
+		d.folded[header] = false
+		d.manuallyUnfolded[header] = true
+	} else {
+		d.folded[header] = true
+	}
+	d.rebuildVisible()
+	d.refreshRows()
+	d.fitTableHeight()
 }
 
 // --- View ---
@@ -987,7 +1409,7 @@ func (d *Dashboard) markDirty(i int) {
 // borders, footer, and any open status/error/search sections. The table
 // gets whatever height is left.
 func (d *Dashboard) tableChrome() int {
-	chrome := 10 // leading blank, header(2), blank, stats, blank, panel border(2), trailing blank, footer
+	chrome := 9 // leading blank, header, bar, stats, blank, panel border(2), trailing blank, footer
 	if d.status != "" {
 		chrome += 2
 	}
@@ -1028,13 +1450,16 @@ func (d *Dashboard) View() string {
 
 	logo := d.theme.Cyan.Bold(true).Render(logo)
 	site := d.theme.Dim.Render(fmt.Sprintf(" %s → %s", d.site, d.dest))
-	header := lipgloss.JoinVertical(lipgloss.Left, logo, site)
+	header := lipgloss.JoinHorizontal(lipgloss.Left, logo, site)
 
 	if d.phase == phaseLoading {
 		return d.viewLoading(header)
 	}
 	if d.phase == phaseDone && d.loadingErr != "" && len(d.states) == 0 {
 		return d.viewError(header)
+	}
+	if d.phase == phaseSummary {
+		return d.viewSummary(header)
 	}
 	return d.viewBatch(header)
 }
@@ -1063,9 +1488,22 @@ func (d *Dashboard) viewError(header string) string {
 func (d *Dashboard) viewBatch(header string) string {
 	tablePanel := d.theme.PanelSlim.Render(d.table.View())
 	stats := d.renderStats()
-	footer := d.theme.Footer.Render("  ↑↓ select  •  c cancel  •  r retry  •  R retry all  •  / search  •  e errors  •  q quit")
+	footer := d.theme.Footer.Render("  ↑↓/jk select  •  c cancel  •  C cancel all  •  r retry  •  R retry all  •  F failed  •  / search  •  f filter  •  Tab fold  •  e errors  •  q quit")
 
-	sections := []string{"", header, "", stats, "", tablePanel}
+	done, total, unknown := d.runProgressSums()
+	bar := renderBar(done, total, d.width-4)
+	if total > 0 {
+		pct := int(100 * float64(done) / float64(total))
+		if pct > 100 {
+			pct = 100
+		}
+		mark := ""
+		if unknown > 0 {
+			mark = "~"
+		}
+		bar = fmt.Sprintf("%s %s/%s %d%%%s", bar, HumanizeBytes(done), HumanizeBytes(total), pct, mark)
+	}
+	sections := []string{"", header, bar, stats, "", tablePanel}
 	if d.status != "" {
 		sections = append(sections, "", d.theme.Dim.Render("  "+d.status))
 	}
@@ -1141,6 +1579,10 @@ func (d *Dashboard) renderStats() string {
 		d.theme.Dim.Render("active ") + d.theme.Cyan.Render(fmt.Sprintf("%d", downloading)),
 		d.theme.Dim.Render("failed ") + d.theme.Error.Render(fmt.Sprintf("%d", failed)),
 	}
+	if d.filter != filterAll {
+		names := []string{"all", "failed", "active", "pending"}
+		parts = append(parts, d.theme.Dim.Render("filter ")+d.theme.Cyan.Render(names[d.filter]))
+	}
 
 	if totalSpeed > 0 {
 		parts = append(parts, d.theme.Dim.Render("speed ")+d.theme.Cyan.Render(fmt.Sprintf("%s/s", HumanizeBytes(int64(totalSpeed)))))
@@ -1169,6 +1611,33 @@ func (d *Dashboard) renderStats() string {
 
 	line := icon + " " + d.theme.Dim.Render("done ") + strings.Join(parts, "  ")
 	return d.theme.StatusBar.Render(line)
+}
+
+func (d *Dashboard) viewSummary(header string) string {
+	var completed, failed, cancelled int
+	for _, st := range d.states {
+		if st.isHeader {
+			continue
+		}
+		switch st.status {
+		case model.StatusCompleted:
+			completed++
+		case model.StatusFailed:
+			failed++
+		case model.StatusCancelled:
+			cancelled++
+		}
+	}
+	body := fmt.Sprintf("  %d completed, %d failed, %d cancelled", completed, failed, cancelled)
+	if failed == 0 {
+		body += "  ✓ nothing to redo"
+	}
+	sections := []string{"", header, "", d.theme.PanelSlim.Render(body)}
+	if d.status != "" {
+		sections = append(sections, "", d.theme.Dim.Render("  "+d.status))
+	}
+	sections = append(sections, "", d.theme.Footer.Render("  R retry failed  •  L write retry list  •  q quit"))
+	return lipgloss.JoinVertical(lipgloss.Left, sections...)
 }
 
 // remainingETA estimates how long the outstanding bytes will take at the

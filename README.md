@@ -89,6 +89,21 @@ cat urls.txt | ./scraper
 Each URL is detected from its host and downloads into its own album
 subfolder under the output directory.
 
+When the terminal UI is active, use these keys:
+
+| Key | Action |
+|-----|--------|
+| `↑/↓`, `j/k` | Select an item |
+| `c` / `C` | Cancel selected / all active downloads |
+| `r` / `R` | Retry selected / all failed downloads |
+| `F` | Jump to the next failed item |
+| `/`, `n`, `enter`, `esc` | Search titles and move between matches |
+| `f` | Cycle all, failed, active, and pending items |
+| `Tab` | Fold or unfold the current album |
+| `e` | Show scrape errors |
+| `L` | Write the retry list from the end-of-run summary |
+| `q` | Quit |
+
 ### Script-friendly output
 
 For scripting and logs, `--no-tui` disables the terminal UI and prints plain

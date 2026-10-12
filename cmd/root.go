@@ -857,8 +857,12 @@ func runWithScraperAndConfig(cfg *config.Config, scraper model.Scraper, targetUR
 			d := dashboard.New(scraperFn, dl, cfg.OutputDir, siteName)
 			d.SetAlbumSlug(slug)
 			d.SetSourceURL(targetURL)
+			d.SetRetryWriter(func(items []dashboard.FailedItem) (string, error) {
+				path, _, err := retryReport(cfg.OutputDir, failuresFromDashboard(items), time.Now())
+				return path, err
+			})
 
-			p := tea.NewProgram(d, tea.WithAltScreen())
+			p := tea.NewProgram(d, tea.WithAltScreen(), tea.WithMouseCellMotion())
 
 			final, err := p.Run()
 			if dash, ok := final.(*dashboard.Dashboard); ok {
@@ -1223,8 +1227,12 @@ func runBatchGroup(cfg *config.Config, opts globalOptions, reg map[string]model.
 		},
 		func() error {
 			d := dashboard.NewBatch(dl, cfg.OutputDir, dashAlbums)
+			d.SetRetryWriter(func(items []dashboard.FailedItem) (string, error) {
+				path, _, err := retryReport(cfg.OutputDir, failuresFromDashboard(items), time.Now())
+				return path, err
+			})
 
-			p := tea.NewProgram(d, tea.WithAltScreen())
+			p := tea.NewProgram(d, tea.WithAltScreen(), tea.WithMouseCellMotion())
 
 			final, err := p.Run()
 			if dash, ok := final.(*dashboard.Dashboard); ok {

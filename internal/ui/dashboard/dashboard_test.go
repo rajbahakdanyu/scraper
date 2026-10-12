@@ -1171,8 +1171,8 @@ func TestFitTableHeightFillsTerminal(t *testing.T) {
 
 	d.fitTableHeight()
 
-	if got := lines(d.table.View()); got != 30 {
-		t.Fatalf("table renders %d lines, want 30 (terminal 40 minus 10 chrome)", got)
+	if got := lines(d.table.View()); got != 31 {
+		t.Fatalf("table renders %d lines, want 31 (terminal 40 minus 9 chrome)", got)
 	}
 	d.phase = phaseDownload // the table only shows in the batch view
 	if got := lines(d.View()); got != d.height {
@@ -1224,8 +1224,149 @@ func TestWindowSizeMsgRefitsTable(t *testing.T) {
 
 	updated, _ := d.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	got := updated.(*Dashboard)
-	if h := lines(got.table.View()); h != 30 {
-		t.Fatalf("after resize, table renders %d lines, want 30", h)
+	if h := lines(got.table.View()); h != 31 {
+		t.Fatalf("after resize, table renders %d lines, want 31", h)
+	}
+}
+
+func TestDashboardNewNavigationAndProgressFeatures(t *testing.T) {
+	d := NewBatch(&fakeDownloader{ch: make(chan model.ProgressEvent, 4)}, t.TempDir(), nil)
+	d.states = []itemState{
+		{isHeader: true, albumName: "a", albumSite: "site"},
+		{item: model.MediaItem{URL: "https://x/1", Title: "one.mp4", Size: 100}, status: model.StatusFailed, lastErr: errors.New("gone")},
+		{item: model.MediaItem{URL: "https://x/2", Title: "two.mp4"}, status: model.StatusPending},
+		{item: model.MediaItem{URL: "https://x/3", Title: "three.mp4"}, status: model.StatusPending},
+	}
+	d.refreshRows()
+	if len(d.visible) != 4 {
+		t.Fatalf("visible identity = %v", d.visible)
+	}
+	d.table.SetCursor(0)
+	updated, _ := d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
+	d = updated.(*Dashboard)
+	if d.table.Cursor() != 1 {
+		t.Fatalf("F cursor = %d, want failed row 1", d.table.Cursor())
+	}
+	if got := d.rows[2][3]; !strings.Contains(got, "queued #1") {
+		t.Fatalf("pending queue cell = %q", got)
+	}
+	if got := renderBar(5, 10, 4); got != "▓▓░░" {
+		t.Fatalf("renderBar = %q", got)
+	}
+
+	updated, _ = d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	d = updated.(*Dashboard)
+	if d.filter != filterFailed || len(d.visible) != 2 || d.visible[0] != 0 || d.visible[1] != 1 {
+		t.Fatalf("failed filter visible = %v", d.visible)
+	}
+	if !strings.Contains(d.renderStats(), "/3") {
+		t.Fatalf("filtered stats should remain global: %q", d.renderStats())
+	}
+
+	updated, _ = d.Update(tea.KeyMsg{Type: tea.KeyTab})
+	d = updated.(*Dashboard)
+	if len(d.visible) != 1 || d.visible[0] != 0 {
+		t.Fatalf("fold with filter should retain only its album header, got %v", d.visible)
+	}
+	updated, _ = d.Update(tea.MouseMsg{Type: tea.MouseWheelDown})
+	d = updated.(*Dashboard)
+	if d.table.Cursor() < 0 || d.table.Cursor() >= len(d.visible) {
+		t.Fatalf("wheel cursor outside visible rows: %d", d.table.Cursor())
+	}
+}
+
+func TestFailureStatusSequenceAndSummarySettle(t *testing.T) {
+	d := NewBatch(&fakeDownloader{ch: make(chan model.ProgressEvent, 1)}, t.TempDir(), nil)
+	d.states = []itemState{{item: model.MediaItem{URL: "https://x/1", Title: "gone.mp4"}, status: model.StatusDownloading}}
+	d.refreshRows()
+	updated, _ := d.Update(downloadDoneMsg{key: d.states[0].item.Key(), err: errors.New("connection reset")})
+	d = updated.(*Dashboard)
+	if !strings.Contains(d.status, "gone.mp4") || !strings.Contains(d.status, "connection reset") {
+		t.Fatalf("failure status = %q", d.status)
+	}
+	oldSeq := d.statusSeq
+	updated, _ = d.Update(downloadDoneMsg{key: d.states[0].item.Key(), err: errors.New("new error")})
+	d = updated.(*Dashboard)
+	updated, _ = d.Update(statusClearMsg{seq: oldSeq})
+	d = updated.(*Dashboard)
+	if !strings.Contains(d.status, "new error") {
+		t.Fatalf("stale clear erased newer status: %q", d.status)
+	}
+
+	d.phase = phaseDownload
+	updated, _ = d.Update(refreshTickMsg{})
+	d = updated.(*Dashboard)
+	if d.phase != phaseSummary || !strings.Contains(d.View(), "1 failed") {
+		t.Fatalf("summary missing after settled run: phase=%v view=%q", d.phase, d.View())
+	}
+}
+
+func TestPendingPreventsSummaryAndCancelAll(t *testing.T) {
+	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 1)}
+	d := NewBatch(fd, t.TempDir(), nil)
+	d.states = []itemState{{item: model.MediaItem{URL: "https://x/1", Title: "one"}, status: model.StatusPending}, {item: model.MediaItem{URL: "https://x/2", Title: "two"}, status: model.StatusDownloading}}
+	d.refreshRows()
+	d.phase = phaseDownload
+	updated, _ := d.Update(refreshTickMsg{})
+	d = updated.(*Dashboard)
+	if d.phase == phaseSummary {
+		t.Fatal("pending/downloading items must prevent summary")
+	}
+	updated, _ = d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'C'}})
+	d = updated.(*Dashboard)
+	if len(fd.cancelled) != 2 || d.states[0].status != model.StatusCancelled || d.states[1].status != model.StatusCancelled {
+		t.Fatalf("cancel-all did not cancel both items")
+	}
+}
+
+func TestCompletedAlbumAutoFoldsAndManualUnfoldSticks(t *testing.T) {
+	d := NewBatch(&fakeDownloader{ch: make(chan model.ProgressEvent, 1)}, t.TempDir(), nil)
+	d.states = []itemState{
+		{isHeader: true, albumName: "a", albumSite: "s"},
+		{item: model.MediaItem{URL: "https://x/1", Title: "one"}, status: model.StatusCompleted},
+	}
+	d.refreshRows()
+	d.phase = phaseDownload
+	updated, _ := d.Update(refreshTickMsg{})
+	d = updated.(*Dashboard)
+	if len(d.visible) != 1 || !d.folded[0] {
+		t.Fatalf("completed album did not auto-fold: %v", d.visible)
+	}
+	updated, _ = d.Update(tea.KeyMsg{Type: tea.KeyTab})
+	d = updated.(*Dashboard)
+	updated, _ = d.Update(refreshTickMsg{})
+	d = updated.(*Dashboard)
+	if len(d.visible) != 2 || d.folded[0] {
+		t.Fatalf("manual unfold did not stick: visible=%v folded=%v", d.visible, d.folded)
+	}
+}
+
+func TestEmptyFilterCannotSelectHiddenItem(t *testing.T) {
+	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 1)}
+	d := NewBatch(fd, t.TempDir(), nil)
+	d.states = []itemState{{item: model.MediaItem{URL: "https://x/1", Title: "done"}, status: model.StatusCompleted}}
+	d.refreshRows()
+	d.filter = filterFailed
+	d.rebuildVisible()
+	if len(d.visible) != 0 || d.stateAt(0) != -1 {
+		t.Fatalf("empty filtered view maps to a hidden state: %v, stateAt=%d", d.visible, d.stateAt(0))
+	}
+	d.cancelSelected()
+	if len(fd.cancelled) != 0 {
+		t.Fatalf("cancel selected affected hidden item")
+	}
+}
+
+func TestSummaryRetryListWriterIsShown(t *testing.T) {
+	d := NewBatch(&fakeDownloader{ch: make(chan model.ProgressEvent, 1)}, t.TempDir(), nil)
+	d.states = []itemState{{item: model.MediaItem{URL: "https://x/1", Title: "gone"}, status: model.StatusFailed, lastErr: errors.New("boom")}}
+	d.refreshRows()
+	d.phase = phaseSummary
+	d.SetRetryWriter(func([]FailedItem) (string, error) { return "/tmp/retry-list.txt", nil })
+	updated, _ := d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
+	d = updated.(*Dashboard)
+	if !strings.Contains(d.View(), "/tmp/retry-list.txt") {
+		t.Fatalf("summary did not show retry list result: %q", d.View())
 	}
 }
 
