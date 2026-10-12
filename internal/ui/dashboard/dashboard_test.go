@@ -4,6 +4,7 @@ package dashboard
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1156,6 +1157,81 @@ func TestFailuresReturnsOnlyFailedItems(t *testing.T) {
 	if got[0].SourceURL != "https://bunkr.cr/a/rBSKhzaL" {
 		t.Fatalf("Failures() SourceURL = %q, want the album URL", got[0].SourceURL)
 	}
+}
+
+func TestFitTableHeightFillsTerminal(t *testing.T) {
+	d := NewBatch(&fakeDownloader{ch: make(chan model.ProgressEvent, 1)}, t.TempDir(), nil)
+	for i := 0; i < 50; i++ {
+		d.states = append(d.states, itemState{item: model.MediaItem{Title: fmt.Sprintf("f%d.mp4", i)}})
+	}
+	d.refreshRows()
+	d.ready = true
+	d.height = 40
+	d.width = 120
+
+	d.fitTableHeight()
+
+	if got := lines(d.table.View()); got != 30 {
+		t.Fatalf("table renders %d lines, want 30 (terminal 40 minus 10 chrome)", got)
+	}
+	d.phase = phaseDownload // the table only shows in the batch view
+	if got := lines(d.View()); got != d.height {
+		t.Fatalf("dashboard renders %d lines in a %d-line terminal: it must fill the terminal exactly", got, d.height)
+	}
+}
+
+func TestFitTableHeightCapsAtRowCount(t *testing.T) {
+	d := NewBatch(&fakeDownloader{ch: make(chan model.ProgressEvent, 1)}, t.TempDir(), nil)
+	d.states = []itemState{
+		{item: model.MediaItem{Title: "a.mp4"}},
+		{item: model.MediaItem{Title: "b.mp4"}},
+	}
+	d.refreshRows()
+	d.ready = true
+	d.height = 40
+	d.width = 120
+
+	d.fitTableHeight()
+
+	if got := lines(d.table.View()); got != 2 {
+		t.Fatalf("table renders %d lines, want 2 (no dead space below a short list)", got)
+	}
+}
+
+func TestFitTableHeightFloorsAtMinimum(t *testing.T) {
+	d := NewBatch(&fakeDownloader{ch: make(chan model.ProgressEvent, 1)}, t.TempDir(), nil)
+	for i := 0; i < 50; i++ {
+		d.states = append(d.states, itemState{item: model.MediaItem{Title: fmt.Sprintf("f%d.mp4", i)}})
+	}
+	d.refreshRows()
+	d.ready = true
+	d.height = 8 // 8 - 10 chrome is negative; floor at a usable 4
+	d.width = 120
+
+	d.fitTableHeight()
+
+	if got := lines(d.table.View()); got != 4 {
+		t.Fatalf("table renders %d lines, want 4 (minimum in a tiny terminal)", got)
+	}
+}
+
+func TestWindowSizeMsgRefitsTable(t *testing.T) {
+	d := NewBatch(&fakeDownloader{ch: make(chan model.ProgressEvent, 1)}, t.TempDir(), nil)
+	for i := 0; i < 50; i++ {
+		d.states = append(d.states, itemState{item: model.MediaItem{Title: fmt.Sprintf("f%d.mp4", i)}})
+	}
+	d.refreshRows()
+
+	updated, _ := d.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	got := updated.(*Dashboard)
+	if h := lines(got.table.View()); h != 30 {
+		t.Fatalf("after resize, table renders %d lines, want 30", h)
+	}
+}
+
+// lines counts rendered lines in a lipgloss string.
+func lines(s string) int {
+	return strings.Count(s, "\n") + 1
 }
 
 func TestRetryAllFailedResetsStates(t *testing.T) {

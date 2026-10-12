@@ -259,6 +259,7 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		d.width, d.height, d.ready = msg.Width, msg.Height, true
 		d.table.SetWidth(msg.Width - 6)
+		d.fitTableHeight()
 		bw := msg.Width - 8
 		if bw > 80 {
 			bw = 80
@@ -432,17 +433,9 @@ func (d *Dashboard) handleScrapeResult(msg scrapeResultMsg) (tea.Model, tea.Cmd)
 		d.dest = albumDest
 	}
 
-	h := len(msg.items)
-	if h > 15 {
-		h = 15
-	}
-	if h < 4 {
-		h = 4
-	}
-	d.table.SetHeight(h)
-
 	d.phase = phaseDownload
 	d.refreshRows()
+	d.fitTableHeight()
 
 	var cmds []tea.Cmd
 	if d.downloader != nil {
@@ -577,16 +570,9 @@ func (d *Dashboard) handleBatchScrape(msg batchScrapeMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if wasFirstAlbum {
-		h := len(d.states)
-		if h > 15 {
-			h = 15
-		}
-		if h < 4 {
-			h = 4
-		}
-		d.table.SetHeight(h)
 		d.phase = phaseDownload
 		d.refreshRows()
+		d.fitTableHeight()
 
 		var cmds []tea.Cmd
 		if d.downloader != nil {
@@ -601,13 +587,9 @@ func (d *Dashboard) handleBatchScrape(msg batchScrapeMsg) (tea.Model, tea.Cmd) {
 
 	// Subsequent album: items were appended. Start downloads only for the
 	// new items, and kick off the next scrape if applicable.
-	totalRows := len(d.states)
-	h := totalRows
-	if h > 15 {
-		h = 15
-	}
-	d.table.SetHeight(h)
 	d.refreshRows()
+	d.fitTableHeight()
+	totalRows := len(d.states)
 
 	var cmds []tea.Cmd
 	if d.downloader != nil {
@@ -999,6 +981,45 @@ func (d *Dashboard) markDirty(i int) {
 }
 
 // --- View ---
+
+// tableChrome returns the terminal rows the batch view spends on
+// everything around the table in the current state: header, stats, panel
+// borders, footer, and any open status/error/search sections. The table
+// gets whatever height is left.
+func (d *Dashboard) tableChrome() int {
+	chrome := 10 // leading blank, header(2), blank, stats, blank, panel border(2), trailing blank, footer
+	if d.status != "" {
+		chrome += 2
+	}
+	if d.inspectMsg != "" {
+		chrome += 2
+	}
+	if d.showErrors && len(d.errorLog) > 0 {
+		chrome += 10 // blank + title + up to 8 shown errors
+	}
+	if d.searching || d.searchQuery != "" {
+		chrome += 2
+	}
+	return chrome
+}
+
+// fitTableHeight gives the table the terminal's leftover height. The
+// dashboard previously capped the table at 15 rows, so a fullscreen
+// terminal still scrolled; a WindowSizeMsg and every scrape refresh
+// re-fit instead.
+func (d *Dashboard) fitTableHeight() {
+	if !d.ready || d.height <= 0 {
+		return
+	}
+	h := d.height - d.tableChrome()
+	if h < 4 {
+		h = 4
+	}
+	if rows := len(d.rows); rows > 0 && h > rows {
+		h = rows // no dead space below a short list
+	}
+	d.table.SetHeight(h)
+}
 
 func (d *Dashboard) View() string {
 	if d.quitting {
