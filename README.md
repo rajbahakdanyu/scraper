@@ -89,20 +89,34 @@ cat urls.txt | ./scraper
 Each URL is detected from its host and downloads into its own album
 subfolder under the output directory.
 
-When the terminal UI is active, use these keys:
+#### Dashboard keys
+
+Keys are case-sensitive. Progress and statistics always cover the whole run,
+including items hidden by a filter or folded album. Completed albums fold
+automatically; albums with failures stay open, and manually unfolded albums
+remain open.
 
 | Key | Action |
 |-----|--------|
-| `↑/↓`, `j/k` | Select an item |
-| `c` / `C` | Cancel selected / all active downloads |
-| `r` / `R` | Retry selected / all failed downloads |
+| `↑/↓`, `j/k`, mouse wheel | Select an item or folded album |
+| `c` | Cancel the selected queued or active download |
+| `C` | Cancel all queued and active downloads |
+| `r` | Retry the selected failed download |
+| `R` | Retry all failures; return from the summary to the download list |
 | `F` | Jump to the next failed item |
-| `/`, `n`, `enter`, `esc` | Search titles and move between matches |
+| `/` | Start a title search; `enter` accepts it and `esc` clears it |
+| `n` | Jump to the next search match |
+| `enter` | Show the selected failed item's error outside search |
 | `f` | Cycle all, failed, active, and pending items |
 | `Tab` | Fold or unfold the current album |
 | `e` | Show scrape errors |
 | `L` | Write the retry list from the end-of-run summary |
-| `q` | Quit |
+| `q`, `esc`, `ctrl+c` | Quit outside search |
+
+The summary appears only after every album has been scraped and every
+download has finished. It reports completed, failed, and cancelled counts.
+Unknown file sizes mark the overall byte percentage with `~` until their
+sizes are known.
 
 ### Script-friendly output
 
@@ -202,13 +216,8 @@ source <(./scraper completion zsh)
 
 ### TUI Keybindings
 
-| Key             | Action                           |
-|-----------------|-----------------------------------|
-| `↑/k`, `↓/j`    | Navigate the item list           |
-| `enter`         | Show the error for a failed item |
-| `r`             | Retry the selected failed item   |
-| `c`             | Cancel the selected item          |
-| `q`, `esc`, `ctrl+c` | Quit                           |
+See [Dashboard keys](#dashboard-keys) for navigation, cancellation, retries,
+search, filtering, folding, and summary actions.
 
 ### Media-only downloads (default)
 
