@@ -709,15 +709,15 @@ func (d *Dashboard) moveUpSkippingHeaders() {
 	}
 	if len(d.visible) > 0 {
 		idx := d.table.Cursor() - 1
-		for idx >= 0 && d.states[d.stateAt(idx)].isHeader {
+		for idx >= 0 && d.skipHeader(idx) {
 			idx--
 		}
 		if idx < 0 {
-			for idx = 0; idx < len(d.visible) && d.states[d.stateAt(idx)].isHeader; idx++ {
+			for idx = 0; idx < len(d.visible) && d.skipHeader(idx); idx++ {
 			}
 		}
 		if idx >= 0 && idx < len(d.visible) {
-			d.table.SetCursor(idx)
+			d.selectRow(idx)
 		}
 		return
 	}
@@ -745,14 +745,14 @@ func (d *Dashboard) moveDownSkippingHeaders() {
 	}
 	if len(d.visible) > 0 {
 		idx := d.table.Cursor() + 1
-		for idx < len(d.visible) && d.states[d.stateAt(idx)].isHeader {
+		for idx < len(d.visible) && d.skipHeader(idx) {
 			idx++
 		}
 		if idx >= len(d.visible) {
 			idx = d.table.Cursor()
 		}
 		if idx >= 0 && idx < len(d.visible) {
-			d.table.SetCursor(idx)
+			d.selectRow(idx)
 		}
 		return
 	}
@@ -887,8 +887,7 @@ func (d *Dashboard) jumpIf(match func(itemState) bool) {
 		idx := d.stateAt(row)
 		st := d.states[idx]
 		if !st.isHeader && match(st) {
-			d.table.SetCursor(row)
-			d.table.UpdateViewport()
+			d.selectRow(row)
 			return
 		}
 	}
@@ -998,8 +997,11 @@ func (d *Dashboard) applyProgress(evt model.ProgressEvent) {
 	// applyDone, not from buffered progress events — a stale
 	// StatusFailed event queued before a retry would otherwise
 	// corrupt the retried item.
-	if evt.Status == model.StatusFailed || evt.Status == model.StatusCancelled {
+	switch evt.Status {
+	case model.StatusFailed, model.StatusCancelled:
 		return
+	case model.StatusCompleted:
+		evt.Status = model.StatusDownloading
 	}
 	if d.states[i].started.IsZero() {
 		d.states[i].started = time.Now()
@@ -1219,6 +1221,7 @@ func (d *Dashboard) rebuildVisible() {
 	for i := range visible {
 		d.dirtyRows[i] = struct{}{}
 	}
+	d.refreshRows()
 	if len(visible) > 0 {
 		row := 0
 		if oldState >= 0 {
@@ -1238,10 +1241,21 @@ func (d *Dashboard) rebuildVisible() {
 		if row >= len(visible) {
 			row = len(visible) - 1
 		}
-		d.table.SetCursor(row)
+		d.selectRow(row)
 	} else {
 		d.table.SetCursor(0)
 	}
+}
+
+func (d *Dashboard) skipHeader(row int) bool {
+	idx := d.stateAt(row)
+	return d.states[idx].isHeader && !d.folded[idx]
+}
+
+func (d *Dashboard) selectRow(row int) {
+	d.table.SetCursor(0)
+	d.table.MoveUp(0)
+	d.table.MoveDown(row)
 }
 
 func (d *Dashboard) stateAt(row int) int {
@@ -1449,7 +1463,7 @@ func (d *Dashboard) fitTableHeight() {
 		h = rows // no dead space below a short list
 	}
 	d.table.SetHeight(h)
-	d.table.MoveDown(0)
+	d.selectRow(d.table.Cursor())
 }
 
 func (d *Dashboard) View() string {

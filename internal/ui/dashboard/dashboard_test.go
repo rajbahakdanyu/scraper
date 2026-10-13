@@ -1361,6 +1361,64 @@ func TestDashboardNewNavigationAndProgressFeatures(t *testing.T) {
 	}
 }
 
+func TestVisibleMappingPreservesSelectionWhenGrowing(t *testing.T) {
+	d := NewBatch(nil, t.TempDir(), nil)
+	d.states = []itemState{
+		{isHeader: true, albumName: "first"},
+		{item: model.MediaItem{Title: "completed"}, status: model.StatusCompleted},
+		{isHeader: true, albumName: "second"},
+		{item: model.MediaItem{Title: "failed"}, status: model.StatusFailed},
+		{isHeader: true, albumName: "third"},
+		{item: model.MediaItem{Title: "completed"}, status: model.StatusCompleted},
+		{isHeader: true, albumName: "last"},
+		{item: model.MediaItem{Title: "selected"}, status: model.StatusPending},
+	}
+	d.filter = filterPending
+	d.refreshRows()
+	d.table.SetCursor(1)
+	d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	if got := d.stateAt(d.table.Cursor()); got != 7 {
+		t.Fatalf("selected state = %d, want 7 after growing the visible list", got)
+	}
+}
+
+func TestFoldedHeadersRemainReachable(t *testing.T) {
+	for _, wheel := range []bool{false, true} {
+		t.Run(fmt.Sprintf("wheel-%v", wheel), func(t *testing.T) {
+			d := NewBatch(nil, t.TempDir(), nil)
+			d.states = []itemState{
+				{isHeader: true, albumName: "first"},
+				{item: model.MediaItem{Title: "one"}, status: model.StatusPending},
+				{isHeader: true, albumName: "second"},
+				{item: model.MediaItem{Title: "two"}, status: model.StatusPending},
+				{isHeader: true, albumName: "third"},
+				{item: model.MediaItem{Title: "three"}, status: model.StatusPending},
+			}
+			d.folded = map[int]bool{2: true, 4: true}
+			d.refreshRows()
+			d.table.SetCursor(1)
+			var down, up tea.Msg = tea.KeyMsg{Type: tea.KeyDown}, tea.KeyMsg{Type: tea.KeyUp}
+			if wheel {
+				down, up = tea.MouseMsg{Type: tea.MouseWheelDown}, tea.MouseMsg{Type: tea.MouseWheelUp}
+			}
+			for _, want := range []int{2, 4} {
+				d.Update(down)
+				if got := d.stateAt(d.table.Cursor()); got != want {
+					t.Fatalf("down selects state %d, want folded header %d", got, want)
+				}
+			}
+			d.Update(up)
+			if got := d.stateAt(d.table.Cursor()); got != 2 {
+				t.Fatalf("up selects state %d, want folded header 2", got)
+			}
+			d.Update(tea.KeyMsg{Type: tea.KeyTab})
+			if _, visible := d.rowOfState(3); !visible {
+				t.Fatal("Tab did not unfold the selected album")
+			}
+		})
+	}
+}
+
 func TestFailureStatusSequenceAndSummarySettle(t *testing.T) {
 	d := NewBatch(&fakeDownloader{ch: make(chan model.ProgressEvent, 1)}, t.TempDir(), nil)
 	d.states = []itemState{{item: model.MediaItem{URL: "https://x/1", Title: "gone.mp4"}, status: model.StatusDownloading}}
@@ -1453,6 +1511,57 @@ func TestSummaryRetryListWriterIsShown(t *testing.T) {
 	d = updated.(*Dashboard)
 	if !strings.Contains(d.View(), "/tmp/retry-list.txt") {
 		t.Fatalf("summary did not show retry list result: %q", d.View())
+	}
+}
+
+func TestSummaryWaitsForFinalDownloadResult(t *testing.T) {
+	d := NewBatch(&fakeDownloader{ch: make(chan model.ProgressEvent, 1)}, t.TempDir(), nil)
+	d.states = []itemState{{item: model.MediaItem{URL: "https://example.com/one", Title: "one.mp4", Size: 100}, status: model.StatusDownloading}}
+	d.refreshRows()
+	d.phase = phaseDownload
+	d.Update(progressMsg(model.ProgressEvent{Item: d.states[0].item, Bytes: 100, Total: 100, Status: model.StatusCompleted}))
+	d.Update(refreshTickMsg{})
+	if d.phase != phaseDownload {
+		t.Fatal("summary appeared before the final download result")
+	}
+	d.Update(downloadDoneMsg{key: d.states[0].item.Key(), err: errors.New("close failed")})
+	d.Update(refreshTickMsg{})
+	if d.phase != phaseSummary || len(d.Failures()) != 1 {
+		t.Fatal("summary must use the authoritative final download failure")
+	}
+	d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'R'}})
+	if d.phase != phaseDownload || d.states[0].status != model.StatusPending {
+		t.Fatal("retry must return to the download table with pending work")
+	}
+}
+
+func TestSummaryWaitsForRemainingAlbums(t *testing.T) {
+	d := NewBatch(nil, t.TempDir(), []DashAlbumURL{{Site: "test"}})
+	d.states = []itemState{{item: model.MediaItem{Title: "one"}, status: model.StatusCompleted}}
+	d.refreshRows()
+	d.phase = phaseDownload
+	d.Update(refreshTickMsg{})
+	if d.phase != phaseDownload {
+		t.Fatal("summary appeared while another album is still being scraped")
+	}
+}
+
+func TestFailedAlbumStaysOpenWhenOtherAlbumsFold(t *testing.T) {
+	d := NewBatch(nil, t.TempDir(), nil)
+	d.states = []itemState{
+		{isHeader: true, albumName: "complete"},
+		{item: model.MediaItem{Title: "one", Size: 100}, status: model.StatusCompleted},
+		{isHeader: true, albumName: "failed"},
+		{item: model.MediaItem{Title: "two", Size: 100}, status: model.StatusFailed},
+	}
+	d.refreshRows()
+	d.phase = phaseDownload
+	d.Update(refreshTickMsg{})
+	if !d.folded[0] || d.folded[2] {
+		t.Fatalf("album folds = %v, want only the completed album folded", d.folded)
+	}
+	if done, total, _ := d.runProgressSums(); done != 100 || total != 200 {
+		t.Fatalf("folding changed global byte totals: %d/%d", done, total)
 	}
 }
 
