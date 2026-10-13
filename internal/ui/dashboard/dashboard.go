@@ -277,10 +277,17 @@ func startDownload(dl Downloader, item model.MediaItem, dest string) tea.Cmd {
 // --- Update ---
 
 func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	defer d.fitTableHeight()
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		d.width, d.height, d.ready = msg.Width, msg.Height, true
-		d.table.SetWidth(msg.Width - 6)
+		d.table.SetWidth(max(0, msg.Width-4))
+		d.table.SetColumns([]table.Column{
+			{Title: "", Width: 2},
+			{Title: "FILE", Width: max(1, msg.Width-52)},
+			{Title: "STATUS", Width: 12},
+			{Title: "PROGRESS", Width: 26},
+		})
 		d.fitTableHeight()
 		bw := msg.Width - 8
 		if bw > 80 {
@@ -1078,12 +1085,13 @@ func (d *Dashboard) refreshRows() {
 			if d.folded[i] {
 				chevron = "▸"
 			}
-			headerText := fmt.Sprintf("%s %s  (%s)  —  %d/%d %s %d%%", chevron, st.albumName, st.albumSite, done, total, renderBar(int64(done), int64(total), 10), pct)
+			headerText := fmt.Sprintf("%s %s  (%s)", chevron, st.albumName, st.albumSite)
+			progressText := fmt.Sprintf("%s %d%%", renderBar(int64(done), int64(total), 10), pct)
 			if failed > 0 {
-				headerText += fmt.Sprintf("  (%d failed)", failed)
+				progressText += fmt.Sprintf(" (%d failed)", failed)
 			}
 			styled := d.theme.Cyan.Bold(true).Render(headerText)
-			d.rows[row] = table.Row{"", styled, "", ""}
+			d.rows[row] = table.Row{"", styled, fmt.Sprintf("%d/%d", done, total), progressText}
 			continue
 		}
 
@@ -1417,7 +1425,7 @@ func (d *Dashboard) tableChrome() int {
 		chrome += 2
 	}
 	if d.showErrors && len(d.errorLog) > 0 {
-		chrome += 10 // blank + title + up to 8 shown errors
+		chrome += 1 + lipgloss.Height(d.viewErrorPanel())
 	}
 	if d.searching || d.searchQuery != "" {
 		chrome += 2
@@ -1441,6 +1449,7 @@ func (d *Dashboard) fitTableHeight() {
 		h = rows // no dead space below a short list
 	}
 	d.table.SetHeight(h)
+	d.table.MoveDown(0)
 }
 
 func (d *Dashboard) View() string {
@@ -1450,7 +1459,7 @@ func (d *Dashboard) View() string {
 
 	logo := d.theme.Cyan.Bold(true).Render(logo)
 	site := d.theme.Dim.Render(fmt.Sprintf(" %s → %s", d.site, d.dest))
-	header := lipgloss.JoinHorizontal(lipgloss.Left, logo, site)
+	header := clipLine(lipgloss.JoinHorizontal(lipgloss.Left, logo, site), d.width)
 
 	if d.phase == phaseLoading {
 		return d.viewLoading(header)
@@ -1472,7 +1481,7 @@ func (d *Dashboard) viewLoading(header string) string {
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
 		"", header, "",
-		d.theme.PanelSlim.Render(msg), "",
+		d.theme.PanelSlim.Render(clipLine(msg, d.width-4)), "",
 		d.theme.Footer.Render("  q quit"),
 	)
 }
@@ -1480,7 +1489,7 @@ func (d *Dashboard) viewLoading(header string) string {
 func (d *Dashboard) viewError(header string) string {
 	return lipgloss.JoinVertical(lipgloss.Left,
 		"", header, "",
-		d.theme.Error.Render("  ✗ "+d.loadingErr), "",
+		d.theme.Error.Render(clipLine("  ✗ "+d.loadingErr, d.width)), "",
 		d.theme.Footer.Render("  q quit"),
 	)
 }
@@ -1488,10 +1497,10 @@ func (d *Dashboard) viewError(header string) string {
 func (d *Dashboard) viewBatch(header string) string {
 	tablePanel := d.theme.PanelSlim.Render(d.table.View())
 	stats := d.renderStats()
-	footer := d.theme.Footer.Render("  ↑↓/jk select  •  c cancel  •  C cancel all  •  r retry  •  R retry all  •  F failed  •  / search  •  f filter  •  Tab fold  •  e errors  •  q quit")
+	footer := d.theme.Footer.Render(clipLine("  ↑↓/jk select • c/C cancel • r/R retry • F failed • / search • f filter • Tab fold • e errors • q quit", d.width))
 
 	done, total, unknown := d.runProgressSums()
-	bar := renderBar(done, total, d.width-4)
+	label := ""
 	if total > 0 {
 		pct := int(100 * float64(done) / float64(total))
 		if pct > 100 {
@@ -1501,22 +1510,25 @@ func (d *Dashboard) viewBatch(header string) string {
 		if unknown > 0 {
 			mark = "~"
 		}
-		bar = fmt.Sprintf("%s %s/%s %d%%%s", bar, HumanizeBytes(done), HumanizeBytes(total), pct, mark)
+		label = fmt.Sprintf(" %s/%s %d%%%s", HumanizeBytes(done), HumanizeBytes(total), pct, mark)
+	} else if unknown > 0 {
+		label = " unknown size"
 	}
+	bar := renderBar(done, total, max(0, d.width-lipgloss.Width(label))) + label
 	sections := []string{"", header, bar, stats, "", tablePanel}
 	if d.status != "" {
-		sections = append(sections, "", d.theme.Dim.Render("  "+d.status))
+		sections = append(sections, "", d.theme.Dim.Render(clipLine("  "+d.status, d.width)))
 	}
 	if d.inspectMsg != "" {
-		sections = append(sections, "", d.theme.Error.Render("  "+d.inspectMsg))
+		sections = append(sections, "", d.theme.Error.Render(clipLine("  "+d.inspectMsg, d.width)))
 	}
 	if d.showErrors && len(d.errorLog) > 0 {
 		sections = append(sections, "", d.viewErrorPanel())
 	}
 	if d.searching {
-		sections = append(sections, "", d.theme.Dim.Render("  search: "+d.searchQuery+"▏"))
+		sections = append(sections, "", d.theme.Dim.Render(clipLine("  search: "+d.searchQuery+"▏", d.width)))
 	} else if d.searchQuery != "" {
-		sections = append(sections, "", d.theme.Dim.Render("  search: "+d.searchQuery+"  (n next)"))
+		sections = append(sections, "", d.theme.Dim.Render(clipLine("  search: "+d.searchQuery+"  (n next)", d.width)))
 	}
 	sections = append(sections, "", footer)
 	return lipgloss.JoinVertical(lipgloss.Left, sections...)
@@ -1534,15 +1546,25 @@ func (d *Dashboard) appendError(line string) {
 
 // viewErrorPanel renders the most recent scrape errors for the `e` overlay.
 func (d *Dashboard) viewErrorPanel() string {
-	const shown = 8
+	shown := 8
+	if d.ready {
+		available := d.height - 9 - 4 - 2
+		for _, open := range []bool{d.status != "", d.inspectMsg != "", d.searching || d.searchQuery != ""} {
+			if open {
+				available -= 2
+			}
+		}
+		shown = max(0, min(shown, available))
+	}
 	lines := d.errorLog
 	if len(lines) > shown {
 		lines = lines[len(lines)-shown:]
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "  Errors (%d)\n", len(d.errorLog))
+	fmt.Fprintf(&b, "  Errors (%d)", len(d.errorLog))
 	for _, line := range lines {
-		b.WriteString("  " + line + "\n")
+		b.WriteByte('\n')
+		b.WriteString(clipLine("  "+line, d.width))
 	}
 	return d.theme.Error.Render(b.String())
 }
@@ -1610,7 +1632,7 @@ func (d *Dashboard) renderStats() string {
 	}
 
 	line := icon + " " + d.theme.Dim.Render("done ") + strings.Join(parts, "  ")
-	return d.theme.StatusBar.Render(line)
+	return d.theme.StatusBar.Render(clipLine(line, d.width-4))
 }
 
 func (d *Dashboard) viewSummary(header string) string {
@@ -1632,11 +1654,11 @@ func (d *Dashboard) viewSummary(header string) string {
 	if failed == 0 {
 		body += "  ✓ nothing to redo"
 	}
-	sections := []string{"", header, "", d.theme.PanelSlim.Render(body)}
+	sections := []string{"", header, "", d.theme.PanelSlim.Render(clipLine(body, d.width-4))}
 	if d.status != "" {
-		sections = append(sections, "", d.theme.Dim.Render("  "+d.status))
+		sections = append(sections, "", d.theme.Dim.Render(clipLine("  "+d.status, d.width)))
 	}
-	sections = append(sections, "", d.theme.Footer.Render("  R retry failed  •  L write retry list  •  q quit"))
+	sections = append(sections, "", d.theme.Footer.Render(clipLine("  R retry failed  •  L write retry list  •  q quit", d.width)))
 	return lipgloss.JoinVertical(lipgloss.Left, sections...)
 }
 
@@ -1696,6 +1718,14 @@ func (d *Dashboard) spinnerActive() bool {
 }
 
 // --- Helpers ---
+
+func clipLine(text string, width int) string {
+	text = strings.Join(strings.Fields(text), " ")
+	if width <= 0 {
+		return text
+	}
+	return lipgloss.NewStyle().MaxWidth(width).Render(text)
+}
 
 func HumanizeBytes(n int64) string {
 	return fileutil.HumanBytes(n)

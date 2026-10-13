@@ -15,6 +15,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/rajbahakdanyu/scraper/internal/model"
 )
@@ -1226,6 +1227,91 @@ func TestWindowSizeMsgRefitsTable(t *testing.T) {
 	got := updated.(*Dashboard)
 	if h := lines(got.table.View()); h != 31 {
 		t.Fatalf("after resize, table renders %d lines, want 31", h)
+	}
+}
+
+func TestViewRefitsForTransientSections(t *testing.T) {
+	for _, errorCount := range []int{1, 2, 8, 10} {
+		t.Run(fmt.Sprintf("errors-%d", errorCount), func(t *testing.T) {
+			d := NewBatch(nil, t.TempDir(), nil)
+			for index := 0; index < 50; index++ {
+				d.states = append(d.states, itemState{item: model.MediaItem{URL: fmt.Sprintf("https://example.com/%d", index), Title: "file.mp4"}, status: model.StatusPending})
+			}
+			d.refreshRows()
+			d.phase = phaseDownload
+			d.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+			for index := 0; index < errorCount; index++ {
+				d.appendError("scrape failed")
+			}
+			d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+			d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+			d.Update(downloadDoneMsg{key: d.states[0].item.Key(), err: errors.New("connection reset")})
+			if got := lines(d.View()); got != d.height {
+				t.Fatalf("busy view renders %d lines, want %d", got, d.height)
+			}
+			d.Update(statusClearMsg{seq: d.statusSeq})
+			d.Update(tea.KeyMsg{Type: tea.KeyEsc})
+			d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+			if got := lines(d.View()); got != d.height {
+				t.Fatalf("cleared view renders %d lines, want %d", got, d.height)
+			}
+		})
+	}
+}
+
+func TestViewFitsTerminalDimensions(t *testing.T) {
+	for _, width := range []int{80, 120} {
+		for _, runPhase := range []phase{phaseLoading, phaseDownload, phaseDone, phaseSummary} {
+			t.Run(fmt.Sprintf("width-%d-phase-%d", width, runPhase), func(t *testing.T) {
+				d := NewBatch(nil, strings.Repeat("/downloads", 20), nil)
+				d.states = []itemState{{isHeader: true, albumName: "a-very-long-album-name", albumSite: "bunkr"}}
+				for index := 0; index < 50; index++ {
+					d.states = append(d.states, itemState{item: model.MediaItem{Title: "file.mp4", Size: 1000}, status: model.StatusDownloading, total: 1000, bytes: 500, speed: 1024 * 1024})
+				}
+				d.states[1].status = model.StatusCompleted
+				d.states[2].status = model.StatusFailed
+				d.refreshRows()
+				d.phase = runPhase
+				if runPhase == phaseDone {
+					d.states = nil
+					d.loadingErr = strings.Repeat("long error ", 20)
+				}
+				d.setStatus("%s", strings.Repeat("status\n", 30))
+				d.inspectMsg = strings.Repeat("inspect\n", 30)
+				d.searching, d.searchQuery = true, strings.Repeat("search", 30)
+				d.showErrors = true
+				for index := 0; index < 10; index++ {
+					d.appendError("an error\nwith detail " + strings.Repeat("long", 40))
+				}
+				d.Update(tea.WindowSizeMsg{Width: width, Height: 24})
+				out := d.View()
+				for _, line := range strings.Split(out, "\n") {
+					if got := lipgloss.Width(line); got > width {
+						t.Fatalf("rendered line width = %d, terminal width = %d: %q", got, width, line)
+					}
+				}
+				if got := lines(out); got > d.height {
+					t.Fatalf("view renders %d lines in a %d-line terminal", got, d.height)
+				}
+				if runPhase == phaseDownload {
+					for _, text := range []string{"1/50", "(1 failed)", "▓"} {
+						if !strings.Contains(out, text) {
+							t.Fatalf("row information %q missing from rendered view:\n%s", text, out)
+						}
+					}
+					d.Update(tea.KeyMsg{Type: tea.KeyEsc})
+					for step := 0; step < 3; step++ {
+						d.Update(tea.KeyMsg{Type: tea.KeyDown})
+					}
+					out = d.View()
+					for _, text := range []string{"50%", "1.0M/s"} {
+						if !strings.Contains(out, text) {
+							t.Fatalf("active row information %q missing from rendered view:\n%s", text, out)
+						}
+					}
+				}
+			})
+		}
 	}
 }
 
