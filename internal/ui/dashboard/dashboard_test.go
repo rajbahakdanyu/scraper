@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -1379,6 +1380,104 @@ func TestVisibleMappingPreservesSelectionWhenGrowing(t *testing.T) {
 	d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
 	if got := d.stateAt(d.table.Cursor()); got != 7 {
 		t.Fatalf("selected state = %d, want 7 after growing the visible list", got)
+	}
+}
+
+func TestFilterCycleTracksLiveStatesAndGlobalTotals(t *testing.T) {
+	d := NewBatch(nil, t.TempDir(), nil)
+	d.states = []itemState{
+		{isHeader: true, albumName: "mixed"},
+		{item: model.MediaItem{URL: "https://example.com/one", Title: "completed", Size: 100}, status: model.StatusCompleted},
+		{item: model.MediaItem{URL: "https://example.com/two", Title: "failed", Size: 100}, status: model.StatusFailed},
+		{item: model.MediaItem{URL: "https://example.com/three", Title: "active", Size: 100}, status: model.StatusDownloading, bytes: 50},
+		{isHeader: true, albumName: "queued"},
+		{item: model.MediaItem{URL: "https://example.com/four", Title: "pending", Size: 100}, status: model.StatusPending},
+	}
+	d.refreshRows()
+	for _, test := range []struct {
+		filter listFilter
+		rows   []int
+	}{
+		{filterFailed, []int{0, 2}},
+		{filterActive, []int{0, 3}},
+		{filterPending, []int{4, 5}},
+		{filterAll, []int{0, 1, 2, 3, 4, 5}},
+	} {
+		d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+		if d.filter != test.filter || !slices.Equal(d.visible, test.rows) {
+			t.Fatalf("filter %d: visible = %v, want %v", d.filter, d.visible, test.rows)
+		}
+		if done, total, _ := d.runProgressSums(); done != 150 || total != 400 {
+			t.Fatalf("filter changed global byte totals: %d/%d", done, total)
+		}
+	}
+	d.filter = filterActive
+	d.rebuildVisible()
+	d.Update(progressMsg(model.ProgressEvent{Item: d.states[5].item, Status: model.StatusDownloading, Bytes: 25, Total: 100}))
+	if !slices.Equal(d.visible, []int{0, 3, 4, 5}) {
+		t.Fatalf("active filter did not track live progress: %v", d.visible)
+	}
+	d.Update(downloadDoneMsg{key: d.states[3].item.Key()})
+	if !slices.Equal(d.visible, []int{4, 5}) {
+		t.Fatalf("active filter retained a completed item: %v", d.visible)
+	}
+}
+
+func TestFailureJumpWrapsVisibleRows(t *testing.T) {
+	d := NewBatch(nil, t.TempDir(), nil)
+	d.states = []itemState{
+		{isHeader: true, albumName: "mixed"},
+		{item: model.MediaItem{Title: "first"}, status: model.StatusFailed},
+		{item: model.MediaItem{Title: "pending"}, status: model.StatusPending},
+		{item: model.MediaItem{Title: "last"}, status: model.StatusFailed},
+	}
+	d.refreshRows()
+	for _, want := range []int{1, 3, 1} {
+		d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
+		if got := d.stateAt(d.table.Cursor()); got != want {
+			t.Fatalf("F selected state %d, want %d", got, want)
+		}
+	}
+	d.filter = filterPending
+	d.rebuildVisible()
+	d.selectRow(1)
+	d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
+	if got := d.stateAt(d.table.Cursor()); got != 2 {
+		t.Fatalf("F selected a hidden failure: state %d", got)
+	}
+}
+
+func TestOverallBarBoundsAndUnknownSizes(t *testing.T) {
+	for _, test := range []struct {
+		done, total int64
+		width       int
+		want        string
+	}{
+		{50, 100, 10, "▓▓▓▓▓░░░░░"},
+		{0, 0, 4, "░░░░"},
+		{120, 100, 4, "▓▓▓▓"},
+		{-10, 100, 4, "░░░░"},
+		{50, 100, 0, ""},
+	} {
+		if got := renderBar(test.done, test.total, test.width); got != test.want {
+			t.Fatalf("renderBar(%d, %d, %d) = %q, want %q", test.done, test.total, test.width, got, test.want)
+		}
+	}
+	d := NewBatch(nil, t.TempDir(), nil)
+	d.states = []itemState{
+		{isHeader: true, total: 999},
+		{item: model.MediaItem{Title: "completed", Size: 100}, status: model.StatusCompleted},
+		{item: model.MediaItem{Title: "active"}, total: 100, bytes: 50, status: model.StatusDownloading},
+		{item: model.MediaItem{Title: "unknown"}, status: model.StatusPending},
+	}
+	d.refreshRows()
+	d.phase = phaseDownload
+	d.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	if done, total, unknown := d.runProgressSums(); done != 150 || total != 200 || unknown != 1 {
+		t.Fatalf("run byte totals = %d/%d, unknown %d", done, total, unknown)
+	}
+	if !strings.Contains(d.View(), "75%~") {
+		t.Fatal("unknown-size backlog must mark the percentage as approximate")
 	}
 }
 
