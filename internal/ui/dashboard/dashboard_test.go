@@ -1195,8 +1195,8 @@ func TestFitTableHeightCapsAtRowCount(t *testing.T) {
 
 	d.fitTableHeight()
 
-	if got := lines(d.table.View()); got != 2 {
-		t.Fatalf("table renders %d lines, want 2 (no dead space below a short list)", got)
+	if got := lines(d.table.View()); got != 3 {
+		t.Fatalf("table renders %d lines, want 3 (column header plus both rows, no dead space)", got)
 	}
 }
 
@@ -1570,6 +1570,7 @@ func TestCompletedAlbumAutoFoldsAndManualUnfoldSticks(t *testing.T) {
 	}
 	d.refreshRows()
 	d.phase = phaseDownload
+	d.batchRemaining = 1 // another album is still scraping, so the summary stays away
 	updated, _ := d.Update(refreshTickMsg{})
 	d = updated.(*Dashboard)
 	if len(d.visible) != 1 || !d.folded[0] {
@@ -1661,6 +1662,148 @@ func TestFailedAlbumStaysOpenWhenOtherAlbumsFold(t *testing.T) {
 	}
 	if done, total, _ := d.runProgressSums(); done != 100 || total != 200 {
 		t.Fatalf("folding changed global byte totals: %d/%d", done, total)
+	}
+}
+
+func TestRefreshTickCostGrowsLinearly(t *testing.T) {
+	cost := func(n int) time.Duration {
+		d := NewBatch(nil, t.TempDir(), nil)
+		d.states = append(d.states, itemState{isHeader: true, albumName: "album"})
+		for index := 0; index < n; index++ {
+			d.states = append(d.states, itemState{item: model.MediaItem{URL: fmt.Sprintf("https://example.com/%d", index), Title: "file"}, status: model.StatusPending})
+		}
+		d.refreshRows()
+		d.phase = phaseDownload
+		best := time.Hour
+		for range 3 {
+			start := time.Now()
+			d.Update(refreshTickMsg{})
+			best = min(best, time.Since(start))
+		}
+		return best
+	}
+	small, large := cost(1000), cost(20000)
+	// 20x the items: linear work is ~20x, quadratic work is ~400x.
+	if large > 60*small {
+		t.Fatalf("refresh tick took %v for 1k items but %v for 20k items", small, large)
+	}
+}
+
+func TestScrollPositionStableAcrossNavigationAndTicks(t *testing.T) {
+	d := NewBatch(nil, t.TempDir(), nil)
+	for index := 0; index < 60; index++ {
+		d.states = append(d.states, itemState{item: model.MediaItem{URL: fmt.Sprintf("https://example.com/%d", index), Title: fmt.Sprintf("item-%02d", index)}, status: model.StatusPending})
+	}
+	d.refreshRows()
+	d.phase = phaseDownload
+	d.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	for range 40 {
+		d.Update(tea.KeyMsg{Type: tea.KeyDown})
+	}
+	for range 3 {
+		d.Update(tea.KeyMsg{Type: tea.KeyUp})
+	}
+	view := d.table.View()
+	selected := fmt.Sprintf("item-%02d", d.stateAt(d.table.Cursor()))
+	rendered := strings.Split(view, "\n")
+	if !strings.Contains(view, selected) {
+		t.Fatalf("selected %s is not visible:\n%s", selected, view)
+	}
+	if strings.Contains(rendered[len(rendered)-1], selected) {
+		t.Fatalf("moving up scrolled the list instead of moving the selection:\n%s", view)
+	}
+	d.Update(refreshTickMsg{})
+	d.Update(spinner.TickMsg{})
+	if got := d.table.View(); got != view {
+		t.Fatalf("a refresh moved the scroll position:\nbefore:\n%s\nafter:\n%s", view, got)
+	}
+}
+
+func TestSummaryIgnoresTableKeysAndCanReturnToList(t *testing.T) {
+	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 1)}
+	d := NewBatch(fd, t.TempDir(), nil)
+	d.states = []itemState{
+		{item: model.MediaItem{URL: "https://example.com/1", Title: "done"}, status: model.StatusCompleted},
+		{item: model.MediaItem{URL: "https://example.com/2", Title: "broken"}, status: model.StatusFailed, lastErr: errors.New("boom")},
+	}
+	d.refreshRows()
+	d.phase = phaseSummary
+	d.table.SetCursor(1)
+	for _, key := range []tea.KeyMsg{
+		{Type: tea.KeyRunes, Runes: []rune{'r'}},
+		{Type: tea.KeyRunes, Runes: []rune{'c'}},
+		{Type: tea.KeyRunes, Runes: []rune{'C'}},
+		{Type: tea.KeyRunes, Runes: []rune{'f'}},
+		{Type: tea.KeyRunes, Runes: []rune{'F'}},
+		{Type: tea.KeyRunes, Runes: []rune{'/'}},
+		{Type: tea.KeyRunes, Runes: []rune{'e'}},
+		{Type: tea.KeyTab},
+	} {
+		if _, cmd := d.Update(key); cmd != nil {
+			t.Fatalf("summary key %q started work", key.String())
+		}
+	}
+	if d.phase != phaseSummary || d.states[1].status != model.StatusFailed || d.filter != filterAll || d.searching || d.showErrors || len(fd.cancelled) != 0 || d.table.Cursor() != 1 {
+		t.Fatal("summary keys changed the hidden table")
+	}
+	d.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if d.phase != phaseDone || !strings.Contains(d.View(), "broken") {
+		t.Fatalf("enter must return to the file list, phase=%v", d.phase)
+	}
+	d.Update(refreshTickMsg{})
+	if d.phase != phaseDone {
+		t.Fatal("the summary reappeared without new work")
+	}
+	if _, cmd := d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}}); cmd == nil || d.phase != phaseDownload {
+		t.Fatalf("retry from the list must restart the run, phase=%v", d.phase)
+	}
+}
+
+func TestUntrustedTextCannotEmitTerminalControls(t *testing.T) {
+	evil := "x\x1b]52;c;ZXZpbA==\x07\x1b[2J\u009b31m\u202e"
+	d := NewBatch(nil, t.TempDir(), nil)
+	d.states = []itemState{
+		{isHeader: true, albumName: "album" + evil, albumSite: "site" + evil},
+		{item: model.MediaItem{URL: "https://example.com/1", Title: "title" + evil}, status: model.StatusDownloading},
+	}
+	d.refreshRows()
+	d.phase = phaseDownload
+	d.Update(tea.WindowSizeMsg{Width: 200, Height: 40})
+	d.appendError("scrape" + evil)
+	d.showErrors = true
+	d.Update(downloadDoneMsg{key: d.states[1].item.Key(), err: errors.New("error" + evil)})
+	d.Update(tea.KeyMsg{Type: tea.KeyDown})
+	d.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	d.searchQuery = "search" + evil
+	views := []string{d.View()}
+	d.phase, d.states, d.loadingErr = phaseDone, nil, "load"+evil
+	views = append(views, d.View())
+	for _, out := range views {
+		for _, control := range []string{"\x1b", "\x07", "\u009b", "\u202e"} {
+			if strings.Contains(out, control) {
+				t.Fatalf("view contains control %q:\n%q", control, out)
+			}
+		}
+	}
+	for _, text := range []string{"titlex]52;c;", "albumx", "errorx", "scrapex", "searchx"} {
+		if !strings.Contains(views[0], text) {
+			t.Fatalf("sanitized text %q missing from view:\n%s", text, views[0])
+		}
+	}
+}
+
+func TestViewPreservesInternalWhitespace(t *testing.T) {
+	d := NewBatch(nil, t.TempDir(), nil)
+	d.states = []itemState{{item: model.MediaItem{URL: "https://example.com/1", Title: "file"}, status: model.StatusPending}}
+	d.refreshRows()
+	d.phase = phaseDownload
+	d.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	d.setStatus("two  spaces")
+	out := d.View()
+	for _, text := range []string{"◢◤  SCRAPER  ◢◤", "two  spaces"} {
+		if !strings.Contains(out, text) {
+			t.Fatalf("view collapsed whitespace in %q:\n%s", text, out)
+		}
 	}
 }
 
