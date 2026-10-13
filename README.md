@@ -102,11 +102,11 @@ remain open.
 | `c` | Cancel the selected queued or active download |
 | `C` | Cancel all queued and active downloads |
 | `r` | Retry the selected failed download |
-| `R` | Retry all failures; return from the summary to the download list |
+| `R` | Retry all failures; from the summary, return to the download list |
 | `F` | Jump to the next failed item |
 | `/` | Start a title search; `enter` accepts it and `esc` clears it |
 | `n` | Jump to the next search match |
-| `enter` | Show the selected failed item's error outside search |
+| `enter` | Show the selected failed item's error outside search; from the summary, view the file list |
 | `f` | Cycle all, failed, active, and pending items |
 | `Tab` | Fold or unfold the current album |
 | `e` | Show scrape errors |
@@ -114,7 +114,9 @@ remain open.
 | `q`, `esc`, `ctrl+c` | Quit outside search |
 
 The summary appears only after every album has been scraped and every
-download has finished. It reports completed, failed, and cancelled counts.
+download has finished. It reports completed, failed, and cancelled counts,
+and accepts only `enter`, `R`, `L`, and the quit keys. Retrying from the file
+list brings the summary back when the retried downloads finish.
 Unknown file sizes mark the overall byte percentage with `~` until their
 sizes are known.
 
