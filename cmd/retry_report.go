@@ -13,28 +13,19 @@ import (
 
 	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 	"github.com/rajbahakdanyu/scraper/internal/model"
-	"github.com/rajbahakdanyu/scraper/internal/ui/dashboard"
 )
-
-// failedItem pairs a media item that did not download with the error that
-// ended it and the album URL it came from.
-type failedItem struct {
-	Item     model.MediaItem
-	Err      error
-	AlbumURL string
-}
 
 // collectFailures turns per-item errors into the failures worth reporting:
 // nil errors and user cancellations are not failures. albumURL is the URL
 // the items were scraped from, recorded so a retry can restore the album
 // folder.
-func collectFailures(items []model.MediaItem, errs []error, albumURL string) []failedItem {
-	var out []failedItem
+func collectFailures(items []model.MediaItem, errs []error, albumURL string) []model.FailedItem {
+	var out []model.FailedItem
 	for i, item := range items {
 		if i >= len(errs) || errs[i] == nil || model.IsCancelled(errs[i]) {
 			continue
 		}
-		out = append(out, failedItem{Item: item, Err: errs[i], AlbumURL: albumURL})
+		out = append(out, model.FailedItem{Item: item, Err: errs[i], AlbumURL: albumURL})
 	}
 	return out
 }
@@ -59,7 +50,7 @@ func retryItemURL(item model.MediaItem) string {
 // its album when the item has its own page, else the album URL alone.
 // Items whose URL is a direct CDN link (goonbox and friends) cannot be
 // scraped on their own, so their album is the only replayable entry.
-func retryEntry(f failedItem) string {
+func retryEntry(f model.FailedItem) string {
 	if page := stripQueryFragment(f.Item.PageURL); page != "" {
 		if album := retryAlbumURL(f.AlbumURL); album != "" {
 			return page + "\t" + album
@@ -130,7 +121,7 @@ func hostFromURL(raw string) string {
 }
 
 // formatFailureSummary groups failures by reason, most frequent first.
-func formatFailureSummary(failures []failedItem) string {
+func formatFailureSummary(failures []model.FailedItem) string {
 	counts := map[string]int{}
 	for _, f := range failures {
 		counts[failureReason(f.Err)]++
@@ -158,8 +149,8 @@ func formatFailureSummary(failures []failedItem) string {
 // retryReport writes a retry list of the failed items into dir and returns
 // its path plus a grouped summary. With no usable failures it returns
 // empty path and summary and a nil error.
-func retryReport(dir string, failures []failedItem, now time.Time) (string, string, error) {
-	var usable []failedItem
+func retryReport(dir string, failures []model.FailedItem, now time.Time) (string, string, error) {
+	var usable []model.FailedItem
 	var lines []string
 	seen := map[string]bool{}
 	for _, f := range failures {
@@ -203,13 +194,4 @@ func retryReport(dir string, failures []failedItem, now time.Time) (string, stri
 		len(usable), formatFailureSummary(usable), path)
 	logLine("retry list: %s (%d failed item(s), %d line(s))", path, len(usable), len(lines))
 	return path, summary, nil
-}
-
-// failuresFromDashboard converts the TUI's final failure list.
-func failuresFromDashboard(fs []dashboard.FailedItem) []failedItem {
-	out := make([]failedItem, 0, len(fs))
-	for _, f := range fs {
-		out = append(out, failedItem{Item: f.Item, Err: f.Err, AlbumURL: f.SourceURL})
-	}
-	return out
 }

@@ -17,16 +17,6 @@ import (
 	"github.com/rajbahakdanyu/scraper/internal/ui/styles"
 )
 
-type Downloader interface {
-	Prepare(item model.MediaItem)
-	Download(item model.MediaItem, dest string) (string, error)
-	Cancel(item model.MediaItem)
-	// Shutdown cancels every in-flight download and closes the progress
-	// channel once they have unwound.
-	Shutdown()
-	Progress() <-chan model.ProgressEvent
-}
-
 type phase int
 
 const (
@@ -60,17 +50,6 @@ type itemState struct {
 	lastErr   error
 }
 
-// DashAlbumURL carries the metadata cmd/root.go passes to the dashboard for
-// each URL in a batch: the orchestrator scrapes them incrementally and the
-// dashboard appends items as each album arrives.
-type DashAlbumURL struct {
-	Site    string
-	URL     string
-	Slug    string
-	Dest    string
-	Scraper model.Scraper
-}
-
 type Dashboard struct {
 	table    table.Model
 	progress progress.Model
@@ -83,7 +62,7 @@ type Dashboard struct {
 	rows          []table.Row
 	visible       []int
 	visibleReady  bool
-	downloader    Downloader
+	downloader    model.Downloader
 	dest          string
 
 	width  int
@@ -110,7 +89,7 @@ type Dashboard struct {
 	refreshTickActive bool
 
 	batchMode      bool
-	batchURLs      []DashAlbumURL
+	batchURLs      []model.Album
 	batchIdx       int
 	batchRemaining int
 	scrapeErrs     []error
@@ -121,20 +100,20 @@ type Dashboard struct {
 	folded           map[int]bool
 	manuallyUnfolded map[int]bool
 	filter           listFilter
-	writeRetryList   func([]FailedItem) (string, error)
+	writeRetryList   func([]model.FailedItem) (string, error)
 }
 
 // Futuristic logo — clean, minimal
 const logo = "◢◤  SCRAPER  ◢◤"
 
-func New(scraperFn func(context.Context) ([]model.MediaItem, error), dl Downloader, dest string, site string) *Dashboard {
+func New(scraperFn func(context.Context) ([]model.MediaItem, error), dl model.Downloader, dest string, site string) *Dashboard {
 	d := newDashboard(dl, dest, site)
 	d.scraperFn = scraperFn
 	return d
 }
 
 // newDashboard builds the state shared by single-URL and batch runs.
-func newDashboard(dl Downloader, dest, site string) *Dashboard {
+func newDashboard(dl model.Downloader, dest, site string) *Dashboard {
 	t := table.New(
 		table.WithColumns([]table.Column{
 			{Title: "", Width: 2},
@@ -176,11 +155,13 @@ func (d *Dashboard) SetSourceURL(url string) {
 }
 
 // SetRetryWriter installs the CLI callback used by the summary screen.
-func (d *Dashboard) SetRetryWriter(fn func([]FailedItem) (string, error)) { d.writeRetryList = fn }
+func (d *Dashboard) SetRetryWriter(fn func([]model.FailedItem) (string, error)) {
+	d.writeRetryList = fn
+}
 
 // NewBatch creates a dashboard for batch mode. Items are appended
 // incrementally as each album is scraped via the scrape-chain in Init.
-func NewBatch(dl Downloader, destRoot string, urls []DashAlbumURL) *Dashboard {
+func NewBatch(dl model.Downloader, destRoot string, urls []model.Album) *Dashboard {
 	siteLabel := fmt.Sprintf("%d albums", len(urls))
 	if len(urls) == 1 {
 		siteLabel = urls[0].Site
@@ -216,7 +197,7 @@ type scrapeResultMsg struct {
 	err   error
 }
 type batchScrapeMsg struct {
-	album DashAlbumURL
+	album model.Album
 	idx   int
 	items []model.MediaItem
 	err   error
@@ -240,7 +221,7 @@ func (d *Dashboard) startNextScrape() tea.Cmd {
 	}
 }
 
-func startDownload(dl Downloader, item model.MediaItem, dest string) tea.Cmd {
+func startDownload(dl model.Downloader, item model.MediaItem, dest string) tea.Cmd {
 	return func() tea.Msg {
 		_, err := dl.Download(item, dest)
 		return downloadDoneMsg{key: item.Key(), err: err}

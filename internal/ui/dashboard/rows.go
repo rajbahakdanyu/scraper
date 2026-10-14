@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 	"github.com/rajbahakdanyu/scraper/internal/model"
 )
 
@@ -72,7 +73,7 @@ func (d *Dashboard) refreshRows() {
 
 		progressText := miniBar(st)
 		if st.status == model.StatusDownloading && st.speed > 0 {
-			progressText += fmt.Sprintf("  %s/s", HumanizeBytes(int64(st.speed)))
+			progressText += fmt.Sprintf("  %s/s", fileutil.HumanBytes(int64(st.speed)))
 		}
 		if st.status == model.StatusPending {
 			progressText = fmt.Sprintf("queued #%d", pending)

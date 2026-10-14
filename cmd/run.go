@@ -130,8 +130,8 @@ func runWithScraperAndConfig(cfg *config.Config, scraper model.Scraper, targetUR
 // runTUI runs the dashboard and, once it exits, writes the retry list and
 // reports failures as an error so the exit code matches plain/JSON runs.
 func runTUI(d *dashboard.Dashboard, outputDir string) error {
-	d.SetRetryWriter(func(items []dashboard.FailedItem) (string, error) {
-		path, _, err := retryReport(outputDir, failuresFromDashboard(items), time.Now())
+	d.SetRetryWriter(func(items []model.FailedItem) (string, error) {
+		path, _, err := retryReport(outputDir, items, time.Now())
 		return path, err
 	})
 	final, err := tea.NewProgram(d, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
@@ -146,7 +146,7 @@ func tuiResult(final tea.Model, outputDir string) error {
 	if !ok {
 		return nil
 	}
-	if _, summary, rErr := retryReport(outputDir, failuresFromDashboard(dash.Failures()), time.Now()); rErr != nil {
+	if _, summary, rErr := retryReport(outputDir, dash.Failures(), time.Now()); rErr != nil {
 		fmt.Fprintf(os.Stderr, "retry list: %v\n", rErr)
 	} else if summary != "" {
 		fmt.Fprintln(os.Stdout, summary)
@@ -154,7 +154,7 @@ func tuiResult(final tea.Model, outputDir string) error {
 	return dash.Result()
 }
 
-func buildDownloader(scraper model.Scraper, siteName string, cfg *config.Config, rateLimitBytesPerSec int64) (dashboard.Downloader, error) {
+func buildDownloader(scraper model.Scraper, siteName string, cfg *config.Config, rateLimitBytesPerSec int64) (model.Downloader, error) {
 	if siteName == "youtube" {
 		ytScraper, ok := scraper.(*youtube.Scraper)
 		if !ok {

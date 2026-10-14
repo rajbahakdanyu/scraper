@@ -114,7 +114,7 @@ func TestDuplicateURLsUpdateIndependentRows(t *testing.T) {
 }
 
 func TestBatchModePerItemDest(t *testing.T) {
-	urls := []DashAlbumURL{
+	urls := []model.Album{
 		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/test", Slug: "test", Dest: "/tmp/test-album"},
 	}
 	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 10)}
@@ -137,7 +137,7 @@ func TestBatchModePerItemDest(t *testing.T) {
 }
 
 func TestBatchPartialScrapeWarningVisibleMidBatch(t *testing.T) {
-	urls := []DashAlbumURL{
+	urls := []model.Album{
 		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/1", Slug: "one", Dest: "/tmp/one"},
 		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/2", Slug: "two", Dest: "/tmp/two"},
 		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/3", Slug: "three", Dest: "/tmp/three"},
@@ -302,7 +302,7 @@ func TestProgressAppliedViaRefreshTick(t *testing.T) {
 func TestBatchHandlesEmptyAlbumWithoutCreatingDirectory(t *testing.T) {
 	root := t.TempDir()
 	albumDir := filepath.Join(root, "empty-album")
-	urls := []DashAlbumURL{
+	urls := []model.Album{
 		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/empty", Slug: "empty-album", Dest: albumDir},
 		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/next", Slug: "next", Dest: filepath.Join(root, "next")},
 	}
@@ -357,7 +357,7 @@ func TestBatchScrapeRecordsError(t *testing.T) {
 	d := NewBatch(&fakeDownloader{ch: make(chan model.ProgressEvent, 1)}, t.TempDir(), nil)
 	d.phase = phaseLoading
 	updated, _ := d.handleBatchScrape(batchScrapeMsg{
-		album: DashAlbumURL{Site: "bunker", URL: "https://bunkr.cr/a/broken", Slug: "broken", Dest: t.TempDir()},
+		album: model.Album{Site: "bunker", URL: "https://bunkr.cr/a/broken", Slug: "broken", Dest: t.TempDir()},
 		items: []model.MediaItem{{URL: "https://dl.bunkr.cr/file/1", Title: "one.mp4"}},
 		err:   errors.New("page 2 failed"),
 	})
@@ -374,7 +374,7 @@ func TestBatchScrapeRecordsAlbumSourceURL(t *testing.T) {
 	d := NewBatch(&fakeDownloader{ch: make(chan model.ProgressEvent, 1)}, t.TempDir(), nil)
 	d.phase = phaseLoading
 	updated, _ := d.handleBatchScrape(batchScrapeMsg{
-		album: DashAlbumURL{
+		album: model.Album{
 			Site: "bunker",
 			URL:  "https://bunkr.cr/a/rBSKhzaL",
 			Slug: "rBSKhzaL",

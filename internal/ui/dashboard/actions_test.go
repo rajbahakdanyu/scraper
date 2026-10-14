@@ -86,15 +86,15 @@ func TestResultReportsFailuresForExitStatus(t *testing.T) {
 		t.Fatalf("a failed single-URL scrape must be a plain error, got %v", err)
 	}
 
-	batch := NewBatch(nil, t.TempDir(), []DashAlbumURL{{URL: "https://example.com/a/x"}})
-	batch.handleBatchScrape(batchScrapeMsg{album: DashAlbumURL{URL: "https://example.com/a/x"}, err: errors.New("gone")})
+	batch := NewBatch(nil, t.TempDir(), []model.Album{{URL: "https://example.com/a/x"}})
+	batch.handleBatchScrape(batchScrapeMsg{album: model.Album{URL: "https://example.com/a/x"}, err: errors.New("gone")})
 	if err := batch.Result(); !errors.As(err, &partial) {
 		t.Fatalf("a failed batch album must be a partial error, got %v", err)
 	}
 }
 
 func TestCancelSelectedSkipsHeader(t *testing.T) {
-	urls := []DashAlbumURL{
+	urls := []model.Album{
 		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/test", Slug: "test", Dest: "/tmp/test"},
 	}
 	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 10)}
@@ -282,8 +282,8 @@ func TestFailuresReturnsOnlyFailedItems(t *testing.T) {
 	if got[0].Item.Title != "bad" || got[0].Err == nil || got[0].Err.Error() != "boom" {
 		t.Fatalf("Failures() = %+v, want the failed item with its error", got[0])
 	}
-	if got[0].SourceURL != "https://bunkr.cr/a/rBSKhzaL" {
-		t.Fatalf("Failures() SourceURL = %q, want the album URL", got[0].SourceURL)
+	if got[0].AlbumURL != "https://bunkr.cr/a/rBSKhzaL" {
+		t.Fatalf("Failures() AlbumURL = %q, want the album URL", got[0].AlbumURL)
 	}
 }
 

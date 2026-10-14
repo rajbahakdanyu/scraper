@@ -10,7 +10,6 @@ import (
 
 	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 	"github.com/rajbahakdanyu/scraper/internal/model"
-	"github.com/rajbahakdanyu/scraper/internal/ui/dashboard"
 )
 
 // progressLine renders one progress event as a plain text line for non-TTY
@@ -73,7 +72,7 @@ func (p *plainPrinter) event(evt model.ProgressEvent) {
 // scraped item while printing one status line per progress event to out,
 // consuming the same progress channel the dashboard would. It returns a
 // non-nil error when any download fails so the process exits non-zero.
-func runPlain(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error), dest, slug, sourceURL string, out io.Writer) error {
+func runPlain(dl model.Downloader, scrapeFn func() ([]model.MediaItem, error), dest, slug, sourceURL string, out io.Writer) error {
 	reportDir := dest
 	items, err := scrapeFn()
 	if err != nil && len(items) == 0 {
@@ -176,7 +175,7 @@ drain:
 // runBatchPlain is the non-TTY fallback for runBatch: it scrapes albums with
 // one-album lookahead, prints a section header, and downloads every item while
 // reporting progress via a shared download queue.
-func runBatchPlain(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, destRoot string, out io.Writer) error {
+func runBatchPlain(dl model.Downloader, albums []model.Album, destRoot string, out io.Writer) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	abort := make(chan struct{})
@@ -213,7 +212,7 @@ func runBatchPlain(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, des
 	}()
 
 	var allErrs []error
-	var failures []failedItem
+	var failures []model.FailedItem
 	var scrapeCh <-chan batchScrapeResult
 	// scrapeNext starts the one-album lookahead scrape after albums[idx].
 	scrapeNext := func(idx int) {

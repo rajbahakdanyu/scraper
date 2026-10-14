@@ -11,7 +11,6 @@ import (
 
 	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 	"github.com/rajbahakdanyu/scraper/internal/model"
-	"github.com/rajbahakdanyu/scraper/internal/ui/dashboard"
 )
 
 func writeItemResult(out io.Writer, items []model.MediaItem, errs []error, paths map[string]string, album, quality, audioOnly string) (completed, failed, cancelled, total int, totalBytes int64) {
@@ -63,7 +62,7 @@ func writeJSONLine(w io.Writer, v interface{}) {
 
 // runJSON downloads items from a single album and prints JSON Lines
 // (one event per line) to out. Errors and warnings go to stderr.
-func runJSON(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error), dest, slug, site, targetURL string, quality, audioOnly string, out io.Writer) error {
+func runJSON(dl model.Downloader, scrapeFn func() ([]model.MediaItem, error), dest, slug, site, targetURL string, quality, audioOnly string, out io.Writer) error {
 	reportDir := dest
 	items, err := scrapeFn()
 	if err != nil && len(items) == 0 {
@@ -145,7 +144,7 @@ func runJSON(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error)
 
 // runBatchJSON downloads items from multiple albums with one-album scrape
 // lookahead, printing JSON Lines events to out as each album's items finish.
-func runBatchJSON(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, destRoot string, quality, audioOnly string, out io.Writer) error {
+func runBatchJSON(dl model.Downloader, albums []model.Album, destRoot string, quality, audioOnly string, out io.Writer) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	abort := make(chan struct{})
@@ -169,7 +168,7 @@ func runBatchJSON(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, dest
 	var allErrs []error
 	var grandCompleted, grandFailed, grandCancelled int
 	var grandTotalItems int
-	var failures []failedItem
+	var failures []model.FailedItem
 	var scrapeCh <-chan batchScrapeResult
 	// scrapeNext starts the one-album lookahead scrape after albums[idx].
 	scrapeNext := func(idx int) {

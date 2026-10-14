@@ -8,7 +8,6 @@ import (
 	"syscall"
 
 	"github.com/rajbahakdanyu/scraper/internal/model"
-	"github.com/rajbahakdanyu/scraper/internal/ui/dashboard"
 )
 
 // watchSignals shuts the downloader down when SIGINT or SIGTERM arrives.
@@ -16,7 +15,7 @@ import (
 // signal, or when stop is called. stop releases the signal registration
 // and its goroutine: without it, every --watch interval leaks one, each
 // still receiving every signal.
-func watchSignals(dl dashboard.Downloader) (done <-chan struct{}, stop func()) {
+func watchSignals(dl model.Downloader) (done <-chan struct{}, stop func()) {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	stopped := make(chan struct{})
@@ -40,12 +39,12 @@ func watchSignals(dl dashboard.Downloader) (done <-chan struct{}, stop func()) {
 	}
 }
 
-func downloadAll(dl dashboard.Downloader, items []model.MediaItem, dest string) []error {
+func downloadAll(dl model.Downloader, items []model.MediaItem, dest string) []error {
 	errs, _ := downloadAllWithPaths(dl, items, dest)
 	return errs
 }
 
-func downloadAllWithPaths(dl dashboard.Downloader, items []model.MediaItem, dest string) ([]error, map[string]string) {
+func downloadAllWithPaths(dl model.Downloader, items []model.MediaItem, dest string) ([]error, map[string]string) {
 	errs := make([]error, len(items))
 	paths := make(map[string]string)
 	var pathsMu sync.Mutex
@@ -89,7 +88,7 @@ type batchScrapeResult struct {
 	err   error
 }
 
-func startBatchScrape(ctx context.Context, abort <-chan struct{}, album dashboard.DashAlbumURL) <-chan batchScrapeResult {
+func startBatchScrape(ctx context.Context, abort <-chan struct{}, album model.Album) <-chan batchScrapeResult {
 	resultCh := make(chan batchScrapeResult, 1)
 	go func() {
 		select {

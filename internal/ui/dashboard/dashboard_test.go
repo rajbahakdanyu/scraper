@@ -47,7 +47,7 @@ func TestBatchDashboardRefusesSymlinkedAlbumDirectory(t *testing.T) {
 	}
 
 	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 1)}
-	urls := []DashAlbumURL{{Site: "test", URL: "https://example.com/album", Slug: "album", Dest: link}}
+	urls := []model.Album{{Site: "test", URL: "https://example.com/album", Slug: "album", Dest: link}}
 	d := NewBatch(fd, root, urls)
 	d.handleBatchScrape(batchScrapeMsg{album: urls[0], items: []model.MediaItem{{URL: "https://example.com/a", Title: "a"}}})
 
@@ -236,7 +236,7 @@ func TestBatchAutoDownload(t *testing.T) {
 }
 
 func TestNewBatchCreatesDashboard(t *testing.T) {
-	urls := []DashAlbumURL{
+	urls := []model.Album{
 		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/album1", Slug: "album1", Dest: "/tmp/album1"},
 		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/album2", Slug: "album2", Dest: "/tmp/album2"},
 	}

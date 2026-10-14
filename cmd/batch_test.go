@@ -10,7 +10,6 @@ import (
 
 	"github.com/rajbahakdanyu/scraper/internal/config"
 	"github.com/rajbahakdanyu/scraper/internal/model"
-	"github.com/rajbahakdanyu/scraper/internal/ui/dashboard"
 )
 
 func TestRunBatchPrintURLsRejectsJSON(t *testing.T) {
@@ -116,11 +115,11 @@ func TestRunBatchRunsMixedSitesSequentially(t *testing.T) {
 
 	var genericCalls, youtubeCalls int
 	batchYouTubeScraper = func() model.Scraper { return &fakeDryRunScraper{} }
-	batchYouTubeDownloader = func(model.Scraper, *config.Config, int64) (dashboard.Downloader, error) {
+	batchYouTubeDownloader = func(model.Scraper, *config.Config, int64) (model.Downloader, error) {
 		youtubeCalls++
 		return newFakePlainDownloader(), nil
 	}
-	batchGenericDownloader = func(*config.Config, int64) (dashboard.Downloader, error) {
+	batchGenericDownloader = func(*config.Config, int64) (model.Downloader, error) {
 		genericCalls++
 		return newFakePlainDownloader(), nil
 	}
@@ -163,10 +162,10 @@ func TestRunBatchContinuesAfterGroupFailure(t *testing.T) {
 		return map[string]model.Scraper{"cyberdrop": &fakeDryRunScraper{}}, nil
 	}
 	batchYouTubeScraper = func() model.Scraper { return &fakeDryRunScraper{} }
-	batchYouTubeDownloader = func(model.Scraper, *config.Config, int64) (dashboard.Downloader, error) {
+	batchYouTubeDownloader = func(model.Scraper, *config.Config, int64) (model.Downloader, error) {
 		return nil, errors.New("youtube downloader exploded")
 	}
-	batchGenericDownloader = func(*config.Config, int64) (dashboard.Downloader, error) {
+	batchGenericDownloader = func(*config.Config, int64) (model.Downloader, error) {
 		genericCalls++
 		return newFakePlainDownloader(), nil
 	}
@@ -222,13 +221,13 @@ func TestRunBatchSelectsDownloaderBySiteAndWiresDestinations(t *testing.T) {
 
 	var genericCalls, youtubeCalls int
 	var genericDL, youtubeDL *fakePlainDownloader
-	batchGenericDownloader = func(*config.Config, int64) (dashboard.Downloader, error) {
+	batchGenericDownloader = func(*config.Config, int64) (model.Downloader, error) {
 		genericCalls++
 		genericDL = newFakePlainDownloader()
 		return genericDL, nil
 	}
 	batchYouTubeScraper = func() model.Scraper { return youtubeScraper }
-	batchYouTubeDownloader = func(model.Scraper, *config.Config, int64) (dashboard.Downloader, error) {
+	batchYouTubeDownloader = func(model.Scraper, *config.Config, int64) (model.Downloader, error) {
 		youtubeCalls++
 		youtubeDL = newFakePlainDownloader()
 		return youtubeDL, nil

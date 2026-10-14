@@ -119,7 +119,7 @@ func (m *mockScraper) Parse(ctx context.Context, url string) ([]model.MediaItem,
 	return m.items, m.err
 }
 
-// fakePlainDownloader is a dashboard.Downloader fake for exercising runPlain
+// fakePlainDownloader is a model.Downloader fake for exercising runPlain
 // without any network access. It emits scripted progress events per item URL
 // and returns scripted per-item errors.
 type fakePlainDownloader struct {

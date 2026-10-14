@@ -94,7 +94,7 @@ func TestTruncate(t *testing.T) {
 }
 
 func TestBatchModeStatsShowsScraping(t *testing.T) {
-	urls := []DashAlbumURL{
+	urls := []model.Album{
 		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/test", Slug: "test", Dest: "/tmp/test"},
 		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/test2", Slug: "test2", Dest: "/tmp/test2"},
 	}
@@ -114,7 +114,7 @@ func TestBatchModeStatsShowsScraping(t *testing.T) {
 }
 
 func TestBatchModeSpinnerActiveWhileScraping(t *testing.T) {
-	urls := []DashAlbumURL{
+	urls := []model.Album{
 		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/1", Slug: "one", Dest: "/tmp/one"},
 		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/2", Slug: "two", Dest: "/tmp/two"},
 	}
@@ -292,7 +292,7 @@ func TestSummaryRetryListWriterIsShown(t *testing.T) {
 	d.states = []itemState{{item: model.MediaItem{URL: "https://x/1", Title: "gone"}, status: model.StatusFailed, lastErr: errors.New("boom")}}
 	d.refreshRows()
 	d.phase = phaseSummary
-	d.SetRetryWriter(func([]FailedItem) (string, error) { return "/tmp/retry-list.txt", nil })
+	d.SetRetryWriter(func([]model.FailedItem) (string, error) { return "/tmp/retry-list.txt", nil })
 	updated, _ := d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
 	d = updated.(*Dashboard)
 	if !strings.Contains(d.View(), "/tmp/retry-list.txt") {
@@ -322,7 +322,7 @@ func TestSummaryWaitsForFinalDownloadResult(t *testing.T) {
 }
 
 func TestSummaryWaitsForRemainingAlbums(t *testing.T) {
-	d := NewBatch(nil, t.TempDir(), []DashAlbumURL{{Site: "test"}})
+	d := NewBatch(nil, t.TempDir(), []model.Album{{Site: "test"}})
 	d.states = []itemState{{item: model.MediaItem{Title: "one"}, status: model.StatusCompleted}}
 	d.refreshRows()
 	d.phase = phaseDownload

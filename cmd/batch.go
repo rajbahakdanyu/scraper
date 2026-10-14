@@ -223,10 +223,10 @@ func runBatchWithConfig(cfg *config.Config, opts globalOptions, entries []batchE
 // runBatchGroup runs one same-type group of batch entries with its own
 // downloader and dashboard run.
 func runBatchGroup(cfg *config.Config, opts globalOptions, reg map[string]model.Scraper, entries []batchEntry, youtube bool, rateLimitBytesPerSec int64) error {
-	var dl dashboard.Downloader
+	var dl model.Downloader
 	// Build dashAlbumURL entries for the dashboard: one scraper per URL so
 	// the incremental scrape chain can call the right parser.
-	dashAlbums := make([]dashboard.DashAlbumURL, 0, len(entries))
+	dashAlbums := make([]model.Album, 0, len(entries))
 	if youtube {
 		scraper := batchYouTubeScraper()
 		ytDl, err := batchYouTubeDownloader(scraper, cfg, rateLimitBytesPerSec)
@@ -241,7 +241,7 @@ func runBatchGroup(cfg *config.Config, opts globalOptions, reg map[string]model.
 			if err != nil {
 				return err
 			}
-			dashAlbums = append(dashAlbums, dashboard.DashAlbumURL{
+			dashAlbums = append(dashAlbums, model.Album{
 				Site:    "youtube",
 				URL:     e.URL,
 				Slug:    slug,
@@ -264,7 +264,7 @@ func runBatchGroup(cfg *config.Config, opts globalOptions, reg map[string]model.
 				return err
 			}
 			scraper := reg[site]
-			dashAlbums = append(dashAlbums, dashboard.DashAlbumURL{
+			dashAlbums = append(dashAlbums, model.Album{
 				Site:    site,
 				URL:     e.URL,
 				Slug:    slug,
@@ -297,10 +297,10 @@ var batchYouTubeScraper = func() model.Scraper {
 	return youtube.NewYouTubeScraper()
 }
 
-var batchYouTubeDownloader = func(scraper model.Scraper, cfg *config.Config, rateLimitBytesPerSec int64) (dashboard.Downloader, error) {
+var batchYouTubeDownloader = func(scraper model.Scraper, cfg *config.Config, rateLimitBytesPerSec int64) (model.Downloader, error) {
 	return buildDownloader(scraper, "youtube", cfg, rateLimitBytesPerSec)
 }
 
-var batchGenericDownloader = func(cfg *config.Config, rateLimitBytesPerSec int64) (dashboard.Downloader, error) {
+var batchGenericDownloader = func(cfg *config.Config, rateLimitBytesPerSec int64) (model.Downloader, error) {
 	return buildDownloader(nil, "generic", cfg, rateLimitBytesPerSec)
 }

@@ -14,7 +14,6 @@ import (
 
 	"github.com/rajbahakdanyu/scraper/internal/config"
 	"github.com/rajbahakdanyu/scraper/internal/model"
-	"github.com/rajbahakdanyu/scraper/internal/ui/dashboard"
 )
 
 func TestRunDryRunJSONProducesValidJSON(t *testing.T) {
@@ -250,7 +249,7 @@ type fakeBatchJSONScraper struct {
 func TestRunBatchJSONOverlapsNextScrapeWithCurrentDownload(t *testing.T) {
 	dl := newOverlapBatchDownloader()
 	scraper := &overlapBatchScraper{secondStarted: make(chan struct{})}
-	albums := []dashboard.DashAlbumURL{
+	albums := []model.Album{
 		{Site: "test", URL: "https://example.com/one", Slug: "one", Dest: t.TempDir(), Scraper: scraper},
 		{Site: "test", URL: "https://example.com/two", Slug: "two", Dest: t.TempDir(), Scraper: scraper},
 	}
@@ -292,7 +291,7 @@ func TestRunBatchJSONProducesJSONLines(t *testing.T) {
 		{Status: model.StatusCompleted, Filename: "/tmp/b.mp4"},
 	}
 
-	albums := []dashboard.DashAlbumURL{
+	albums := []model.Album{
 		{Site: "test", URL: "https://example.com", Slug: "album1", Dest: t.TempDir(), Scraper: scraper},
 		{Site: "test", URL: "https://example.com", Slug: "album2", Dest: t.TempDir(), Scraper: scraper},
 	}
@@ -336,7 +335,7 @@ func TestRunBatchJSONRetryFileCarriesAlbumURL(t *testing.T) {
 	}}
 	fd.errs["https://example.com/a.mp4"] = errors.New("boom")
 
-	albums := []dashboard.DashAlbumURL{
+	albums := []model.Album{
 		{Site: "test", URL: "https://example.com/a/album1", Slug: "album1", Dest: t.TempDir(), Scraper: scraper},
 	}
 
@@ -360,7 +359,7 @@ func TestRunBatchJSONWithFailedAlbum(t *testing.T) {
 	fd := newFakePlainDownloader()
 	scraper := &fakeBatchJSONScraper{items: nil, err: errors.New("parse error")}
 
-	albums := []dashboard.DashAlbumURL{
+	albums := []model.Album{
 		{Site: "test", URL: "https://example.com", Slug: "fail", Dest: t.TempDir(), Scraper: scraper},
 	}
 
@@ -427,7 +426,7 @@ func TestRunBatchJSONRefusesSymlinkedAlbumDir(t *testing.T) {
 	scraper := &mockScraper{items: []model.MediaItem{
 		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100},
 	}}
-	albums := []dashboard.DashAlbumURL{
+	albums := []model.Album{
 		{Site: "test", URL: "https://example.com/1", Slug: "linked", Dest: filepath.Join(root, "linked"), Scraper: scraper},
 	}
 

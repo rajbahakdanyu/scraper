@@ -125,14 +125,6 @@ func (d *Dashboard) inspectSelected() {
 	}
 }
 
-// FailedItem pairs a media item with the error that ended its download and
-// the URL it was scraped from.
-type FailedItem struct {
-	Item      model.MediaItem
-	Err       error
-	SourceURL string
-}
-
 // Result reports how the run ended, mirroring the plain/JSON runners for
 // the CLI's exit status: a failed single-URL scrape is a plain error, and
 // failed items or batch albums are a *model.PartialError.
@@ -149,16 +141,16 @@ func (d *Dashboard) Result() error {
 
 // Failures returns the items that ended in the failed state, in display
 // order. The CLI uses it to write a retry list after the TUI exits.
-func (d *Dashboard) Failures() []FailedItem {
-	var out []FailedItem
+func (d *Dashboard) Failures() []model.FailedItem {
+	var out []model.FailedItem
 	for i := range d.states {
 		if d.states[i].isHeader || d.states[i].status != model.StatusFailed {
 			continue
 		}
-		out = append(out, FailedItem{
-			Item:      d.states[i].item,
-			Err:       d.states[i].lastErr,
-			SourceURL: d.states[i].sourceURL,
+		out = append(out, model.FailedItem{
+			Item:     d.states[i].item,
+			Err:      d.states[i].lastErr,
+			AlbumURL: d.states[i].sourceURL,
 		})
 	}
 	return out

@@ -10,9 +10,9 @@ import (
 
 	"github.com/rajbahakdanyu/scraper/internal/config"
 	"github.com/rajbahakdanyu/scraper/internal/disk"
+	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 	"github.com/rajbahakdanyu/scraper/internal/model"
 	"github.com/rajbahakdanyu/scraper/internal/netutil"
-	"github.com/rajbahakdanyu/scraper/internal/ui/dashboard"
 )
 
 func runDryRunWithDiskCheck(scraper model.Scraper, targetURL, outputDir string, diskCheck bool) error {
@@ -44,7 +44,7 @@ func runDryRunWithDiskCheck(scraper model.Scraper, targetURL, outputDir string, 
 		sizeStr := "unknown size"
 		if item.Size > 0 {
 			totalSize += item.Size
-			sizeStr = dashboard.HumanizeBytes(item.Size)
+			sizeStr = fileutil.HumanBytes(item.Size)
 		} else {
 			unknownSize++
 		}
@@ -53,9 +53,9 @@ func runDryRunWithDiskCheck(scraper model.Scraper, targetURL, outputDir string, 
 
 	fmt.Println()
 	if unknownSize > 0 {
-		fmt.Printf("%d items, %s total (%d with unknown size)\n", len(items), dashboard.HumanizeBytes(totalSize), unknownSize)
+		fmt.Printf("%d items, %s total (%d with unknown size)\n", len(items), fileutil.HumanBytes(totalSize), unknownSize)
 	} else {
-		fmt.Printf("%d items, %s total\n", len(items), dashboard.HumanizeBytes(totalSize))
+		fmt.Printf("%d items, %s total\n", len(items), fileutil.HumanBytes(totalSize))
 	}
 	return nil
 }

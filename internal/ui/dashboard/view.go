@@ -130,7 +130,7 @@ func (d *Dashboard) viewBatch(header string) string {
 		if unknown > 0 {
 			mark = "~"
 		}
-		label = fmt.Sprintf(" %s/%s %d%%%s", HumanizeBytes(done), HumanizeBytes(total), pct, mark)
+		label = fmt.Sprintf(" %s/%s %d%%%s", fileutil.HumanBytes(done), fileutil.HumanBytes(total), pct, mark)
 	} else if unknown > 0 {
 		label = " unknown size"
 	}
@@ -227,7 +227,7 @@ func (d *Dashboard) renderStats() string {
 	}
 
 	if totalSpeed > 0 {
-		parts = append(parts, d.theme.Dim.Render("speed ")+d.theme.Cyan.Render(fmt.Sprintf("%s/s", HumanizeBytes(int64(totalSpeed)))))
+		parts = append(parts, d.theme.Dim.Render("speed ")+d.theme.Cyan.Render(fmt.Sprintf("%s/s", fileutil.HumanBytes(int64(totalSpeed)))))
 		// A confident ETA that ignores the unknown-size backlog is
 		// worse than none: hide it while any outstanding item's size
 		// is unknown.
@@ -358,10 +358,6 @@ func displayText(s string) string {
 		}
 		return r
 	}, s)
-}
-
-func HumanizeBytes(n int64) string {
-	return fileutil.HumanBytes(n)
 }
 
 func statusShort(s model.DownloadStatus) string {

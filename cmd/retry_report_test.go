@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/rajbahakdanyu/scraper/internal/model"
-	"github.com/rajbahakdanyu/scraper/internal/ui/dashboard"
 )
 
 func TestFailureReason(t *testing.T) {
@@ -37,7 +36,7 @@ func TestFailureReason(t *testing.T) {
 
 func TestRetryReportWritesListAndSummary(t *testing.T) {
 	dir := t.TempDir()
-	failures := []failedItem{
+	failures := []model.FailedItem{
 		{
 			Item: model.MediaItem{URL: "https://dl.bunkr.cr/file/1", PageURL: "https://bunkr.cr/f/aaa", Title: "a"},
 			Err:  model.NewHTTPStatusError(errors.New("HTTP 503"), 503, "https://pc9.scdn.st/storage/x.mp4", 0),
@@ -77,7 +76,7 @@ func TestRetryReportWritesListAndSummary(t *testing.T) {
 
 func TestRetryReportDeduplicatesAndSkipsEmptyURLs(t *testing.T) {
 	dir := t.TempDir()
-	failures := []failedItem{
+	failures := []model.FailedItem{
 		{Item: model.MediaItem{URL: "https://bunkr.cr/f/same"}, Err: errors.New("boom")},
 		{Item: model.MediaItem{URL: "https://bunkr.cr/f/same"}, Err: errors.New("boom")},
 		{Item: model.MediaItem{Title: "no-url"}, Err: errors.New("boom")},
@@ -120,7 +119,7 @@ func TestCollectFailuresSkipsCancelledAndNil(t *testing.T) {
 
 func TestRetryReportUsesAlbumURLWhenItemHasNoPage(t *testing.T) {
 	dir := t.TempDir()
-	failures := []failedItem{
+	failures := []model.FailedItem{
 		{Item: model.MediaItem{URL: "https://simp6.cuckcapital.cr/images4/a.jpg"}, Err: errors.New("boom"), AlbumURL: "https://goonbox.cr/a/aZsRlh"},
 		{Item: model.MediaItem{URL: "https://simp6.cuckcapital.cr/images4/b.jpg"}, Err: errors.New("boom"), AlbumURL: "https://goonbox.cr/a/aZsRlh"},
 	}
@@ -144,7 +143,7 @@ func TestRetryReportUsesAlbumURLWhenItemHasNoPage(t *testing.T) {
 
 func TestRetryReportRedactsAlbumURLQuery(t *testing.T) {
 	dir := t.TempDir()
-	failures := []failedItem{
+	failures := []model.FailedItem{
 		{Item: model.MediaItem{PageURL: "https://bunkr.cr/f/item1"}, Err: errors.New("boom"), AlbumURL: "https://bunkr.cr/a/rBSKhzaL?token=secret"},
 	}
 
@@ -164,7 +163,7 @@ func TestRetryReportRedactsAlbumURLQuery(t *testing.T) {
 
 func TestRetryReportRedactsPageURLQuery(t *testing.T) {
 	dir := t.TempDir()
-	failures := []failedItem{
+	failures := []model.FailedItem{
 		{Item: model.MediaItem{
 			URL:     "https://cdn.example.com/files/v.mp4?token=SECRET",
 			PageURL: "https://bunkr.cr/f/abc?token=SECRET",
@@ -187,7 +186,7 @@ func TestRetryReportRedactsPageURLQuery(t *testing.T) {
 
 func TestRetryReportWritesItemAlbumPairs(t *testing.T) {
 	dir := t.TempDir()
-	failures := []failedItem{
+	failures := []model.FailedItem{
 		{Item: model.MediaItem{PageURL: "https://bunkr.cr/f/item1"}, Err: errors.New("boom"), AlbumURL: "https://bunkr.cr/a/rBSKhzaL"},
 		{Item: model.MediaItem{PageURL: "https://bunkr.cr/f/item2"}, Err: errors.New("boom"), AlbumURL: "https://bunkr.cr/a/rBSKhzaL"},
 		{Item: model.MediaItem{PageURL: "https://bunkr.cr/f/item3"}, Err: errors.New("boom")},
@@ -210,21 +209,9 @@ func TestRetryReportWritesItemAlbumPairs(t *testing.T) {
 	}
 }
 
-func TestFailuresFromDashboard(t *testing.T) {
-	in := []dashboard.FailedItem{{
-		Item:      model.MediaItem{URL: "https://x/1"},
-		Err:       errors.New("boom"),
-		SourceURL: "https://bunkr.cr/a/rBSKhzaL",
-	}}
-	out := failuresFromDashboard(in)
-	if len(out) != 1 || out[0].Item.URL != "https://x/1" || out[0].Err == nil || out[0].AlbumURL != "https://bunkr.cr/a/rBSKhzaL" {
-		t.Fatalf("failuresFromDashboard() = %+v", out)
-	}
-}
-
 func TestRetryReportRedactsSignedFallbackURL(t *testing.T) {
 	dir := t.TempDir()
-	failures := []failedItem{
+	failures := []model.FailedItem{
 		{Item: model.MediaItem{URL: "https://cdn.example/file.mp4?token=secret&ex=123", Title: "signed"}, Err: errors.New("boom")},
 	}
 
@@ -254,7 +241,7 @@ func TestRetryReportErrorsOnUnwritableDir(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0700) })
 
-	failures := []failedItem{{Item: model.MediaItem{URL: "https://bunkr.cr/f/x"}, Err: errors.New("boom")}}
+	failures := []model.FailedItem{{Item: model.MediaItem{URL: "https://bunkr.cr/f/x"}, Err: errors.New("boom")}}
 	path, summary, err := retryReport(dir, failures, time.Now())
 	if err == nil {
 		t.Fatalf("expected an error for an unwritable directory, got path=%q", path)

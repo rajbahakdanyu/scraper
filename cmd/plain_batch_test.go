@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/rajbahakdanyu/scraper/internal/model"
-	"github.com/rajbahakdanyu/scraper/internal/ui/dashboard"
 )
 
 type blockingBatchDownloader struct {
@@ -80,7 +79,7 @@ func TestRunBatchPlainSerializesProgressAndBatchOutput(t *testing.T) {
 		allowError: make(chan struct{}),
 	}
 	scraper := &fakeBatchJSONScraper{items: []model.MediaItem{{URL: "https://example.com/item", Title: "item"}}}
-	albums := []dashboard.DashAlbumURL{{URL: "https://example.com", Slug: "album", Dest: t.TempDir(), Scraper: scraper}}
+	albums := []model.Album{{URL: "https://example.com", Slug: "album", Dest: t.TempDir(), Scraper: scraper}}
 	writer := &serialOutputWriter{started: make(chan struct{}), release: make(chan struct{})}
 
 	done := make(chan error, 1)
@@ -140,7 +139,7 @@ func newOverlapBatchDownloader() *overlapBatchDownloader {
 func TestRunBatchPlainOverlapsNextScrapeWithCurrentDownload(t *testing.T) {
 	dl := newOverlapBatchDownloader()
 	scraper := &overlapBatchScraper{secondStarted: make(chan struct{})}
-	albums := []dashboard.DashAlbumURL{
+	albums := []model.Album{
 		{URL: "https://example.com/one", Slug: "one", Dest: t.TempDir(), Scraper: scraper},
 		{URL: "https://example.com/two", Slug: "two", Dest: t.TempDir(), Scraper: scraper},
 	}
@@ -186,7 +185,7 @@ func TestRunBatchPlainInterruptStopsAfterFirstScrape(t *testing.T) {
 
 	dl := newFakePlainDownloader()
 	scraper := &interruptingBatchScraper{started: make(chan struct{})}
-	albums := []dashboard.DashAlbumURL{
+	albums := []model.Album{
 		{URL: "https://example.com/one", Slug: "one", Dest: t.TempDir(), Scraper: scraper},
 		{URL: "https://example.com/two", Slug: "two", Dest: t.TempDir(), Scraper: scraper},
 		{URL: "https://example.com/three", Slug: "three", Dest: t.TempDir(), Scraper: scraper},
@@ -224,7 +223,7 @@ func TestRunBatchPlainInterruptStopsAfterFirstScrape(t *testing.T) {
 func TestRunBatchPlainPrintsAlbumSections(t *testing.T) {
 	dl := newFakePlainDownloader()
 	scraper := &fakeBatchJSONScraper{items: []model.MediaItem{{URL: "https://example.com/item", Title: "item"}}}
-	albums := []dashboard.DashAlbumURL{
+	albums := []model.Album{
 		{URL: "https://example.com/one", Slug: "one", Dest: t.TempDir(), Scraper: scraper},
 		{URL: "https://example.com/two", Slug: "two", Dest: t.TempDir(), Scraper: scraper},
 	}
@@ -243,7 +242,7 @@ func TestRunBatchPlainPrintsAlbumSections(t *testing.T) {
 func TestRunBatchPlainReportsScrapeFailures(t *testing.T) {
 	dl := newFakePlainDownloader()
 	scrapeErr := errors.New("parse error")
-	albums := []dashboard.DashAlbumURL{{
+	albums := []model.Album{{
 		URL:     "https://example.com/fail",
 		Slug:    "fail",
 		Dest:    t.TempDir(),
@@ -267,7 +266,7 @@ func TestRunBatchPlainReportsScrapeFailures(t *testing.T) {
 func TestRunBatchPlainReturnsPartialErrorAfterMixedAlbumResults(t *testing.T) {
 	dl := newFakePlainDownloader()
 	scrapeErr := errors.New("second album failed")
-	albums := []dashboard.DashAlbumURL{
+	albums := []model.Album{
 		{
 			URL:     "https://example.com/good",
 			Slug:    "good",
@@ -305,7 +304,7 @@ func TestRunBatchPlainSkipsSymlinkedAlbumAndContinues(t *testing.T) {
 	scraper := &mockScraper{items: []model.MediaItem{
 		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100},
 	}}
-	albums := []dashboard.DashAlbumURL{
+	albums := []model.Album{
 		{URL: "https://example.com/1", Slug: "linked", Dest: filepath.Join(root, "linked"), Scraper: scraper},
 		{URL: "https://example.com/2", Slug: "good", Dest: filepath.Join(root, "good"), Scraper: scraper},
 	}

@@ -13,7 +13,7 @@ import (
 )
 
 func TestBatchHeaderRowsCreated(t *testing.T) {
-	urls := []DashAlbumURL{
+	urls := []model.Album{
 		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/test", Slug: "test", Dest: "/tmp/test"},
 	}
 	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 10)}
@@ -41,7 +41,7 @@ func TestBatchHeaderRowsCreated(t *testing.T) {
 }
 
 func TestBatchHeaderCursorSkip(t *testing.T) {
-	urls := []DashAlbumURL{
+	urls := []model.Album{
 		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/one", Slug: "one", Dest: t.TempDir()},
 		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/two", Slug: "two", Dest: t.TempDir()},
 	}
@@ -88,7 +88,7 @@ func TestBatchHeaderCursorSkip(t *testing.T) {
 }
 
 func TestHeaderRowRenderedInVisibleColumn(t *testing.T) {
-	urls := []DashAlbumURL{
+	urls := []model.Album{
 		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/test", Slug: "test", Dest: "/tmp/test"},
 	}
 	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 10)}
@@ -112,7 +112,7 @@ func TestHeaderRowRenderedInVisibleColumn(t *testing.T) {
 }
 
 func TestEnsureStateIndexIsIncremental(t *testing.T) {
-	urls := []DashAlbumURL{
+	urls := []model.Album{
 		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/one", Slug: "one", Dest: t.TempDir()},
 		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/two", Slug: "two", Dest: t.TempDir()},
 	}
