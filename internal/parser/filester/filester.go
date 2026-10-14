@@ -113,13 +113,7 @@ func (s *Scraper) Parse(ctx context.Context, rawURL string) ([]model.MediaItem, 
 			return nil, err
 		}
 		item.URL = fmt.Sprintf("%s/d/%s", s.baseURL, id)
-		item.Resolve = func(ctx context.Context) (string, error) {
-			resolved, err := s.resolveFile(ctx, id, item.Title)
-			if err != nil {
-				return "", err
-			}
-			return resolved.URL, nil
-		}
+		item.Resolve = s.lazyResolver(id, item.Title)
 		return []model.MediaItem{item}, nil
 	case "f":
 		return s.parseFolder(ctx, id)
@@ -252,26 +246,24 @@ func itemsFromEntries(allEntries []folderEntry, s *Scraper) []model.MediaItem {
 			Size:     entry.size,
 			MimeType: "application/octet-stream",
 			Type:     model.MediaTypeForName(title),
-			Resolve: func(ctx context.Context) (string, error) {
-				item, err := s.resolveFile(ctx, entry.slug, entry.name)
-				if err != nil {
-					// Keep the permanent/transient classification
-					// across the package boundary: a 404 from the
-					// token endpoint can never succeed, so the
-					// downloader fails the item immediately instead
-					// of retrying with backoff.
-					var nre *model.NonRetryableError
-					if errors.As(err, &nre) {
-						return "", &model.PermanentError{Err: err}
-					}
-					return "", err
-				}
-				return item.URL, nil
-			},
+			Resolve:  s.lazyResolver(entry.slug, entry.name),
 		})
 	}
 
 	return items
+}
+
+// lazyResolver returns a MediaItem.Resolve func making a single token
+// exchange per call: the downloader already retries Resolve with backoff,
+// so retrying here too would multiply the request count per failing file.
+func (s *Scraper) lazyResolver(slug, knownName string) func(context.Context) (string, error) {
+	return func(ctx context.Context) (string, error) {
+		item, err := s.resolveFileOnce(ctx, slug, knownName)
+		if err != nil {
+			return "", model.WrapPermanent(err)
+		}
+		return item.URL, nil
+	}
 }
 
 // fetchFolderPage fetches one page of a folder listing. A transient fetch

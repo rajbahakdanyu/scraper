@@ -213,10 +213,10 @@ func TestParseFilesterFolderResolverClassifiesPermanentErrors(t *testing.T) {
 	}
 }
 
-// TestParseFilesterFolderResolverRetriesTransientErrors keeps the
-// transient classification through the lazy resolver: a 500 from the token
-// endpoint is retried with backoff and succeeds on the next attempt.
-func TestParseFilesterFolderResolverRetriesTransientErrors(t *testing.T) {
+// TestParseFilesterFolderResolverLeavesRetryToDownloader: a lazy resolver
+// makes one token request per call and reports a transient 500 as
+// retryable (not permanent); the downloader's own retry calls it again.
+func TestParseFilesterFolderResolverLeavesRetryToDownloader(t *testing.T) {
 	var tokenRequests int32
 
 	mux := http.NewServeMux()
@@ -249,9 +249,18 @@ func TestParseFilesterFolderResolverRetriesTransientErrors(t *testing.T) {
 		t.Fatalf("expected 1 item, got %d", len(items))
 	}
 
+	if _, err := items[0].Resolve(context.Background()); err == nil {
+		t.Fatal("expected the transient 500 to surface from a single attempt")
+	} else if pe := (*model.PermanentError)(nil); errors.As(err, &pe) {
+		t.Fatalf("a 500 must stay retryable, got permanent: %v", err)
+	}
+	if got := atomic.LoadInt32(&tokenRequests); got != 1 {
+		t.Fatalf("the resolver must not retry on its own, got %d token requests", got)
+	}
+
 	resolved, err := items[0].Resolve(context.Background())
 	if err != nil {
-		t.Fatalf("expected transient 500 to be retried successfully, got: %v", err)
+		t.Fatalf("expected the next attempt to succeed, got: %v", err)
 	}
 	wantURL := fmt.Sprintf("%s/v2/file-slugFlaky?download=true&n=flaky.bin&token=tok-slugFlaky", ts.URL)
 	if resolved != wantURL {
