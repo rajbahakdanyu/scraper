@@ -385,7 +385,7 @@ func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFm
 		audioExt = "webm"
 	}
 
-	tmpDir, err := os.MkdirTemp("", "scraper-yt-")
+	tmpDir, err := newMuxWorkDir(dest)
 	if err != nil {
 		return model.NewNonRetryable(err)
 	}
@@ -455,6 +455,17 @@ func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFm
 	return nil
 }
 
+// newMuxWorkDir holds the separate streams before muxing. It lives beside
+// the output, not in the system temp dir, which may be a small tmpfs or a
+// different filesystem than a multi-GB download needs.
+func newMuxWorkDir(dest string) (string, error) {
+	return os.MkdirTemp(dest, ".scraper-yt-")
+}
+
+// ffmpegBaseArgs keep ffmpeg off the terminal: no stdin reads (it would
+// steal TUI keystrokes) and only errors on stderr (kept for messages).
+var ffmpegBaseArgs = []string{"-nostdin", "-hide_banner", "-loglevel", "error", "-y"}
+
 // audioCopyable reports whether format's audio is AAC-in-mp4 (e.g.
 // codecs="mp4a.40.2") and can therefore be stream-copied into the mp4
 // output container. Anything else (opus in webm, ...) must be transcoded
@@ -479,8 +490,7 @@ func muxStreams(ctx context.Context, videoPath, audioPath, outputPath string, au
 	if audioCopy {
 		audioCodec = "copy"
 	}
-	// #nosec G204 -- arguments are passed directly without shell evaluation; paths are internally allocated.
-	cmd := exec.CommandContext(ctx, "ffmpeg", "-y",
+	args := append(append([]string(nil), ffmpegBaseArgs...),
 		"-i", videoPath,
 		"-i", audioPath,
 		"-c:v", "copy",
@@ -488,6 +498,8 @@ func muxStreams(ctx context.Context, videoPath, audioPath, outputPath string, au
 		"-movflags", "+faststart",
 		outputPath,
 	)
+	// #nosec G204 -- arguments are passed directly without shell evaluation; paths are internally allocated.
+	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		return ffmpegError("mux", err, &stderr)
@@ -500,7 +512,7 @@ func muxStreams(ctx context.Context, videoPath, audioPath, outputPath string, au
 // mp3 via libmp3lame (-vn -acodec libmp3lame -q:a 2).
 func extractAudio(ctx context.Context, srcPath, outputPath, format string) error {
 	var stderr bytes.Buffer
-	args := []string{"-y", "-i", srcPath, "-vn"}
+	args := append(append([]string(nil), ffmpegBaseArgs...), "-i", srcPath, "-vn")
 	if format == "mp3" {
 		args = append(args, "-codec:a", "libmp3lame", "-q:a", "2")
 	} else {

@@ -594,6 +594,20 @@ func TestMuxStreamsCopiesAudioWhenAlreadyAAC(t *testing.T) {
 	if !strings.Contains(args, "-c:a copy") {
 		t.Fatalf("AAC audio must be stream-copied (lossless, fast), got args: %s", args)
 	}
+	if !strings.HasPrefix(args, "-nostdin -hide_banner -loglevel error -y ") {
+		t.Fatalf("ffmpeg must not read stdin or flood stderr, got args: %s", args)
+	}
+}
+
+func TestMuxWorkDirIsBesideTheOutput(t *testing.T) {
+	dest := t.TempDir()
+	dir, err := newMuxWorkDir(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Dir(dir) != dest {
+		t.Fatalf("mux work dir %q must be inside %q", dir, dest)
+	}
 }
 
 func TestMuxStreamsTranscodesAudioWhenNotAAC(t *testing.T) {
