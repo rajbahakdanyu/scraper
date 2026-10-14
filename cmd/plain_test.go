@@ -552,6 +552,24 @@ func TestRunJSONProducesJSONLines(t *testing.T) {
 	}
 }
 
+func TestRunJSONWritesRetryListInOutputRoot(t *testing.T) {
+	fd := newFakePlainDownloader()
+	items := []model.MediaItem{
+		{URL: "https://example.com/a.mp4", Title: "a.mp4", PageURL: "https://example.com/f/a"},
+		{URL: "https://example.com/b.mp4", Title: "b.mp4", PageURL: "https://example.com/f/b"},
+	}
+	fd.errs["https://example.com/a.mp4"] = fmt.Errorf("HTTP 404")
+
+	dest := t.TempDir()
+	var buf bytes.Buffer
+	_ = runJSON(fd, itemsScraper(items, nil), dest, "album", "test", "https://example.com/a/album", "", "", &buf)
+
+	matches, _ := filepath.Glob(filepath.Join(dest, "scraper-failed-*.txt"))
+	if len(matches) != 1 {
+		t.Fatalf("expected the retry list in the output root %s, got %v\n%s", dest, matches, buf.String())
+	}
+}
+
 func TestRunJSONWithFailedItems(t *testing.T) {
 	fd := newFakePlainDownloader()
 	items := []model.MediaItem{

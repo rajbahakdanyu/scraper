@@ -497,6 +497,7 @@ func writeJSONLine(w io.Writer, v interface{}) {
 // runJSON downloads items from a single album and prints JSON Lines
 // (one event per line) to out. Errors and warnings go to stderr.
 func runJSON(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error), dest, slug, site, targetURL string, quality, audioOnly string, out io.Writer) error {
+	reportDir := dest
 	items, err := scrapeFn()
 	if err != nil && len(items) == 0 {
 		writeJSONLine(out, model.JSONEvent{Event: "error", URL: targetURL, Error: err.Error()})
@@ -564,7 +565,7 @@ func runJSON(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error)
 
 	completed, failed, cancelled, realItems, totalBytes := writeItemResult(out, items, errs, paths, slug, quality, audioOnly)
 
-	retryPath, summary, rErr := retryReport(dest, collectFailures(items, errs, targetURL), time.Now())
+	retryPath, summary, rErr := retryReport(reportDir, collectFailures(items, errs, targetURL), time.Now())
 	if rErr != nil {
 		fmt.Fprintf(os.Stderr, "retry list: %v\n", rErr)
 	} else if summary != "" {
