@@ -36,8 +36,7 @@ const (
 )
 
 // mirrorDomains are the bunkr mirror hosts accepted as download and API
-// hosts. Keep in sync with cmd's siteDomains["bunker"]: cmd/root_test.go
-// asserts the two lists match.
+// hosts; cmd's site auto-detection uses the same list via MirrorDomains.
 var mirrorDomains = []string{
 	"bunkr.cr", "bunkr.su", "bunkrr.su", "bunkr.si", "bunkr.la",
 	"bunkr.is", "bunkr.to", "bunkr.ru", "bunkr.black", "bunkr.red",

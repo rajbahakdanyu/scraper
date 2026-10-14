@@ -10,8 +10,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"reflect"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -20,7 +18,6 @@ import (
 
 	"github.com/rajbahakdanyu/scraper/internal/config"
 	"github.com/rajbahakdanyu/scraper/internal/model"
-	"github.com/rajbahakdanyu/scraper/internal/parser/bunker"
 	"github.com/rajbahakdanyu/scraper/internal/parser/youtube"
 	"github.com/rajbahakdanyu/scraper/internal/ui/dashboard"
 )
@@ -944,13 +941,17 @@ func TestRunBatchRunsMixedSitesSequentially(t *testing.T) {
 	}
 }
 
-func TestBunkerMirrorDomainsMatchSiteDomains(t *testing.T) {
-	want := append([]string(nil), siteDomains["bunker"]...)
-	got := bunker.MirrorDomains()
-	sort.Strings(want)
-	sort.Strings(got)
-	if !reflect.DeepEqual(want, got) {
-		t.Fatalf("bunker.MirrorDomains drifted from siteDomains[bunker]:\n got %v\nwant %v", got, want)
+func TestBrowserExtensionDomainsMatchSiteDomains(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "browser-extension", "collect.mjs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for site, domains := range siteDomains {
+		for _, domain := range domains {
+			if !strings.Contains(string(src), `"`+domain+`"`) {
+				t.Errorf("browser-extension/collect.mjs is missing %s domain %q", site, domain)
+			}
+		}
 	}
 }
 

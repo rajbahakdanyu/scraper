@@ -741,11 +741,7 @@ var siteDomains = map[string][]string{
 	"cyberdrop": {
 		"cyberdrop.cr", "cyberdrop.me", "cyberdrop.to", "cyberdrop.cc",
 	},
-	"bunker": {
-		"bunkr.cr", "bunkr.su", "bunkrr.su", "bunkr.si", "bunkr.la",
-		"bunkr.is", "bunkr.to", "bunkr.ru", "bunkr.black", "bunkr.red",
-		"bunkr.ph", "bunkr.site", "bunkr.fi", "bunkr.pk", "bunkr.ac",
-	},
+	"bunker":     bunker.MirrorDomains(),
 	"goonbox":    {"goonbox.cr", "goonbox.to"},
 	"filester":   {"filester.sh", "filester.me"},
 	"pixeldrain": {"pixeldrain.com"},
