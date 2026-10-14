@@ -11,6 +11,7 @@ import (
 
 	"github.com/rajbahakdanyu/scraper/internal/model"
 	"github.com/rajbahakdanyu/scraper/internal/netutil"
+	"github.com/rajbahakdanyu/scraper/internal/parser/fetch"
 )
 
 const apiBase = "https://api.cyberdrop.cr/api"
@@ -41,23 +42,6 @@ func NewCyberDropScraperWithOptions(proxyURL string, cookies []*http.Cookie) (*S
 // parsing, not concurrently with it.
 func (s *Scraper) SetSleeper(sleeper netutil.Sleeper) { s.sleeper = sleeper }
 
-// fetchJSONWithRetry fetches and decodes JSON, retrying transient failures
-// (5xx, network errors) with backoff; non-retryable HTTP statuses (404, ...)
-// stop after one attempt.
-func fetchJSONWithRetry(ctx context.Context, s *Scraper, url string, target interface{}) error {
-	return netutil.Retry(ctx, netutil.MaxRetries, netutil.RetryBaseDelay, s.sleeper, func() error {
-		err := netutil.GetJSON(ctx, s.client, url, s.userAgent, target)
-		if err != nil {
-			var statusErr *netutil.HTTPStatusError
-			if errors.As(err, &statusErr) && !model.IsRetryableStatus(statusErr.StatusCode) {
-				return model.NewNonRetryable(err)
-			}
-			return err
-		}
-		return nil
-	})
-}
-
 func (s *Scraper) Name() string {
 	return "cyberdrop"
 }
@@ -81,7 +65,7 @@ func classifyAPIError(err error, message string, args ...interface{}) error {
 // stale signature. Instead each item carries a Resolve func that performs
 // the signed-URL exchange lazily at download time (and again on a 403).
 func (s *Scraper) Parse(ctx context.Context, url string) ([]model.MediaItem, error) {
-	slug := extractSlug(url)
+	slug := netutil.PathSlug(url)
 	if slug == "" {
 		return nil, fmt.Errorf("cyberdrop: could not extract slug from URL: %s", url)
 	}
@@ -188,7 +172,7 @@ func (s *Scraper) parseAlbum(ctx context.Context, albumPageURL, slug string) ([]
 			Type string `json:"type"`
 		} `json:"files"`
 	}
-	if err := fetchJSONWithRetry(ctx, s, albumURL, &album); err != nil {
+	if err := fetch.JSON(ctx, s.client, albumURL, s.userAgent, s.sleeper, &album); err != nil {
 		return nil, err
 	}
 
@@ -227,11 +211,4 @@ func (s *Scraper) parseAlbum(ctx context.Context, albumPageURL, slug string) ([]
 	}
 
 	return items, nil
-}
-
-// extractSlug gets the file or album slug from the URL, ignoring any query
-// string (e.g. a tracking parameter like "?ref=x" must not end up as part
-// of the slug).
-func extractSlug(url string) string {
-	return netutil.PathSlug(url)
 }

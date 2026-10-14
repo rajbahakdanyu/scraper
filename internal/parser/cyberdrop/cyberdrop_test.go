@@ -523,26 +523,6 @@ func TestParseAlbumResolversAllFail(t *testing.T) {
 	}
 }
 
-func TestExtractSlug(t *testing.T) {
-	tests := []struct {
-		url      string
-		expected string
-	}{
-		{"https://cyberdrop.cr/f/T5LPyd5Sa9HkZ", "T5LPyd5Sa9HkZ"},
-		{"https://cyberdrop.cr/a/abc123", "abc123"},
-		{"https://cyberdrop.cr/f/test/", "test"},
-		{"https://cyberdrop.cr/f/abc123?ref=xyz", "abc123"},
-		{"https://cyberdrop.cr/f/abc123/?ref=xyz", "abc123"},
-	}
-
-	for _, tt := range tests {
-		got := extractSlug(tt.url)
-		if got != tt.expected {
-			t.Errorf("extractSlug(%s) = %s, want %s", tt.url, got, tt.expected)
-		}
-	}
-}
-
 func TestParseFileRejectsUnlistedAuthRedirect(t *testing.T) {
 	auth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "http://localhost:9/other", http.StatusFound)

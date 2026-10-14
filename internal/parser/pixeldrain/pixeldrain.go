@@ -2,13 +2,13 @@ package pixeldrain
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/rajbahakdanyu/scraper/internal/model"
 	"github.com/rajbahakdanyu/scraper/internal/netutil"
+	"github.com/rajbahakdanyu/scraper/internal/parser/fetch"
 )
 
 const apiBase = "https://pixeldrain.com/api"
@@ -38,23 +38,6 @@ func NewPixeldrainScraperWithOptions(proxyURL string, cookies []*http.Cookie) (*
 // parsing, not concurrently with it.
 func (s *Scraper) SetSleeper(sleeper netutil.Sleeper) { s.sleeper = sleeper }
 
-// fetchJSONWithRetry fetches and decodes JSON, retrying transient failures
-// (5xx, network errors) with backoff; non-retryable HTTP statuses (404, ...)
-// stop after one attempt.
-func fetchJSONWithRetry(ctx context.Context, s *Scraper, url string, target interface{}) error {
-	return netutil.Retry(ctx, netutil.MaxRetries, netutil.RetryBaseDelay, s.sleeper, func() error {
-		err := netutil.GetJSON(ctx, s.client, url, userAgent, target)
-		if err != nil {
-			var statusErr *netutil.HTTPStatusError
-			if errors.As(err, &statusErr) && !model.IsRetryableStatus(statusErr.StatusCode) {
-				return model.NewNonRetryable(err)
-			}
-			return err
-		}
-		return nil
-	})
-}
-
 func (s *Scraper) Name() string {
 	return "pixeldrain"
 }
@@ -74,7 +57,7 @@ func (s *Scraper) Parse(ctx context.Context, rawURL string) ([]model.MediaItem, 
 }
 
 func (s *Scraper) parseList(ctx context.Context, rawURL string) ([]model.MediaItem, error) {
-	listID := extractID(rawURL)
+	listID := netutil.PathSlug(rawURL)
 	if listID == "" {
 		return nil, fmt.Errorf("pixeldrain: could not extract list ID from %s", rawURL)
 	}
@@ -94,7 +77,7 @@ func (s *Scraper) parseList(ctx context.Context, rawURL string) ([]model.MediaIt
 		} `json:"files"`
 	}
 
-	if err := fetchJSONWithRetry(ctx, s, apiURL, &result); err != nil {
+	if err := fetch.JSON(ctx, s.client, apiURL, userAgent, s.sleeper, &result); err != nil {
 		return nil, fmt.Errorf("pixeldrain list %s: %w", listID, err)
 	}
 
@@ -121,7 +104,7 @@ func (s *Scraper) parseList(ctx context.Context, rawURL string) ([]model.MediaIt
 }
 
 func (s *Scraper) parseFile(ctx context.Context, rawURL string) ([]model.MediaItem, error) {
-	fileID := extractID(rawURL)
+	fileID := netutil.PathSlug(rawURL)
 	if fileID == "" {
 		return nil, fmt.Errorf("pixeldrain: could not extract file ID from %s", rawURL)
 	}
@@ -137,7 +120,7 @@ func (s *Scraper) parseFile(ctx context.Context, rawURL string) ([]model.MediaIt
 		HashSHA256 string `json:"hash_sha256"`
 	}
 
-	if err := fetchJSONWithRetry(ctx, s, apiURL, &result); err != nil {
+	if err := fetch.JSON(ctx, s.client, apiURL, userAgent, s.sleeper, &result); err != nil {
 		return nil, fmt.Errorf("pixeldrain file %s: %w", fileID, err)
 	}
 
@@ -152,15 +135,4 @@ func (s *Scraper) parseFile(ctx context.Context, rawURL string) ([]model.MediaIt
 		MimeType: result.MimeType,
 		Type:     model.MediaTypeForName(result.Name),
 	}}, nil
-}
-
-func extractID(rawURL string) string {
-	if idx := strings.IndexByte(rawURL, '#'); idx >= 0 {
-		rawURL = rawURL[:idx]
-	}
-	if idx := strings.IndexByte(rawURL, '?'); idx >= 0 {
-		rawURL = rawURL[:idx]
-	}
-	parts := strings.Split(strings.TrimRight(rawURL, "/"), "/")
-	return parts[len(parts)-1]
 }

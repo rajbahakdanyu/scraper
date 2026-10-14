@@ -261,26 +261,6 @@ func TestParseInvalidURL(t *testing.T) {
 	}
 }
 
-func TestExtractID(t *testing.T) {
-	tests := []struct {
-		url  string
-		want string
-	}{
-		{"https://pixeldrain.com/l/CSbjLYKs", "CSbjLYKs"},
-		{"https://pixeldrain.com/u/qZz2NiiW", "qZz2NiiW"},
-		{"https://pixeldrain.com/l/CSbjLYKs#", "CSbjLYKs"},
-		{"https://pixeldrain.com/l/CSbjLYKs?test=1", "CSbjLYKs"},
-		{"https://pixeldrain.com/l/CSbjLYKs/?test=1", "CSbjLYKs"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.url, func(t *testing.T) {
-			if got := extractID(tt.url); got != tt.want {
-				t.Errorf("extractID(%q) = %q, want %q", tt.url, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestMediaTypeDetection(t *testing.T) {
 	scraper := newTestScraper()
 	if scraper.Name() != "pixeldrain" {

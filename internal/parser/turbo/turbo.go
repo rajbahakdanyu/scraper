@@ -15,6 +15,7 @@ import (
 
 	"github.com/rajbahakdanyu/scraper/internal/model"
 	"github.com/rajbahakdanyu/scraper/internal/netutil"
+	"github.com/rajbahakdanyu/scraper/internal/parser/fetch"
 )
 
 const apiBase = "https://turbo.cr"
@@ -58,28 +59,8 @@ func (s *Scraper) Parse(ctx context.Context, rawURL string) ([]model.MediaItem, 
 	return nil, fmt.Errorf("turbo: unsupported URL format (expected /a/, /d/, or /v/): %s", rawURL)
 }
 
-// fetchDocWithRetry fetches a page, retrying transient failures (5xx,
-// network errors) with backoff; non-retryable HTTP statuses (404, ...) stop
-// after one attempt.
-func fetchDocWithRetry(ctx context.Context, s *Scraper, rawURL string) (io.Reader, error) {
-	var body io.Reader
-	err := netutil.Retry(ctx, netutil.MaxRetries, netutil.RetryBaseDelay, s.sleeper, func() error {
-		var fetchErr error
-		body, fetchErr = netutil.GetDoc(ctx, s.client, rawURL, userAgent)
-		if fetchErr != nil {
-			var statusErr *netutil.HTTPStatusError
-			if errors.As(fetchErr, &statusErr) && !model.IsRetryableStatus(statusErr.StatusCode) {
-				return model.NewNonRetryable(fetchErr)
-			}
-			return fetchErr
-		}
-		return nil
-	})
-	return body, err
-}
-
 func (s *Scraper) parseAlbum(ctx context.Context, rawURL string) ([]model.MediaItem, error) {
-	body, err := fetchDocWithRetry(ctx, s, rawURL)
+	body, err := fetch.Doc(ctx, s.client, rawURL, userAgent, s.sleeper)
 	if err != nil {
 		return nil, fmt.Errorf("turbo: fetch album page: %w", err)
 	}
@@ -93,7 +74,7 @@ func (s *Scraper) parseAlbum(ctx context.Context, rawURL string) ([]model.MediaI
 		return nil, fmt.Errorf("turbo: parse album page: %w", err)
 	}
 
-	albumID := extractID(rawURL)
+	albumID := netutil.PathSlug(rawURL)
 	if albumID == "" {
 		return nil, fmt.Errorf("turbo: could not extract album ID from %s", rawURL)
 	}
@@ -184,12 +165,12 @@ func (s *Scraper) resolveFile(ctx context.Context, fileID string) func(context.C
 }
 
 func (s *Scraper) parseFile(ctx context.Context, rawURL string) ([]model.MediaItem, error) {
-	fileID := extractID(rawURL)
+	fileID := netutil.PathSlug(rawURL)
 	if fileID == "" {
 		return nil, fmt.Errorf("turbo: could not extract file ID from %s", rawURL)
 	}
 
-	body, err := fetchDocWithRetry(ctx, s, rawURL)
+	body, err := fetch.Doc(ctx, s.client, rawURL, userAgent, s.sleeper)
 	if err != nil {
 		return nil, fmt.Errorf("turbo: fetch file page: %w", err)
 	}
@@ -246,15 +227,4 @@ func (s *Scraper) signURL(ctx context.Context, fileID string) (string, error) {
 	}
 
 	return result.URL, nil
-}
-
-func extractID(rawURL string) string {
-	if idx := strings.IndexByte(rawURL, '#'); idx >= 0 {
-		rawURL = rawURL[:idx]
-	}
-	if idx := strings.IndexByte(rawURL, '?'); idx >= 0 {
-		rawURL = rawURL[:idx]
-	}
-	parts := strings.Split(strings.TrimRight(rawURL, "/"), "/")
-	return parts[len(parts)-1]
 }

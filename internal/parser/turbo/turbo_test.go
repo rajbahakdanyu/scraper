@@ -336,25 +336,6 @@ func TestTurboResolve404IsPermanentNotRetried(t *testing.T) {
 	}
 }
 
-func TestExtractID(t *testing.T) {
-	tests := []struct {
-		url  string
-		want string
-	}{
-		{"https://turbo.cr/a/g2UEE4mQilU", "g2UEE4mQilU"},
-		{"https://turbo.cr/d/VB8aLAFdShZPw", "VB8aLAFdShZPw"},
-		{"https://turbo.cr/v/VB8aLAFdShZPw", "VB8aLAFdShZPw"},
-		{"https://turbo.cr/a/g2UEE4mQilU?ref=1", "g2UEE4mQilU"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.url, func(t *testing.T) {
-			if got := extractID(tt.url); got != tt.want {
-				t.Errorf("extractID(%q) = %q, want %q", tt.url, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestScraperName(t *testing.T) {
 	s := newTestScraper()
 	if s.Name() != "turbo" {

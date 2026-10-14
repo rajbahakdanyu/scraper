@@ -11,6 +11,7 @@ import (
 
 	"github.com/rajbahakdanyu/scraper/internal/model"
 	"github.com/rajbahakdanyu/scraper/internal/netutil"
+	"github.com/rajbahakdanyu/scraper/internal/parser/fetch"
 )
 
 const apiBase = "https://goonbox.cr/api"
@@ -89,12 +90,7 @@ func (s *Scraper) Parse(ctx context.Context, albumURL string) ([]model.MediaItem
 		// whole page of the album.
 		err := netutil.Retry(ctx, netutil.MaxRetries, netutil.RetryBaseDelay, s.sleeper, func() error {
 			result = albumPage{}
-			err := netutil.GetJSON(ctx, s.client, url, s.userAgent, &result)
-			var statusErr *netutil.HTTPStatusError
-			if errors.As(err, &statusErr) && !model.IsRetryableStatus(statusErr.StatusCode) {
-				return model.NewNonRetryable(err)
-			}
-			return err
+			return fetch.Classify(netutil.GetJSON(ctx, s.client, url, s.userAgent, &result))
 		})
 		if err != nil {
 			return pageResult{index: page - 1, err: err, fetched: true}

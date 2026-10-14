@@ -714,16 +714,10 @@ func resolveURL(args []string, urlFlag, siteName string) (string, error) {
 	return targetURL, nil
 }
 
-// extractSlug gets the last path segment from a URL, used for naming
-// album subfolders.
-func extractSlug(rawURL string) string {
-	return netutil.PathSlug(rawURL)
-}
-
 // albumSlugFor picks the subfolder name for a multi-item download. YouTube
 // playlist URLs don't have a unique path segment (they're all just
-// "/playlist?list=..."), so extractSlug's generic "last path segment"
-// logic would put every playlist in the same "playlist" folder — use the
+// "/playlist?list=..."), so the generic "last path segment" logic would
+// put every playlist in the same "playlist" folder — use the
 // playlist ID instead for those. Plain video URLs all share the "watch"
 // path, so fall back to the video ID for those too.
 func albumSlugFor(siteName, targetURL string) string {
@@ -735,7 +729,7 @@ func albumSlugFor(siteName, targetURL string) string {
 			return videoID
 		}
 	}
-	return extractSlug(targetURL)
+	return netutil.PathSlug(targetURL)
 }
 
 // siteDomains maps each supported scraper to the known domains it operates
