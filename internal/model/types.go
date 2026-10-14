@@ -52,30 +52,8 @@ type MediaItem struct {
 	// and display only. Resolve must be safe to call more than once (the
 	// downloader re-resolves after a 403) and from concurrent download
 	// goroutines. A returned error is retried with backoff unless it is a
-	// *PermanentError, which fails the item immediately.
+	// *NonRetryableError, which fails the item immediately.
 	Resolve func(ctx context.Context) (string, error)
-}
-
-// PermanentError marks an error returned by MediaItem.Resolve as
-// permanent: the file is gone upstream or the resolve request can never
-// succeed, so the downloader fails the item immediately instead of
-// retrying with backoff. Transient failures (network errors, 5xx, 429)
-// are returned unwrapped and retried like any other transient download
-// failure.
-type PermanentError struct{ Err error }
-
-func (e *PermanentError) Error() string { return e.Err.Error() }
-func (e *PermanentError) Unwrap() error { return e.Err }
-
-func WrapPermanent(err error) error {
-	if err == nil {
-		return nil
-	}
-	var nonRetryable *NonRetryableError
-	if errors.As(err, &nonRetryable) {
-		return &PermanentError{Err: err}
-	}
-	return err
 }
 
 type CancelledError struct{ URL string }

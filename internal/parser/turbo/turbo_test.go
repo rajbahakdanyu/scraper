@@ -330,9 +330,9 @@ func TestTurboResolve404IsPermanentNotRetried(t *testing.T) {
 	}
 
 	_, err = items[0].Resolve(context.Background())
-	var permanent *model.PermanentError
+	var permanent *model.NonRetryableError
 	if !errors.As(err, &permanent) {
-		t.Fatalf("expected a PermanentError for a 404 sign response, got %T: %v", err, err)
+		t.Fatalf("expected a NonRetryableError for a 404 sign response, got %T: %v", err, err)
 	}
 }
 

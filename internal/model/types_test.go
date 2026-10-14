@@ -41,35 +41,6 @@ func TestTitleOfFallsBackToURL(t *testing.T) {
 	}
 }
 
-func TestPermanentError(t *testing.T) {
-	inner := errors.New("file deleted upstream")
-	err := error(&PermanentError{Err: inner})
-	if err.Error() != "file deleted upstream" {
-		t.Errorf("unexpected message: %v", err)
-	}
-	if !errors.Is(err, inner) {
-		t.Error("PermanentError should unwrap to its inner error")
-	}
-	var pe *PermanentError
-	if !errors.As(fmt.Errorf("resolve signed URL: %w", err), &pe) {
-		t.Error("PermanentError should be discoverable through wrapping")
-	}
-}
-
-func TestWrapPermanent(t *testing.T) {
-	inner := NewNonRetryable(errors.New("permanent"))
-	wrapped := WrapPermanent(inner)
-	var permanent *PermanentError
-	if !errors.As(wrapped, &permanent) {
-		t.Fatalf("WrapPermanent() returned %T, want PermanentError", wrapped)
-	}
-
-	transient := errors.New("transient")
-	if got := WrapPermanent(transient); got != transient {
-		t.Fatalf("WrapPermanent() changed transient error")
-	}
-}
-
 func TestCancelledError(t *testing.T) {
 	err := &CancelledError{URL: "https://example.com/video.mp4"}
 	if got, want := err.Error(), "download cancelled: https://example.com/video.mp4"; got != want {

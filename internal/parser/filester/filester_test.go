@@ -169,7 +169,7 @@ func TestResolveFileUsesContextAwareBackoff(t *testing.T) {
 // TestParseFilesterFolderResolverClassifiesPermanentErrors keeps the
 // permanent-vs-transient classification when resolution moves into the
 // lazy resolver: a 404 from the token endpoint (the file is gone) is not
-// retried, and surfaces as a model.PermanentError so the downloader fails
+// retried, and surfaces as a model.NonRetryableError so the downloader fails
 // the item immediately instead of retrying with backoff.
 func TestParseFilesterFolderResolverClassifiesPermanentErrors(t *testing.T) {
 	var tokenRequests int32
@@ -204,9 +204,9 @@ func TestParseFilesterFolderResolverClassifiesPermanentErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected resolver error for a deleted file")
 	}
-	var pe *model.PermanentError
+	var pe *model.NonRetryableError
 	if !errors.As(err, &pe) {
-		t.Errorf("expected a model.PermanentError so the downloader fails fast, got %T: %v", err, err)
+		t.Errorf("expected a model.NonRetryableError so the downloader fails fast, got %T: %v", err, err)
 	}
 	if got := atomic.LoadInt32(&tokenRequests); got != 1 {
 		t.Errorf("permanent 404 must not be retried, got %d token requests", got)
@@ -251,7 +251,7 @@ func TestParseFilesterFolderResolverLeavesRetryToDownloader(t *testing.T) {
 
 	if _, err := items[0].Resolve(context.Background()); err == nil {
 		t.Fatal("expected the transient 500 to surface from a single attempt")
-	} else if pe := (*model.PermanentError)(nil); errors.As(err, &pe) {
+	} else if pe := (*model.NonRetryableError)(nil); errors.As(err, &pe) {
 		t.Fatalf("a 500 must stay retryable, got permanent: %v", err)
 	}
 	if got := atomic.LoadInt32(&tokenRequests); got != 1 {

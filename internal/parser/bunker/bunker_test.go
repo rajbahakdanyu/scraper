@@ -169,11 +169,10 @@ func TestParseBunkerAlbum(t *testing.T) {
 }
 
 // TestResolve404IsPermanentNotRetried: when the signing API 404s (the file
-// is gone upstream), the resolver surfaces a model.PermanentError — the
+// is gone upstream), the resolver surfaces a model.NonRetryableError — the
 // classification the downloader uses to fail the item immediately — and
-// the API sees exactly one request. The downloader half (a PermanentError
-// fails the download with no retries) is covered by the downloader's
-// TestDownloadPermanentResolverErrorFailsImmediately.
+// the API sees exactly one request. The downloader half is covered by the
+// downloader's TestDownloadPermanentResolverErrorFailsImmediately.
 func TestResolve404IsPermanentNotRetried(t *testing.T) {
 	var apiRequests int32
 
@@ -209,9 +208,9 @@ func TestResolve404IsPermanentNotRetried(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected resolver error for a deleted file")
 	}
-	var pe *model.PermanentError
+	var pe *model.NonRetryableError
 	if !errors.As(err, &pe) {
-		t.Errorf("expected a model.PermanentError so the downloader fails fast, got %T: %v", err, err)
+		t.Errorf("expected a model.NonRetryableError so the downloader fails fast, got %T: %v", err, err)
 	}
 	if got := atomic.LoadInt32(&apiRequests); got != 1 {
 		t.Errorf("expected exactly 1 API request (no retries), got %d", got)

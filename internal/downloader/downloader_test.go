@@ -1043,7 +1043,7 @@ func TestDownloadRetriesTransientResolverError(t *testing.T) {
 
 // TestDownloadPermanentResolverErrorFailsImmediately: a resolver that
 // reports the file as permanently gone (e.g. a 404 from the resolve API,
-// wrapped in model.PermanentError) fails without retries and without ever
+// a model.NonRetryableError) fails without retries and without ever
 // hitting the download server.
 func TestDownloadPermanentResolverErrorFailsImmediately(t *testing.T) {
 	var requests int32
@@ -1059,7 +1059,7 @@ func TestDownloadPermanentResolverErrorFailsImmediately(t *testing.T) {
 		Title: "gone.bin",
 		Resolve: func(ctx context.Context) (string, error) {
 			atomic.AddInt32(&resolveCalls, 1)
-			return "", &model.PermanentError{Err: fmt.Errorf("file deleted upstream")}
+			return "", model.NewNonRetryable(fmt.Errorf("file deleted upstream"))
 		},
 	}
 

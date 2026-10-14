@@ -216,10 +216,6 @@ func (d *Downloader) Download(item model.MediaItem, dest string) (string, error)
 		if item.Resolve != nil && resolvedURL == "" {
 			u, err := item.Resolve(ctx)
 			if err != nil {
-				var pe *model.PermanentError
-				if errors.As(err, &pe) {
-					return model.NewNonRetryable(err)
-				}
 				return err
 			}
 			resolvedURL = u

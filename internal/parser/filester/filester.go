@@ -260,7 +260,7 @@ func (s *Scraper) lazyResolver(slug, knownName string) func(context.Context) (st
 	return func(ctx context.Context) (string, error) {
 		item, err := s.resolveFileOnce(ctx, slug, knownName)
 		if err != nil {
-			return "", model.WrapPermanent(err)
+			return "", err
 		}
 		return item.URL, nil
 	}
@@ -385,7 +385,7 @@ func (s *Scraper) resolveFile(ctx context.Context, slug, knownName string) (mode
 		return err
 	})
 	if err != nil {
-		return model.MediaItem{}, model.WrapPermanent(err)
+		return model.MediaItem{}, err
 	}
 	return item, nil
 }

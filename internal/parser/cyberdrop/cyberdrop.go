@@ -189,8 +189,7 @@ func (s *Scraper) parseFile(ctx context.Context, pageURL, slug string) (model.Me
 		MimeType: info.Type,
 		Type:     model.MediaTypeForName(title),
 		Resolve: func(ctx context.Context) (string, error) {
-			signedURL, err := s.fetchSignedURL(ctx, info.AuthURL, slug)
-			return signedURL, model.WrapPermanent(err)
+			return s.fetchSignedURL(ctx, info.AuthURL, slug)
 		},
 	}, nil
 }
@@ -242,10 +241,9 @@ func (s *Scraper) parseAlbum(ctx context.Context, albumPageURL, slug string) ([]
 			Resolve: func(ctx context.Context) (string, error) {
 				info, err := s.fetchFileInfo(ctx, fileSlug, albumPageURL)
 				if err != nil {
-					return "", model.WrapPermanent(err)
+					return "", err
 				}
-				signedURL, err := s.fetchSignedURL(ctx, info.AuthURL, fileSlug)
-				return signedURL, model.WrapPermanent(err)
+				return s.fetchSignedURL(ctx, info.AuthURL, fileSlug)
 			},
 		})
 	}

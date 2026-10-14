@@ -294,8 +294,7 @@ func (s *Scraper) parseFilePage(ctx context.Context, fileURL string) (model.Medi
 		MimeType: "application/octet-stream",
 		Type:     model.MediaTypeForName(title),
 		Resolve: func(ctx context.Context) (string, error) {
-			signedURL, err := s.getSignedMediaURL(ctx, dlURL, fileID, title)
-			return signedURL, model.WrapPermanent(err)
+			return s.getSignedMediaURL(ctx, dlURL, fileID, title)
 		},
 	}, nil
 }

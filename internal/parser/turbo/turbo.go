@@ -197,8 +197,7 @@ func decodeJSString(raw string) string {
 
 func (s *Scraper) resolveFile(ctx context.Context, fileID string) func(context.Context) (string, error) {
 	return func(ctx context.Context) (string, error) {
-		u, err := s.signURL(ctx, fileID)
-		return u, model.WrapPermanent(err)
+		return s.signURL(ctx, fileID)
 	}
 }
 
