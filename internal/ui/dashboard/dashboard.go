@@ -300,7 +300,10 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
-		d.refreshRows()
+		// The fast refresh tick redraws rows on its own while it runs.
+		if !d.refreshTickActive {
+			d.refreshRows()
+		}
 		return d, tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg { return tickMsg(t) })
 
 	case scrapeResultMsg:
@@ -1056,24 +1059,15 @@ func (d *Dashboard) refreshRows() {
 		}
 		st := d.states[i]
 		if st.isHeader {
-			var done, failed int
-			for j := i + 1; j < len(d.states); j++ {
-				if d.states[j].isHeader {
-					break
-				}
+			var done, failed, total int
+			for j := i + 1; j < len(d.states) && !d.states[j].isHeader; j++ {
+				total++
 				switch d.states[j].status {
 				case model.StatusCompleted:
 					done++
 				case model.StatusFailed:
 					failed++
 				}
-			}
-			total := 0
-			for j := i + 1; j < len(d.states); j++ {
-				if d.states[j].isHeader {
-					break
-				}
-				total++
 			}
 			pct := 0
 			if total > 0 {
