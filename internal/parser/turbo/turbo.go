@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -60,13 +59,9 @@ func (s *Scraper) Parse(ctx context.Context, rawURL string) ([]model.MediaItem, 
 }
 
 func (s *Scraper) parseAlbum(ctx context.Context, rawURL string) ([]model.MediaItem, error) {
-	body, err := fetch.Doc(ctx, s.client, rawURL, userAgent, s.sleeper)
+	html, err := fetch.Bytes(ctx, s.client, rawURL, userAgent, s.sleeper)
 	if err != nil {
 		return nil, fmt.Errorf("turbo: fetch album page: %w", err)
-	}
-	html, err := io.ReadAll(body)
-	if err != nil {
-		return nil, fmt.Errorf("turbo: read album page: %w", err)
 	}
 
 	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(html))

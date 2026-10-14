@@ -2,6 +2,7 @@
 package fetch
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -31,10 +32,19 @@ func JSON(ctx context.Context, client *http.Client, url, userAgent string, sleep
 
 // Doc GETs an HTML page, retrying transient failures with backoff.
 func Doc(ctx context.Context, client *http.Client, url, userAgent string, sleeper netutil.Sleeper) (io.Reader, error) {
-	var body io.Reader
+	body, err := Bytes(ctx, client, url, userAgent, sleeper)
+	if err != nil {
+		return nil, err
+	}
+	return bytes.NewReader(body), nil
+}
+
+// Bytes GETs a page body, retrying transient failures with backoff.
+func Bytes(ctx context.Context, client *http.Client, url, userAgent string, sleeper netutil.Sleeper) ([]byte, error) {
+	var body []byte
 	err := netutil.Retry(ctx, netutil.MaxRetries, netutil.RetryBaseDelay, sleeper, func() error {
 		var fetchErr error
-		body, fetchErr = netutil.GetDoc(ctx, client, url, userAgent)
+		body, fetchErr = netutil.GetBytes(ctx, client, url, userAgent)
 		return Classify(fetchErr)
 	})
 	return body, err

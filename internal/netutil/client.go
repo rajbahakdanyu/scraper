@@ -86,6 +86,15 @@ func PostJSON(ctx context.Context, client *http.Client, url string, headers map[
 
 // GetDoc fetches a document and returns its body limited to 32 MiB.
 func GetDoc(ctx context.Context, client *http.Client, url, userAgent string) (io.Reader, error) {
+	body, err := GetBytes(ctx, client, url, userAgent)
+	if err != nil {
+		return nil, err
+	}
+	return bytes.NewReader(body), nil
+}
+
+// GetBytes fetches a document body, limited to 32 MiB.
+func GetBytes(ctx context.Context, client *http.Client, url, userAgent string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
@@ -105,7 +114,7 @@ func GetDoc(ctx context.Context, client *http.Client, url, userAgent string) (io
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
-	return bytes.NewReader(body), nil
+	return body, nil
 }
 
 type Policy struct {
