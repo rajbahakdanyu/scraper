@@ -446,6 +446,9 @@ func openLogFile(path string) error {
 	if err != nil {
 		return fmt.Errorf("open log file: %w", err)
 	}
+	if previous, ok := logFile.(io.Closer); ok {
+		_ = previous.Close()
+	}
 	logFile = f
 	return nil
 }
@@ -533,23 +536,11 @@ func NewRootCmd() *cobra.Command {
 				return err
 			}
 
-			runOnce := func() error {
-				if len(entries) == 1 && !opts.inputFileSet {
-					targetURL := entries[0].URL
-					site, err := detectSite(targetURL)
-					if err != nil {
-						return err
-					}
-					return runSingle(opts, site, targetURL)
-				}
-				return runBatch(opts, entries)
-			}
-
 			if opts.watch > 0 {
 				opts = applyWatchDefaults(opts)
-				return watchLoop(runOnce, opts.watch)
+				return watchLoop(newRunOnce(opts, entries), opts.watch)
 			}
-			return runOnce()
+			return newRunOnce(opts, entries)()
 		},
 	}
 
@@ -750,13 +741,45 @@ func detectSite(rawURL string) (string, error) {
 	return "", fmt.Errorf("could not auto-detect a site for %q (available: youtube, cyberdrop, bunker, goonbox, filester, pixeldrain, turbo)", rawURL)
 }
 
+// configLoader is a test seam for loadGlobalConfig.
+var configLoader = loadGlobalConfig
+
+// newRunOnce returns the root command's run step. The config (log file,
+// browser cookies, ...) is loaded once and reused by every --watch
+// iteration.
+func newRunOnce(opts globalOptions, entries []batchEntry) func() error {
+	var cfg *config.Config
+	return func() error {
+		if cfg == nil {
+			loaded, err := configLoader(opts)
+			if err != nil {
+				return err
+			}
+			cfg = loaded
+		}
+		if len(entries) == 1 && !opts.inputFileSet {
+			targetURL := entries[0].URL
+			site, err := detectSite(targetURL)
+			if err != nil {
+				return err
+			}
+			return runSingleWithConfig(cfg, opts, site, targetURL)
+		}
+		return runBatchWithConfig(cfg, opts, entries)
+	}
+}
+
 // runSingle runs one URL with the site's scraper built from the loaded
 // config, so --proxy and cookies apply to scraping as well as downloading.
 func runSingle(opts globalOptions, site, targetURL string) error {
-	cfg, err := loadGlobalConfig(opts)
+	cfg, err := configLoader(opts)
 	if err != nil {
 		return err
 	}
+	return runSingleWithConfig(cfg, opts, site, targetURL)
+}
+
+func runSingleWithConfig(cfg *config.Config, opts globalOptions, site, targetURL string) error {
 	reg, err := scraperRegistry(cfg.Proxy, nil)
 	if err != nil {
 		return err
@@ -1019,11 +1042,14 @@ func batchDestSlug(siteName string, e batchEntry) string {
 // soon as each album finishes — so token-based URLs from early albums don't
 // expire before later albums are scraped.
 func runBatch(opts globalOptions, entries []batchEntry) error {
-	cfg, err := loadGlobalConfig(opts)
+	cfg, err := configLoader(opts)
 	if err != nil {
 		return err
 	}
+	return runBatchWithConfig(cfg, opts, entries)
+}
 
+func runBatchWithConfig(cfg *config.Config, opts globalOptions, entries []batchEntry) error {
 	reg, err := batchScraperRegistry(cfg.Proxy, cfg.ParsedCookies())
 	if err != nil {
 		return err

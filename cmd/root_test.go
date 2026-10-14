@@ -1408,6 +1408,43 @@ func TestSiteSubcommandScrapesThroughProxy(t *testing.T) {
 	}
 }
 
+func TestRunOnceLoadsConfigOnceAcrossWatchIterations(t *testing.T) {
+	calls := 0
+	orig := configLoader
+	configLoader = func(opts globalOptions) (*config.Config, error) {
+		calls++
+		return &config.Config{OutputDir: t.TempDir()}, nil
+	}
+	t.Cleanup(func() { configLoader = orig })
+
+	runOnce := newRunOnce(globalOptions{}, []batchEntry{{URL: "https://unsupported.example/x"}})
+	for range 3 {
+		if err := runOnce(); err == nil {
+			t.Fatal("expected an unsupported-site error")
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("config (log file, browser cookies) loaded %d times, want 1", calls)
+	}
+}
+
+func TestOpenLogFileClosesPreviousFile(t *testing.T) {
+	orig := logFile
+	t.Cleanup(func() { logFile = orig })
+	dir := t.TempDir()
+	if err := openLogFile(filepath.Join(dir, "a.log")); err != nil {
+		t.Fatal(err)
+	}
+	first := logFile.(*os.File)
+	if err := openLogFile(filepath.Join(dir, "b.log")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := first.Write([]byte("x")); err == nil {
+		t.Fatal("reopening the log must close the previous file")
+	}
+	_ = logFile.(*os.File).Close()
+}
+
 func TestNewRootCmdHasQualityAndAudioOnlyFlags(t *testing.T) {
 	root := NewRootCmd()
 	for _, name := range []string{"quality", "audio-only"} {
