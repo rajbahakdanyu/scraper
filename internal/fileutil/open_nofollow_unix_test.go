@@ -3,6 +3,7 @@
 package fileutil
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -38,7 +39,7 @@ func TestOpenFileNoFollowRejectsSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := OpenFileNoFollow(link, os.O_WRONLY, 0644)
-	if !IsSymlinkError(err) {
+	if !errors.Is(err, errSymlink) {
 		t.Fatalf("err = %v, want symlink rejection", err)
 	}
 }

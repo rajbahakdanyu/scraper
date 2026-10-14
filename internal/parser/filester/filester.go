@@ -49,28 +49,16 @@ type Scraper struct {
 	sleeper   netutil.Sleeper
 }
 
-// NewFilesterScraper creates a new Filester scraper using the default HTTP client.
-func NewFilesterScraper() *Scraper {
-	client, _ := netutil.NewPublicClient(30 * time.Second)
-	return &Scraper{
-		client:    client,
-		userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-		baseURL:   defaultBaseURL,
-		cdnURLs:   defaultCDNURLs,
-		sleeper:   netutil.RealSleeper{},
-	}
-}
-
-// NewFilesterScraperWithProxy creates a Filester scraper that routes all
-// HTTP requests through the given proxy URL.
-func NewFilesterScraperWithProxy(proxyURL string) (*Scraper, error) {
-	client, err := netutil.NewPublicClientWithProxy(30*time.Second, proxyURL)
+// NewFilesterScraperWithOptions creates a Filester scraper whose requests
+// go through proxyURL (when set) and carry cookies.
+func NewFilesterScraperWithOptions(proxyURL string, cookies []*http.Cookie) (*Scraper, error) {
+	client, err := netutil.NewScraperClient(proxyURL, cookies)
 	if err != nil {
 		return nil, err
 	}
 	return &Scraper{
 		client:    client,
-		userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+		userAgent: netutil.BrowserUserAgent,
 		baseURL:   defaultBaseURL,
 		cdnURLs:   defaultCDNURLs,
 		sleeper:   netutil.RealSleeper{},
@@ -80,16 +68,6 @@ func NewFilesterScraperWithProxy(proxyURL string) (*Scraper, error) {
 // SetSleeper replaces the delay implementation. Call this before parsing,
 // not concurrently with it.
 func (s *Scraper) SetSleeper(sleeper netutil.Sleeper) { s.sleeper = sleeper }
-
-func (s *Scraper) SetCookies(cookies []*http.Cookie) {
-	s.client = netutil.WithCookies(s.client, cookies)
-}
-
-func NewFilesterScraperWithCookies(cookies []*http.Cookie) *Scraper {
-	s := NewFilesterScraper()
-	s.SetCookies(cookies)
-	return s
-}
 
 func (s *Scraper) Name() string {
 	return "filester"

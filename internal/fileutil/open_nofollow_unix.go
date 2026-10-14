@@ -20,9 +20,3 @@ func OpenFileNoFollow(path string, flag int, perm os.FileMode) (*os.File, error)
 	}
 	return f, err
 }
-
-// IsSymlinkError reports whether err is an error caused by an attempt to
-// open a symbolic link when O_NOFOLLOW was requested.
-func IsSymlinkError(err error) bool {
-	return errors.Is(err, errSymlink)
-}

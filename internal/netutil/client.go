@@ -242,16 +242,26 @@ func (p *Policy) dialContext(dialer *net.Dialer, readTimeout time.Duration) func
 	}
 }
 
-func NewPublicClient(timeout time.Duration, allowedPrivateURLs ...string) (*http.Client, error) {
-	return newPublicClientWithConcurrency(1, timeout, timeout, timeout, "", allowedPrivateURLs...)
-}
-
 func NewPublicStreamingClient(responseHeaderTimeout time.Duration, allowedPrivateURLs ...string) (*http.Client, error) {
 	return newPublicClientWithConcurrency(1, 0, responseHeaderTimeout, responseHeaderTimeout, "", allowedPrivateURLs...)
 }
 
-func NewPublicClientWithProxy(timeout time.Duration, proxyURL string) (*http.Client, error) {
-	return newPublicClientWithConcurrency(1, timeout, timeout, timeout, proxyURL)
+// BrowserUserAgent is what the site scrapers send; several hosts reject
+// non-browser agents on their page and API endpoints.
+const BrowserUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+
+// ScraperTimeout bounds each scraper page/API request.
+const ScraperTimeout = 30 * time.Second
+
+// NewScraperClient returns the public-network client a site scraper uses,
+// routed through proxyURL when set and carrying cookies when given. It can
+// only fail on an invalid proxy URL.
+func NewScraperClient(proxyURL string, cookies []*http.Cookie) (*http.Client, error) {
+	client, err := newPublicClientWithConcurrency(1, ScraperTimeout, ScraperTimeout, ScraperTimeout, proxyURL)
+	if err != nil {
+		return nil, err
+	}
+	return WithCookies(client, cookies), nil
 }
 
 func NewPublicStreamingClientWithProxy(responseHeaderTimeout time.Duration, proxyURL string) (*http.Client, error) {

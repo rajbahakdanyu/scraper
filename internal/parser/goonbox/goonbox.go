@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/rajbahakdanyu/scraper/internal/model"
 	"github.com/rajbahakdanyu/scraper/internal/netutil"
@@ -54,26 +53,16 @@ type pageResult struct {
 	fetched    bool
 }
 
-func NewGoonBoxScraper() *Scraper {
-	client, _ := netutil.NewPublicClient(30 * time.Second)
-	return &Scraper{
-		client:    client,
-		userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-		baseURL:   apiBase,
-		sleeper:   netutil.RealSleeper{},
-	}
-}
-
-// NewGoonBoxScraperWithProxy creates a GoonBox scraper that routes all
-// HTTP requests through the given proxy URL.
-func NewGoonBoxScraperWithProxy(proxyURL string) (*Scraper, error) {
-	client, err := netutil.NewPublicClientWithProxy(30*time.Second, proxyURL)
+// NewGoonBoxScraperWithOptions creates a GoonBox scraper whose requests go
+// through proxyURL (when set) and carry cookies.
+func NewGoonBoxScraperWithOptions(proxyURL string, cookies []*http.Cookie) (*Scraper, error) {
+	client, err := netutil.NewScraperClient(proxyURL, cookies)
 	if err != nil {
 		return nil, err
 	}
 	return &Scraper{
 		client:    client,
-		userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+		userAgent: netutil.BrowserUserAgent,
 		baseURL:   apiBase,
 		sleeper:   netutil.RealSleeper{},
 	}, nil
@@ -82,16 +71,6 @@ func NewGoonBoxScraperWithProxy(proxyURL string) (*Scraper, error) {
 // SetSleeper replaces the retry delay implementation. Call this before
 // parsing, not concurrently with it.
 func (s *Scraper) SetSleeper(sleeper netutil.Sleeper) { s.sleeper = sleeper }
-
-func (s *Scraper) SetCookies(cookies []*http.Cookie) {
-	s.client = netutil.WithCookies(s.client, cookies)
-}
-
-func NewGoonBoxScraperWithCookies(cookies []*http.Cookie) *Scraper {
-	s := NewGoonBoxScraper()
-	s.SetCookies(cookies)
-	return s
-}
 
 func (s *Scraper) Name() string {
 	return "goonbox"

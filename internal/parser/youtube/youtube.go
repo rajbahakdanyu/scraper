@@ -43,17 +43,14 @@ type Scraper struct {
 // NewYouTubeScraper creates a YouTube scraper using the kkdai/youtube library
 // for real stream URL extraction and downloads.
 func NewYouTubeScraper() *Scraper {
-	client, _ := netutil.NewPublicClient(defaultReadTimeout)
-	return &Scraper{
-		video:  &ytdl.Client{HTTPClient: client},
-		parsed: make(map[string]*ytdl.Video),
-	}
+	s, _ := NewYouTubeScraperWithOptions("", nil)
+	return s
 }
 
-// NewYouTubeScraperWithProxy creates a YouTube scraper whose metadata
-// requests go through proxyURL.
-func NewYouTubeScraperWithProxy(proxyURL string) (*Scraper, error) {
-	client, err := netutil.NewPublicClientWithProxy(defaultReadTimeout, proxyURL)
+// NewYouTubeScraperWithOptions creates a YouTube scraper whose metadata
+// requests go through proxyURL (when set) and carry cookies.
+func NewYouTubeScraperWithOptions(proxyURL string, cookies []*http.Cookie) (*Scraper, error) {
+	client, err := netutil.NewScraperClient(proxyURL, cookies)
 	if err != nil {
 		return nil, err
 	}
@@ -61,10 +58,6 @@ func NewYouTubeScraperWithProxy(proxyURL string) (*Scraper, error) {
 		video:  &ytdl.Client{HTTPClient: client},
 		parsed: make(map[string]*ytdl.Video),
 	}, nil
-}
-
-func (s *Scraper) SetCookies(cookies []*http.Cookie) {
-	s.video.HTTPClient = netutil.WithCookies(s.video.HTTPClient, cookies)
 }
 
 func (s *Scraper) Name() string {

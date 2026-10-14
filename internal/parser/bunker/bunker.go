@@ -71,27 +71,16 @@ func dlPolicyFor(pageURL string) *netutil.Policy {
 	return netutil.NewStrictPolicy(allowed...)
 }
 
-// NewBunkerScraper creates a new Bunker scraper using the default HTTP client.
-func NewBunkerScraper() *Scraper {
-	client, _ := netutil.NewPublicClient(30 * time.Second)
-	return &Scraper{
-		client:    client,
-		userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-		signURL:   "https://glb-apisign.cdn.cr/sign",
-		sleeper:   netutil.RealSleeper{},
-	}
-}
-
-// NewBunkerScraperWithProxy creates a Bunker scraper that routes all
-// HTTP requests through the given proxy URL.
-func NewBunkerScraperWithProxy(proxyURL string) (*Scraper, error) {
-	client, err := netutil.NewPublicClientWithProxy(30*time.Second, proxyURL)
+// NewBunkerScraperWithOptions creates a Bunker scraper whose requests go
+// through proxyURL (when set) and carry cookies.
+func NewBunkerScraperWithOptions(proxyURL string, cookies []*http.Cookie) (*Scraper, error) {
+	client, err := netutil.NewScraperClient(proxyURL, cookies)
 	if err != nil {
 		return nil, err
 	}
 	return &Scraper{
 		client:    client,
-		userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+		userAgent: netutil.BrowserUserAgent,
 		signURL:   "https://glb-apisign.cdn.cr/sign",
 		sleeper:   netutil.RealSleeper{},
 	}, nil
@@ -100,16 +89,6 @@ func NewBunkerScraperWithProxy(proxyURL string) (*Scraper, error) {
 // SetSleeper replaces the retry delay implementation. Call this before
 // parsing, not concurrently with it.
 func (s *Scraper) SetSleeper(sleeper netutil.Sleeper) { s.sleeper = sleeper }
-
-func (s *Scraper) SetCookies(cookies []*http.Cookie) {
-	s.client = netutil.WithCookies(s.client, cookies)
-}
-
-func NewBunkerScraperWithCookies(cookies []*http.Cookie) *Scraper {
-	s := NewBunkerScraper()
-	s.SetCookies(cookies)
-	return s
-}
 
 func (s *Scraper) Name() string {
 	return "bunker"

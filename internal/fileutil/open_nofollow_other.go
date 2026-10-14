@@ -24,8 +24,3 @@ func OpenFileNoFollow(path string, flag int, perm os.FileMode) (*os.File, error)
 	// #nosec G304 -- callers pass internally allocated paths; this helper only adds the symlink check.
 	return os.OpenFile(path, flag, perm)
 }
-
-// IsSymlinkError reports whether err is caused by a symlink rejection.
-func IsSymlinkError(err error) bool {
-	return errors.Is(err, errSymlink)
-}

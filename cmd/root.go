@@ -653,45 +653,51 @@ Fish:  scraper completion fish | source`,
 	return root
 }
 
-// scraperRegistry maps a site name to its scraper, used by detectSite's
-// auto-detect path.
-func scraperRegistry(proxyURL string, cookies []*http.Cookie) (map[string]model.Scraper, error) {
-	reg := map[string]model.Scraper{}
-	constructors := []struct {
-		name    string
-		plain   func() model.Scraper
-		cookies func([]*http.Cookie) model.Scraper
-		proxy   func(string) (model.Scraper, error)
-	}{
-		{"youtube", func() model.Scraper { return youtube.NewYouTubeScraper() }, func(c []*http.Cookie) model.Scraper {
-			s := youtube.NewYouTubeScraper()
-			s.SetCookies(c)
-			return s
-		}, func(p string) (model.Scraper, error) { return youtube.NewYouTubeScraperWithProxy(p) }},
-		{"cyberdrop", func() model.Scraper { return cyberdrop.NewCyberDropScraper() }, func(c []*http.Cookie) model.Scraper { return cyberdrop.NewCyberDropScraperWithCookies(c) }, func(p string) (model.Scraper, error) { return cyberdrop.NewCyberDropScraperWithProxy(p) }},
-		{"bunker", func() model.Scraper { return bunker.NewBunkerScraper() }, func(c []*http.Cookie) model.Scraper { return bunker.NewBunkerScraperWithCookies(c) }, func(p string) (model.Scraper, error) { return bunker.NewBunkerScraperWithProxy(p) }},
-		{"goonbox", func() model.Scraper { return goonbox.NewGoonBoxScraper() }, func(c []*http.Cookie) model.Scraper { return goonbox.NewGoonBoxScraperWithCookies(c) }, func(p string) (model.Scraper, error) { return goonbox.NewGoonBoxScraperWithProxy(p) }},
-		{"filester", func() model.Scraper { return filester.NewFilesterScraper() }, func(c []*http.Cookie) model.Scraper { return filester.NewFilesterScraperWithCookies(c) }, func(p string) (model.Scraper, error) { return filester.NewFilesterScraperWithProxy(p) }},
-		{"pixeldrain", func() model.Scraper { return pixeldrain.NewPixeldrainScraper() }, func(c []*http.Cookie) model.Scraper { return pixeldrain.NewPixeldrainScraperWithCookies(c) }, func(p string) (model.Scraper, error) { return pixeldrain.NewPixeldrainScraperWithProxy(p) }},
-		{"turbo", func() model.Scraper { return turbo.NewTurboScraper() }, func(c []*http.Cookie) model.Scraper { return turbo.NewTurboScraperWithCookies(c) }, func(p string) (model.Scraper, error) { return turbo.NewTurboScraperWithProxy(p) }},
+// siteScrapers builds each supported site's scraper with the run's proxy
+// and cookies.
+var siteScrapers = map[string]func(proxyURL string, cookies []*http.Cookie) (model.Scraper, error){
+	"youtube": func(p string, c []*http.Cookie) (model.Scraper, error) {
+		return youtube.NewYouTubeScraperWithOptions(p, c)
+	},
+	"cyberdrop": func(p string, c []*http.Cookie) (model.Scraper, error) {
+		return cyberdrop.NewCyberDropScraperWithOptions(p, c)
+	},
+	"bunker": func(p string, c []*http.Cookie) (model.Scraper, error) {
+		return bunker.NewBunkerScraperWithOptions(p, c)
+	},
+	"goonbox": func(p string, c []*http.Cookie) (model.Scraper, error) {
+		return goonbox.NewGoonBoxScraperWithOptions(p, c)
+	},
+	"filester": func(p string, c []*http.Cookie) (model.Scraper, error) {
+		return filester.NewFilesterScraperWithOptions(p, c)
+	},
+	"pixeldrain": func(p string, c []*http.Cookie) (model.Scraper, error) {
+		return pixeldrain.NewPixeldrainScraperWithOptions(p, c)
+	},
+	"turbo": func(p string, c []*http.Cookie) (model.Scraper, error) {
+		return turbo.NewTurboScraperWithOptions(p, c)
+	},
+}
+
+// newSiteScraper builds the scraper for one site.
+func newSiteScraper(site, proxyURL string, cookies []*http.Cookie) (model.Scraper, error) {
+	newScraper, ok := siteScrapers[site]
+	if !ok {
+		return nil, fmt.Errorf("unknown site %q", site)
 	}
-	for _, constructors := range constructors {
-		var scraper model.Scraper
-		var err error
-		if proxyURL != "" {
-			scraper, err = constructors.proxy(proxyURL)
-			if err != nil {
-				return nil, err
-			}
-			if len(cookies) > 0 {
-				scraper.(interface{ SetCookies([]*http.Cookie) }).SetCookies(cookies)
-			}
-		} else if len(cookies) > 0 {
-			scraper = constructors.cookies(cookies)
-		} else {
-			scraper = constructors.plain()
+	return newScraper(proxyURL, cookies)
+}
+
+// scraperRegistry builds one scraper per supported site, for batch runs
+// whose URLs can span several sites.
+func scraperRegistry(proxyURL string, cookies []*http.Cookie) (map[string]model.Scraper, error) {
+	reg := make(map[string]model.Scraper, len(siteScrapers))
+	for site := range siteScrapers {
+		scraper, err := newSiteScraper(site, proxyURL, cookies)
+		if err != nil {
+			return nil, err
 		}
-		reg[constructors.name] = scraper
+		reg[site] = scraper
 	}
 	return reg, nil
 }
@@ -810,11 +816,11 @@ func runSingle(opts globalOptions, site, targetURL string) error {
 }
 
 func runSingleWithConfig(cfg *config.Config, opts globalOptions, site, targetURL string) error {
-	reg, err := scraperRegistry(cfg.Proxy, nil)
+	scraper, err := newSiteScraper(site, cfg.Proxy, cfg.ParsedCookies())
 	if err != nil {
 		return err
 	}
-	return runWithScraperAndConfig(cfg, reg[site], targetURL, site, opts)
+	return runWithScraperAndConfig(cfg, scraper, targetURL, site, opts)
 }
 
 // runWithScraperAndConfig launches the TUI immediately using an
@@ -822,12 +828,6 @@ func runSingleWithConfig(cfg *config.Config, opts globalOptions, site, targetURL
 // the root command path. The scraper runs in the background; the TUI shows
 // a loading spinner until results arrive.
 func runWithScraperAndConfig(cfg *config.Config, scraper model.Scraper, targetURL, siteName string, opts globalOptions) error {
-	if len(cfg.ParsedCookies()) > 0 {
-		if s, ok := scraper.(interface{ SetCookies([]*http.Cookie) }); ok {
-			s.SetCookies(cfg.ParsedCookies())
-		}
-	}
-
 	// The scraper function runs in a background goroutine.
 	filtered := newFilterScraper(scraper, cfg, 0, cfg.DiskCheck)
 	scraperFn := func(ctx context.Context) ([]model.MediaItem, error) {
@@ -1080,18 +1080,10 @@ func batchDestSlug(siteName string, e batchEntry) string {
 	return albumSlugFor(siteName, e.URL)
 }
 
-// runBatch orchestrates scraping multiple album URLs with a shared download
-// queue. It scrapes albums sequentially — feeding items to the downloader as
-// soon as each album finishes — so token-based URLs from early albums don't
-// expire before later albums are scraped.
-func runBatch(opts globalOptions, entries []batchEntry) error {
-	cfg, err := configLoader(opts)
-	if err != nil {
-		return err
-	}
-	return runBatchWithConfig(cfg, opts, entries)
-}
-
+// runBatchWithConfig orchestrates scraping multiple album URLs with a shared
+// download queue. It scrapes albums sequentially — feeding items to the
+// downloader as soon as each album finishes — so token-based URLs from early
+// albums don't expire before later albums are scraped.
 func runBatchWithConfig(cfg *config.Config, opts globalOptions, entries []batchEntry) error {
 	reg, err := batchScraperRegistry(cfg.Proxy, cfg.ParsedCookies())
 	if err != nil {

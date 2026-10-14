@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	"github.com/rajbahakdanyu/scraper/internal/model"
 	"github.com/rajbahakdanyu/scraper/internal/netutil"
@@ -23,40 +22,19 @@ type Scraper struct {
 	sleeper   netutil.Sleeper
 }
 
-// NewCyberDropScraper creates a new CyberDrop scraper using the default HTTP client.
-func NewCyberDropScraper() *Scraper {
-	client, _ := netutil.NewPublicClient(30 * time.Second)
-	return &Scraper{
-		client:    client,
-		userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-		baseURL:   apiBase,
-		sleeper:   netutil.RealSleeper{},
-	}
-}
-
-// NewCyberDropScraperWithProxy creates a CyberDrop scraper that routes all
-// HTTP requests through the given proxy URL.
-func NewCyberDropScraperWithProxy(proxyURL string) (*Scraper, error) {
-	client, err := netutil.NewPublicClientWithProxy(30*time.Second, proxyURL)
+// NewCyberDropScraperWithOptions creates a CyberDrop scraper whose requests
+// go through proxyURL (when set) and carry cookies.
+func NewCyberDropScraperWithOptions(proxyURL string, cookies []*http.Cookie) (*Scraper, error) {
+	client, err := netutil.NewScraperClient(proxyURL, cookies)
 	if err != nil {
 		return nil, err
 	}
 	return &Scraper{
 		client:    client,
-		userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+		userAgent: netutil.BrowserUserAgent,
 		baseURL:   apiBase,
 		sleeper:   netutil.RealSleeper{},
 	}, nil
-}
-
-func (s *Scraper) SetCookies(cookies []*http.Cookie) {
-	s.client = netutil.WithCookies(s.client, cookies)
-}
-
-func NewCyberDropScraperWithCookies(cookies []*http.Cookie) *Scraper {
-	s := NewCyberDropScraper()
-	s.SetCookies(cookies)
-	return s
 }
 
 // SetSleeper replaces the retry delay implementation. Call this before

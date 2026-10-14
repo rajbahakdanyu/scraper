@@ -10,7 +10,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/PuerkitoBio/goquery"
 
@@ -19,7 +18,7 @@ import (
 )
 
 const apiBase = "https://turbo.cr"
-const userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+const userAgent = netutil.BrowserUserAgent
 
 type Scraper struct {
 	client  *http.Client
@@ -31,17 +30,10 @@ type Scraper struct {
 // parsing, not concurrently with it.
 func (s *Scraper) SetSleeper(sleeper netutil.Sleeper) { s.sleeper = sleeper }
 
-func NewTurboScraper() *Scraper {
-	client, _ := netutil.NewPublicClient(30 * time.Second)
-	return &Scraper{
-		client:  client,
-		baseURL: apiBase,
-		sleeper: netutil.RealSleeper{},
-	}
-}
-
-func NewTurboScraperWithProxy(proxyURL string) (*Scraper, error) {
-	client, err := netutil.NewPublicClientWithProxy(30*time.Second, proxyURL)
+// NewTurboScraperWithOptions creates a Turbo scraper whose requests go
+// through proxyURL (when set) and carry cookies.
+func NewTurboScraperWithOptions(proxyURL string, cookies []*http.Cookie) (*Scraper, error) {
+	client, err := netutil.NewScraperClient(proxyURL, cookies)
 	if err != nil {
 		return nil, err
 	}
@@ -50,16 +42,6 @@ func NewTurboScraperWithProxy(proxyURL string) (*Scraper, error) {
 		baseURL: apiBase,
 		sleeper: netutil.RealSleeper{},
 	}, nil
-}
-
-func (s *Scraper) SetCookies(cookies []*http.Cookie) {
-	s.client = netutil.WithCookies(s.client, cookies)
-}
-
-func NewTurboScraperWithCookies(cookies []*http.Cookie) *Scraper {
-	scraper := NewTurboScraper()
-	scraper.SetCookies(cookies)
-	return scraper
 }
 
 func (s *Scraper) Name() string {
