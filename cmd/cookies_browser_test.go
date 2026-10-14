@@ -61,6 +61,57 @@ func TestReadFirefoxCookiesFiltersToSupportedSites(t *testing.T) {
 	}
 }
 
+func TestReadFirefoxCookiesSkipsExpiredAndHandlesMilliseconds(t *testing.T) {
+	if _, err := exec.LookPath("sqlite3"); err != nil {
+		t.Skip("sqlite3 CLI not available")
+	}
+	db := filepath.Join(t.TempDir(), "cookies.sqlite")
+	create := exec.Command("sqlite3", db,
+		"CREATE TABLE moz_cookies (name TEXT, value TEXT, host TEXT, path TEXT, expiry INTEGER, isSecure INTEGER, isHttpOnly INTEGER);"+
+			"INSERT INTO moz_cookies VALUES ('expired','x','.bunkr.cr','/',1000000000,1,1);"+
+			"INSERT INTO moz_cookies VALUES ('seconds','x','.bunkr.cr','/',4000000000,1,1);"+
+			"INSERT INTO moz_cookies VALUES ('millis','x','.bunkr.cr','/',4000000000000,1,1);"+
+			"INSERT INTO moz_cookies VALUES ('expiredMillis','x','.bunkr.cr','/',1000000000000,1,1);")
+	if out, err := create.CombinedOutput(); err != nil {
+		t.Fatalf("create cookies db: %v: %s", err, out)
+	}
+	before, err := os.ReadFile(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cookies, err := readFirefoxCookies(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, c := range cookies {
+		got[c.Name] = true
+	}
+	if len(cookies) != 2 || !got["seconds"] || !got["millis"] {
+		t.Fatalf("want only the unexpired seconds/millis cookies, got %+v", cookies)
+	}
+	if after, _ := os.ReadFile(db); string(after) != string(before) {
+		t.Fatal("the live Firefox database must not be modified")
+	}
+}
+
+func TestFirefoxRootCandidates(t *testing.T) {
+	if got := firefoxRootCandidates("darwin", "/h", ""); len(got) != 1 || got[0] != filepath.Join("/h", "Library", "Application Support", "Firefox") {
+		t.Fatalf("darwin = %v", got)
+	}
+	linux := firefoxRootCandidates("linux", "/h", "")
+	if len(linux) != 3 || linux[0] != filepath.Join("/h", ".mozilla", "firefox") {
+		t.Fatalf("linux = %v", linux)
+	}
+	if got := firefoxRootCandidates("windows", "/h", `C:\AppData`); len(got) != 1 || got[0] != filepath.Join(`C:\AppData`, "Mozilla", "Firefox") {
+		t.Fatalf("windows = %v", got)
+	}
+	if got := firefoxRootCandidates("windows", "/h", ""); len(got) != 0 {
+		t.Fatalf("windows without APPDATA = %v", got)
+	}
+}
+
 func TestFirefoxProfileDirHonorsAbsoluteProfilePath(t *testing.T) {
 	root := t.TempDir()
 	ini := "[Profile0]\nName=moved\nIsRelative=0\nPath=/opt/firefox-profiles/me.default\n"

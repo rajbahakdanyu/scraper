@@ -1,23 +1,56 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
 )
 
-// firefoxRoot is a test seam for the Firefox profile root directory.
+// firefoxRootCandidates lists where Firefox keeps profiles.ini on goos, in
+// priority order (Linux: native, snap, then flatpak installs).
+func firefoxRootCandidates(goos, home, appData string) []string {
+	switch goos {
+	case "darwin":
+		return []string{filepath.Join(home, "Library", "Application Support", "Firefox")}
+	case "windows":
+		if appData == "" {
+			return nil
+		}
+		return []string{filepath.Join(appData, "Mozilla", "Firefox")}
+	default:
+		return []string{
+			filepath.Join(home, ".mozilla", "firefox"),
+			filepath.Join(home, "snap", "firefox", "common", ".mozilla", "firefox"),
+			filepath.Join(home, ".var", "app", "org.mozilla.firefox", ".mozilla", "firefox"),
+		}
+	}
+}
+
+// firefoxRoot is a test seam for the Firefox profile root directory: the
+// first candidate holding a profiles.ini, else the first candidate.
 var firefoxRoot = func() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, "Library", "Application Support", "Firefox"), nil
+	candidates := firefoxRootCandidates(runtime.GOOS, home, os.Getenv("APPDATA"))
+	if len(candidates) == 0 {
+		return "", fmt.Errorf("no Firefox profile location known for %s", runtime.GOOS)
+	}
+	for _, dir := range candidates {
+		if _, err := os.Stat(filepath.Join(dir, "profiles.ini")); err == nil {
+			return dir, nil
+		}
+	}
+	return candidates[0], nil
 }
 
 // importBrowserCookies loads cookies for the supported sites from a local
@@ -137,18 +170,29 @@ func readFirefoxCookies(dbPath string) ([]*http.Cookie, error) {
 	}
 	query := "SELECT name, value, host, path, expiry, isSecure, isHttpOnly FROM moz_cookies WHERE " +
 		strings.Join(clauses, " OR ")
-	// An absolute path can never be mistaken for a sqlite3 option.
-	dbPath, err := filepath.Abs(dbPath)
+	// A running Firefox holds the live database locked, so query a copy.
+	tmp, err := os.MkdirTemp("", "scraper-cookies-")
 	if err != nil {
 		return nil, err
 	}
+	defer os.RemoveAll(tmp)
+	dbCopy := filepath.Join(tmp, "cookies.sqlite")
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		if err := copyFile(dbPath+suffix, dbCopy+suffix); err != nil {
+			if suffix != "" && errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return nil, fmt.Errorf("copy Firefox cookie database: %w", err)
+		}
+	}
 	// #nosec G204 -- fixed binary, no shell; the query is built from static domains only.
-	out, err := exec.Command("sqlite3", "-separator", "\t", dbPath, query).Output()
+	out, err := exec.Command("sqlite3", "-separator", "\t", dbCopy, query).Output()
 	if err != nil {
 		return nil, fmt.Errorf("read Firefox cookies: %w", err)
 	}
 
 	var cookies []*http.Cookie
+	now := time.Now().Unix()
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		if line == "" {
 			continue
@@ -158,6 +202,14 @@ func readFirefoxCookies(dbPath string) ([]*http.Cookie, error) {
 			continue
 		}
 		expiry, _ := strconv.ParseInt(fields[4], 10, 64)
+		// Newer Firefox versions store milliseconds; seconds stay below 1e11
+		// until the year 5138.
+		if expiry > 1e11 {
+			expiry /= 1000
+		}
+		if expiry > 0 && expiry < now {
+			continue
+		}
 		cookie := &http.Cookie{
 			Name:     fields[0],
 			Value:    fields[1],
@@ -172,4 +224,22 @@ func readFirefoxCookies(dbPath string) ([]*http.Cookie, error) {
 		cookies = append(cookies, cookie)
 	}
 	return cookies, nil
+}
+
+func copyFile(src, dst string) error {
+	// #nosec G304 -- the Firefox cookie database located via profiles.ini.
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	// #nosec G304 -- dst is inside a fresh private MkdirTemp directory.
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		return errors.Join(err, out.Close())
+	}
+	return out.Close()
 }
