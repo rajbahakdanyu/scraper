@@ -1,33 +1,29 @@
 {
   "$schema": "https://opencode.ai/config.json",
 
-  "plugin": [
+  "plugins": [
     "superpowers@git+https://github.com/obra/superpowers.git#bb92a77741419a4ab5f06e711a283343f1ada0c3"
   ],
 
   "model": "opencode/glm-5.3-flash",
 
-  "permission": {
-    "bash": {
-      "*": "ask",
-      "go build *": "allow",
-      "go test *": "allow",
-      "go vet *": "allow",
-      "gofmt *": "allow",
-      "git status": "allow",
-      "git status *": "allow",
-      "git diff": "allow",
-      "git diff *": "allow",
-      "git log *": "allow",
-      "rm -rf *": "deny",
-      "rm -fr *": "deny",
-      "git push --force*": "deny",
-      "git push -f*": "deny",
-      "git reset --hard*": "deny"
-    }
-  },
+  "permissions": [
+    { "action": "shell", "resource": "*", "effect": "ask" },
+    { "action": "shell", "resource": "go build *", "effect": "allow" },
+    { "action": "shell", "resource": "go test *", "effect": "allow" },
+    { "action": "shell", "resource": "go vet *", "effect": "allow" },
+    { "action": "shell", "resource": "gofmt *", "effect": "allow" },
+    { "action": "shell", "resource": "git status *", "effect": "allow" },
+    { "action": "shell", "resource": "git diff *", "effect": "allow" },
+    { "action": "shell", "resource": "git log *", "effect": "allow" },
+    { "action": "shell", "resource": "rm -rf *", "effect": "deny" },
+    { "action": "shell", "resource": "rm -fr *", "effect": "deny" },
+    { "action": "shell", "resource": "git push --force*", "effect": "deny" },
+    { "action": "shell", "resource": "git push -f*", "effect": "deny" },
+    { "action": "shell", "resource": "git reset --hard*", "effect": "deny" }
+  ],
 
-  "agent": {
+  "agents": {
     "title": {
       "model": "opencode/glm-5.3-flash"
     },
@@ -54,11 +50,11 @@
       "mode": "subagent",
       "model": "opencode/glm-5.3-flash",
       "description": "Fast, read-only codebase search, file path inspection, and string matching.",
-      "permission": {
-        "edit": "deny",
-        "bash": "deny",
-        "webfetch": "deny"
-      }
+      "permissions": [
+        { "action": "edit", "resource": "*", "effect": "deny" },
+        { "action": "shell", "resource": "*", "effect": "deny" },
+        { "action": "webfetch", "resource": "*", "effect": "deny" }
+      ]
     }
   }
 }
