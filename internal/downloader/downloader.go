@@ -137,6 +137,11 @@ func (d *Downloader) Download(item model.MediaItem, dest string) (string, error)
 	}
 	defer release()
 
+	if err := os.MkdirAll(dest, 0750); err != nil {
+		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed})
+		return "", model.NewNonRetryable(fmt.Errorf("create output directory: %w", err))
+	}
+
 	filename := fileutil.SanitizeFilename(item.Title)
 	if filename == "" {
 		filename = "download"
@@ -205,7 +210,9 @@ func (d *Downloader) Download(item model.MediaItem, dest string) (string, error)
 
 	var lastErr error
 	var checksum string
+	attempts := 0
 	lastErr = netutil.Retry(ctx, netutil.MaxRetries, netutil.RetryBaseDelay, d.sleeper, func() error {
+		attempts++
 		if item.Resolve != nil && resolvedURL == "" {
 			u, err := item.Resolve(ctx)
 			if err != nil {
@@ -268,7 +275,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) (string, error)
 	// same item resumes from it via a Range request instead of
 	// re-downloading everything from scratch.
 	d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed})
-	return "", fmt.Errorf("download failed after %d attempts: %w", netutil.MaxRetries, errors.Join(lastErr, cleanupErr))
+	return "", fmt.Errorf("download failed after %d attempt(s): %w", attempts, errors.Join(lastErr, cleanupErr))
 }
 
 // downloadOnce performs a single download attempt to tempPath, fetching
@@ -390,10 +397,8 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, res
 	// #nosec G304 -- tempPath is allocated beneath the configured output directory from a sanitized title.
 	out, err := fileutil.OpenFileNoFollow(tempPath, flags, 0644)
 	if err != nil {
-		if fileutil.IsSymlinkError(err) {
-			return "", fmt.Errorf("refusing to follow symlink for .part file %s: %w", tempPath, err)
-		}
-		return "", err
+		// A local filesystem failure won't be fixed by re-fetching.
+		return "", model.NewNonRetryable(err)
 	}
 	if existing == 0 {
 		resume = metadataFromResponse(resolvedURL, resp, item.Resolve == nil)

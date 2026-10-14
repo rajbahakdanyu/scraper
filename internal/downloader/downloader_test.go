@@ -167,6 +167,48 @@ func TestDownload(t *testing.T) {
 	}
 }
 
+func TestDownloadCreatesMissingDestination(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(make([]byte, 100))
+	}))
+	defer ts.Close()
+
+	dest := filepath.Join(t.TempDir(), "new", "nested")
+	path, err := newTestDownloader(1, 0, "").Download(model.MediaItem{URL: ts.URL + "/a.bin", Title: "a.bin"}, dest)
+	if err != nil {
+		t.Fatalf("download into a missing directory failed: %v", err)
+	}
+	if path != filepath.Join(dest, "a.bin") {
+		t.Fatalf("path = %q", path)
+	}
+}
+
+func TestDownloadLocalWriteFailureIsNotRetried(t *testing.T) {
+	var requests atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.Write(make([]byte, 100))
+	}))
+	defer ts.Close()
+
+	dest := t.TempDir()
+	if err := os.Chmod(dest, 0500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dest, 0700) })
+
+	_, err := newTestDownloader(1, 0, "").Download(model.MediaItem{URL: ts.URL + "/a.bin", Title: "a.bin"}, dest)
+	if err == nil {
+		t.Fatal("expected a write failure in a read-only directory")
+	}
+	if !strings.Contains(err.Error(), filepath.Join(dest, "a.bin.part")) {
+		t.Errorf("error must name the file it could not open: %v", err)
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("a local write failure must not be retried, got %d requests", got)
+	}
+}
+
 func TestDownloadRefusesSymlinkedPartFile(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", "5")

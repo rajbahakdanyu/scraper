@@ -7,7 +7,7 @@ import (
 	"os"
 )
 
-var errSymlink = errors.New("refusing to follow symlink for .part file")
+var errSymlink = errors.New("refusing to follow symlink")
 
 // OpenFileNoFollow opens a file without traversing symbolic links.
 // On platforms that lack O_NOFOLLOW this is best-effort only: Lstat rejects
@@ -19,7 +19,7 @@ var errSymlink = errors.New("refusing to follow symlink for .part file")
 func OpenFileNoFollow(path string, flag int, perm os.FileMode) (*os.File, error) {
 	fi, err := os.Lstat(path)
 	if err == nil && fi.Mode()&os.ModeSymlink != 0 {
-		return nil, errSymlink
+		return nil, &os.PathError{Op: "open", Path: path, Err: errSymlink}
 	}
 	return os.OpenFile(path, flag, perm)
 }

@@ -528,9 +528,6 @@ func copyStreamToFile(ctx context.Context, stream io.Reader, size int64, path st
 	// #nosec G304 -- path is internally allocated under the configured output or private temp directory.
 	f, err := fileutil.OpenFileNoFollow(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
-		if fileutil.IsSymlinkError(err) {
-			return "", model.NewNonRetryable(fmt.Errorf("refusing to follow symlink for .part file %s: %w", path, err))
-		}
 		// Local filesystem failures are permanent — a retry can't make
 		// the destination writable.
 		return "", model.NewNonRetryable(err)
@@ -882,6 +879,11 @@ func (d *Downloader) Download(item model.MediaItem, dest string) (string, error)
 		return "", err
 	}
 	defer release()
+
+	if err := os.MkdirAll(dest, 0750); err != nil {
+		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed, Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
+		return "", model.NewNonRetryable(fmt.Errorf("create output directory: %w", err))
+	}
 
 	d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusDownloading, Start: time.Now(), Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
 
