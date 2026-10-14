@@ -27,6 +27,21 @@ type Scraper struct {
 	client    *http.Client
 	userAgent string
 	baseURL   string
+	sleeper   netutil.Sleeper
+}
+
+// albumPage is one page of the album API response.
+type albumPage struct {
+	Images []struct {
+		OriginalURL      string `json:"original_url"`
+		OriginalFilename string `json:"original_filename"`
+		SizeBytes        int64  `json:"size_bytes"`
+		Mime             string `json:"mime"`
+	} `json:"images"`
+	Pagination struct {
+		CurrentPage int `json:"current_page"`
+		LastPage    int `json:"last_page"`
+	} `json:"pagination"`
 }
 
 type pageResult struct {
@@ -45,6 +60,7 @@ func NewGoonBoxScraper() *Scraper {
 		client:    client,
 		userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
 		baseURL:   apiBase,
+		sleeper:   netutil.RealSleeper{},
 	}
 }
 
@@ -59,8 +75,13 @@ func NewGoonBoxScraperWithProxy(proxyURL string) (*Scraper, error) {
 		client:    client,
 		userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
 		baseURL:   apiBase,
+		sleeper:   netutil.RealSleeper{},
 	}, nil
 }
+
+// SetSleeper replaces the retry delay implementation. Call this before
+// parsing, not concurrently with it.
+func (s *Scraper) SetSleeper(sleeper netutil.Sleeper) { s.sleeper = sleeper }
 
 func (s *Scraper) SetCookies(cookies []*http.Cookie) {
 	s.client = netutil.WithCookies(s.client, cookies)
@@ -84,23 +105,19 @@ func (s *Scraper) Parse(ctx context.Context, albumURL string) ([]model.MediaItem
 
 	fetchPage := func(page int) pageResult {
 		url := fmt.Sprintf("%s/albums/%s?page=%d", s.baseURL, albumID, page)
-		var result struct {
-			Album struct {
-				Title string `json:"title"`
-			} `json:"album"`
-			Images []struct {
-				OriginalURL      string `json:"original_url"`
-				OriginalFilename string `json:"original_filename"`
-				SizeBytes        int64  `json:"size_bytes"`
-				Mime             string `json:"mime"`
-			} `json:"images"`
-			Pagination struct {
-				CurrentPage int `json:"current_page"`
-				LastPage    int `json:"last_page"`
-			} `json:"pagination"`
-		}
-
-		if err := netutil.GetJSON(ctx, s.client, url, s.userAgent, &result); err != nil {
+		var result albumPage
+		// Pages are fetched 8 at a time: a 429/5xx blip must not drop a
+		// whole page of the album.
+		err := netutil.Retry(ctx, netutil.MaxRetries, netutil.RetryBaseDelay, s.sleeper, func() error {
+			result = albumPage{}
+			err := netutil.GetJSON(ctx, s.client, url, s.userAgent, &result)
+			var statusErr *netutil.HTTPStatusError
+			if errors.As(err, &statusErr) && !model.IsRetryableStatus(statusErr.StatusCode) {
+				return model.NewNonRetryable(err)
+			}
+			return err
+		})
+		if err != nil {
 			return pageResult{index: page - 1, err: err, fetched: true}
 		}
 

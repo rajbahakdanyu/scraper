@@ -16,10 +16,50 @@ import (
 	"github.com/rajbahakdanyu/scraper/internal/model"
 )
 
+type noopSleeper struct{}
+
+func (noopSleeper) Sleep(time.Duration)                                 {}
+func (noopSleeper) SleepCtx(ctx context.Context, _ time.Duration) error { return ctx.Err() }
+
 func newTestGoonBoxScraper() *Scraper {
 	scraper := NewGoonBoxScraper()
 	scraper.client = &http.Client{}
+	scraper.SetSleeper(noopSleeper{})
 	return scraper
+}
+
+func TestParseGoonBoxAlbumRetriesTransientPageError(t *testing.T) {
+	var page2Calls atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/albums/flaky", func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("page")
+		if page == "2" && page2Calls.Add(1) == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		n := 0
+		_, _ = fmt.Sscan(page, &n)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"images": []map[string]interface{}{{
+				"original_url":      fmt.Sprintf("https://cdn.example.com/p%d.jpg", n),
+				"original_filename": fmt.Sprintf("p%d.jpg", n),
+			}},
+			"pagination": map[string]int{"current_page": n, "last_page": 2},
+		})
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	scraper := newTestGoonBoxScraper()
+	scraper.baseURL = ts.URL
+	items, err := scraper.Parse(context.Background(), ts.URL+"/a/flaky")
+	if err != nil {
+		t.Fatalf("a transient 503 must be retried, got %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected both pages, got %d items", len(items))
+	}
 }
 
 // TestParseGoonBoxAlbum exercises the real Parse() code path end to end
