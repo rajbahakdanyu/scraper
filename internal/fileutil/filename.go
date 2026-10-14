@@ -32,7 +32,7 @@ const (
 func SanitizeFilename(s string) string {
 	clean := make([]rune, 0, len(s))
 	for _, r := range s {
-		if r >= 32 && !isBidiControl(r) && r != ':' && r != '<' && r != '>' && r != '|' && r != '/' && r != '\\' && r != '?' && r != '*' {
+		if !isUnsafeFilenameRune(r) {
 			clean = append(clean, r)
 		}
 	}
@@ -47,6 +47,16 @@ func SanitizeFilename(s string) string {
 		result = truncateFilenameWithHash(result, s)
 	}
 	return result
+}
+
+// isUnsafeFilenameRune reports whether r must be dropped from a filename:
+// control characters (C0, DEL, C1), bidi controls, path separators, and
+// the characters Windows forbids.
+func isUnsafeFilenameRune(r rune) bool {
+	if r < 32 || (r >= 0x7F && r <= 0x9F) || isBidiControl(r) {
+		return true
+	}
+	return strings.ContainsRune(`:<>|/\?*"`, r)
 }
 
 // isBidiControl reports whether r is a bidirectional text control that can

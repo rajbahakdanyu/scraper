@@ -18,6 +18,8 @@ func TestSanitizeFilename(t *testing.T) {
 		{name: "path separators only", input: `/\\`, want: ""},
 		{name: "control characters", input: "a\x00\x01\x1f\nb", want: "ab"},
 		{name: "invalid filename characters", input: "?*:|<>", want: ""},
+		{name: "double quotes stripped (invalid on Windows)", input: `My "Best" Clip.mp4`, want: "My Best Clip.mp4"},
+		{name: "DEL and C1 controls stripped", input: "a\x7fb\u0085c\u009fd", want: "abcd"},
 		{name: "bidi override stripped", input: "photo\u202Egnp.exe", want: "photognp.exe"},
 		{name: "bidi embedding stripped", input: "a\u202Ab\u202Cc", want: "abc"},
 		{name: "bidi isolates stripped", input: "a\u2066b\u2069c.mp4", want: "abc.mp4"},
