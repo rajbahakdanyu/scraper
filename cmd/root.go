@@ -486,7 +486,7 @@ func logLine(format string, args ...interface{}) {
 	fmt.Fprintf(logFile, "%s %s\n", time.Now().Format(time.RFC3339), fmt.Sprintf(format, args...))
 }
 
-func newSiteCmd(use, short, site string, newScraper func() model.Scraper) *cobra.Command {
+func newSiteCmd(use, short, site string) *cobra.Command {
 	var urlFlag string
 
 	cmd := &cobra.Command{
@@ -502,7 +502,7 @@ func newSiteCmd(use, short, site string, newScraper func() model.Scraper) *cobra
 			if err != nil {
 				return err
 			}
-			return runWithScraper(newScraper(), targetURL, site, opts)
+			return runSingle(opts, site, targetURL)
 		},
 	}
 
@@ -540,15 +540,7 @@ func NewRootCmd() *cobra.Command {
 					if err != nil {
 						return err
 					}
-					cfg, err := loadGlobalConfig(opts)
-					if err != nil {
-						return err
-					}
-					reg, err := scraperRegistry(cfg.Proxy, nil)
-					if err != nil {
-						return err
-					}
-					return runWithScraperAndConfig(cfg, reg[site], targetURL, site, opts)
+					return runSingle(opts, site, targetURL)
 				}
 				return runBatch(opts, entries)
 			}
@@ -593,13 +585,13 @@ func NewRootCmd() *cobra.Command {
 	root.PersistentFlags().Bool("notify", false, "Send OS notification when downloads complete")
 
 	root.AddCommand(
-		newSiteCmd("youtube <url>", "Scrape and download a YouTube video or playlist", "youtube", func() model.Scraper { return youtube.NewYouTubeScraper() }),
-		newSiteCmd("cyberdrop <url>", "Scrape and download a CyberDrop gallery", "cyberdrop", func() model.Scraper { return cyberdrop.NewCyberDropScraper() }),
-		newSiteCmd("bunker <url>", "Scrape and download Bunker content", "bunker", func() model.Scraper { return bunker.NewBunkerScraper() }),
-		newSiteCmd("goonbox <url>", "Scrape and download a GoonBox album", "goonbox", func() model.Scraper { return goonbox.NewGoonBoxScraper() }),
-		newSiteCmd("filester <url>", "Scrape and download a Filester file or folder", "filester", func() model.Scraper { return filester.NewFilesterScraper() }),
-		newSiteCmd("pixeldrain <url>", "Scrape and download a Pixeldrain list or single file", "pixeldrain", func() model.Scraper { return pixeldrain.NewPixeldrainScraper() }),
-		newSiteCmd("turbo <url>", "Scrape and download a Turbo album", "turbo", func() model.Scraper { return turbo.NewTurboScraper() }),
+		newSiteCmd("youtube <url>", "Scrape and download a YouTube video or playlist", "youtube"),
+		newSiteCmd("cyberdrop <url>", "Scrape and download a CyberDrop gallery", "cyberdrop"),
+		newSiteCmd("bunker <url>", "Scrape and download Bunker content", "bunker"),
+		newSiteCmd("goonbox <url>", "Scrape and download a GoonBox album", "goonbox"),
+		newSiteCmd("filester <url>", "Scrape and download a Filester file or folder", "filester"),
+		newSiteCmd("pixeldrain <url>", "Scrape and download a Pixeldrain list or single file", "pixeldrain"),
+		newSiteCmd("turbo <url>", "Scrape and download a Turbo album", "turbo"),
 		&cobra.Command{
 			Use:   "version",
 			Short: "Print the version",
@@ -639,15 +631,18 @@ Fish:  scraper completion fish | source`,
 // scraperRegistry maps a site name to its scraper, used by detectSite's
 // auto-detect path.
 func scraperRegistry(proxyURL string, cookies []*http.Cookie) (map[string]model.Scraper, error) {
-	reg := map[string]model.Scraper{
-		"youtube": youtube.NewYouTubeScraper(),
-	}
+	reg := map[string]model.Scraper{}
 	constructors := []struct {
 		name    string
 		plain   func() model.Scraper
 		cookies func([]*http.Cookie) model.Scraper
 		proxy   func(string) (model.Scraper, error)
 	}{
+		{"youtube", func() model.Scraper { return youtube.NewYouTubeScraper() }, func(c []*http.Cookie) model.Scraper {
+			s := youtube.NewYouTubeScraper()
+			s.SetCookies(c)
+			return s
+		}, func(p string) (model.Scraper, error) { return youtube.NewYouTubeScraperWithProxy(p) }},
 		{"cyberdrop", func() model.Scraper { return cyberdrop.NewCyberDropScraper() }, func(c []*http.Cookie) model.Scraper { return cyberdrop.NewCyberDropScraperWithCookies(c) }, func(p string) (model.Scraper, error) { return cyberdrop.NewCyberDropScraperWithProxy(p) }},
 		{"bunker", func() model.Scraper { return bunker.NewBunkerScraper() }, func(c []*http.Cookie) model.Scraper { return bunker.NewBunkerScraperWithCookies(c) }, func(p string) (model.Scraper, error) { return bunker.NewBunkerScraperWithProxy(p) }},
 		{"goonbox", func() model.Scraper { return goonbox.NewGoonBoxScraper() }, func(c []*http.Cookie) model.Scraper { return goonbox.NewGoonBoxScraperWithCookies(c) }, func(p string) (model.Scraper, error) { return goonbox.NewGoonBoxScraperWithProxy(p) }},
@@ -755,14 +750,18 @@ func detectSite(rawURL string) (string, error) {
 	return "", fmt.Errorf("could not auto-detect a site for %q (available: youtube, cyberdrop, bunker, goonbox, filester, pixeldrain, turbo)", rawURL)
 }
 
-// runWithScraper loads config and then runs; site subcommands use this
-// entry point.
-func runWithScraper(scraper model.Scraper, targetURL string, siteName string, opts globalOptions) error {
+// runSingle runs one URL with the site's scraper built from the loaded
+// config, so --proxy and cookies apply to scraping as well as downloading.
+func runSingle(opts globalOptions, site, targetURL string) error {
 	cfg, err := loadGlobalConfig(opts)
 	if err != nil {
 		return err
 	}
-	return runWithScraperAndConfig(cfg, scraper, targetURL, siteName, opts)
+	reg, err := scraperRegistry(cfg.Proxy, nil)
+	if err != nil {
+		return err
+	}
+	return runWithScraperAndConfig(cfg, reg[site], targetURL, site, opts)
 }
 
 // runWithScraperAndConfig launches the TUI immediately using an

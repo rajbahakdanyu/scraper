@@ -47,6 +47,23 @@ func NewYouTubeScraper() *Scraper {
 	}
 }
 
+// NewYouTubeScraperWithProxy creates a YouTube scraper whose metadata
+// requests go through proxyURL.
+func NewYouTubeScraperWithProxy(proxyURL string) (*Scraper, error) {
+	client, err := netutil.NewPublicClientWithProxy(defaultReadTimeout, proxyURL)
+	if err != nil {
+		return nil, err
+	}
+	return &Scraper{
+		video:  &ytdl.Client{HTTPClient: client},
+		parsed: make(map[string]*ytdl.Video),
+	}, nil
+}
+
+func (s *Scraper) SetCookies(cookies []*http.Cookie) {
+	s.video.HTTPClient = netutil.WithCookies(s.video.HTTPClient, cookies)
+}
+
 func (s *Scraper) Name() string {
 	return "youtube"
 }

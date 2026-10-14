@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -86,17 +87,25 @@ func emptyTestConfig(t *testing.T) string {
 func TestNewRootCmdRegistersSubcommands(t *testing.T) {
 	root := NewRootCmd()
 
-	want := []string{"youtube", "cyberdrop", "bunker", "goonbox", "filester"}
-	for _, name := range want {
-		found := false
+	for site := range siteDomains {
+		var cmd *cobra.Command
 		for _, c := range root.Commands() {
-			if c.Name() == name {
-				found = true
-				break
+			if c.Name() == site {
+				cmd = c
 			}
 		}
-		if !found {
-			t.Errorf("expected root command to register %q subcommand", name)
+		if cmd == nil {
+			t.Errorf("expected root command to register %q subcommand", site)
+			continue
+		}
+		if cmd.Use != site+" <url>" {
+			t.Errorf("%s: unexpected Use %q", site, cmd.Use)
+		}
+		if cmd.Flags().Lookup("url") == nil {
+			t.Errorf("%s: expected --url flag", site)
+		}
+		if err := cmd.RunE(cmd, nil); err == nil {
+			t.Errorf("%s: expected an error when no URL is provided", site)
 		}
 	}
 
@@ -1360,6 +1369,42 @@ func TestScraperRegistryWithProxyAndCookies(t *testing.T) {
 		if reg[name] == nil {
 			t.Errorf("expected scraper for %q in registry", name)
 		}
+	}
+}
+
+func TestSiteSubcommandScrapesThroughProxy(t *testing.T) {
+	for _, tc := range []struct{ site, url, host string }{
+		{"filester", "https://filester.sh/f/abc", "filester.sh:443"},
+		{"youtube", "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "www.youtube.com:443"},
+	} {
+		t.Run(tc.site, func(t *testing.T) {
+			connects := make(chan string, 16)
+			proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodConnect {
+					select {
+					case connects <- r.Host:
+					default:
+					}
+				}
+				http.Error(w, "blocked", http.StatusForbidden)
+			}))
+			defer proxy.Close()
+
+			root := NewRootCmd()
+			root.SetOut(io.Discard)
+			root.SetErr(io.Discard)
+			root.SetArgs([]string{tc.site, "--config", emptyTestConfig(t), "--proxy", proxy.URL, "--dry-run", tc.url})
+			captureStdout(func() { _ = root.Execute() })
+
+			select {
+			case host := <-connects:
+				if host != tc.host {
+					t.Fatalf("proxy saw CONNECT %q, want %q", host, tc.host)
+				}
+			default:
+				t.Fatal("the subcommand's scrape request bypassed --proxy")
+			}
+		})
 	}
 }
 
