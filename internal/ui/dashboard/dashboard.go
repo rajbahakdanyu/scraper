@@ -402,10 +402,10 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return d, d.resumeAfter(d.retrySelected())
 		}
 	case tea.MouseMsg:
-		switch msg.Type {
-		case tea.MouseWheelUp:
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
 			d.moveUpSkippingHeaders()
-		case tea.MouseWheelDown:
+		case tea.MouseButtonWheelDown:
 			d.moveDownSkippingHeaders()
 		}
 		return d, nil

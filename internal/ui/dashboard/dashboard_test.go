@@ -1385,7 +1385,7 @@ func TestDashboardNewNavigationAndProgressFeatures(t *testing.T) {
 	if len(d.visible) != 1 || d.visible[0] != 0 {
 		t.Fatalf("fold with filter should retain only its album header, got %v", d.visible)
 	}
-	updated, _ = d.Update(tea.MouseMsg{Type: tea.MouseWheelDown})
+	updated, _ = d.Update(tea.MouseMsg{Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress})
 	d = updated.(*Dashboard)
 	if d.table.Cursor() < 0 || d.table.Cursor() >= len(d.visible) {
 		t.Fatalf("wheel cursor outside visible rows: %d", d.table.Cursor())
@@ -1528,7 +1528,8 @@ func TestFoldedHeadersRemainReachable(t *testing.T) {
 			d.table.SetCursor(1)
 			var down, up tea.Msg = tea.KeyMsg{Type: tea.KeyDown}, tea.KeyMsg{Type: tea.KeyUp}
 			if wheel {
-				down, up = tea.MouseMsg{Type: tea.MouseWheelDown}, tea.MouseMsg{Type: tea.MouseWheelUp}
+				down = tea.MouseMsg{Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress}
+				up = tea.MouseMsg{Button: tea.MouseButtonWheelUp, Action: tea.MouseActionPress}
 			}
 			for _, want := range []int{2, 4} {
 				d.Update(down)

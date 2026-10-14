@@ -1539,8 +1539,8 @@ func TestValidQuality(t *testing.T) {
 		t.Errorf("ValidQuality(1080p) = %d, %v; want 1080, true", h, ok)
 	}
 	h, ok = youtube.ValidQuality("9999p")
-	if ok {
-		t.Error("ValidQuality(9999p) should be false")
+	if ok || h != 0 {
+		t.Errorf("ValidQuality(9999p) = %d, %v; want 0, false", h, ok)
 	}
 	h, ok = youtube.ValidQuality("")
 	if !ok || h != 0 {
