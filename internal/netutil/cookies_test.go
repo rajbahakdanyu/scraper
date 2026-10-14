@@ -220,6 +220,50 @@ func TestParseNetscapeCookiesSubdomainFlagHandling(t *testing.T) {
 	}
 }
 
+func TestParseNetscapeCookiesHttpOnlyPrefix(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "httponly.txt")
+	content := "# Netscape HTTP Cookie File\n" +
+		"#HttpOnly_.example.com\tTRUE\t/\tTRUE\t9999999999\tsession\tsecret\n"
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cookies, err := ParseNetscapeCookies(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cookies) != 1 || cookies[0].Name != "session" || cookies[0].Domain != ".example.com" {
+		t.Fatalf("#HttpOnly_ line must be parsed as a cookie, got %+v", cookies)
+	}
+}
+
+func TestWithCookiesHonorsIncludeSubdomains(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "scope.txt")
+	content := "host.example.com\tFALSE\t/\tFALSE\t9999999999\thostonly\t1\n" +
+		"example.com\tTRUE\t/\tFALSE\t9999999999\tdomain\t1\n"
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cookies, err := ParseNetscapeCookies(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jar := WithCookies(&http.Client{}, cookies).Jar
+	names := func(raw string) []string {
+		u, _ := url.Parse(raw)
+		var out []string
+		for _, c := range jar.Cookies(u) {
+			out = append(out, c.Name)
+		}
+		return out
+	}
+	if got := names("https://host.example.com/"); len(got) != 2 {
+		t.Fatalf("host.example.com cookies = %v, want hostonly and domain", got)
+	}
+	if got := names("https://sub.host.example.com/"); len(got) != 1 || got[0] != "domain" {
+		t.Fatalf("a host-only cookie must not reach subdomains, got %v", got)
+	}
+}
+
 func TestParseNetscapeCookiesExpiryAsInt(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "int_expiry.txt")
 	content := ".example.com\tTRUE\t/\tFALSE\t9999999999\tint_cookie\tintval\n"

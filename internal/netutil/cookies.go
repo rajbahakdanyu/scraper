@@ -29,6 +29,9 @@ func ParseNetscapeCookies(path string) ([]*http.Cookie, error) {
 	for scanner.Scan() {
 		lineNo++
 		line := strings.TrimSpace(scanner.Text())
+		// curl/yt-dlp/browser exports mark HttpOnly cookies (often the
+		// session cookie) with this prefix rather than as a comment.
+		line = strings.TrimPrefix(line, "#HttpOnly_")
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
@@ -39,7 +42,12 @@ func ParseNetscapeCookies(path string) ([]*http.Cookie, error) {
 			continue
 		}
 
-		domain := parts[0]
+		domain := strings.TrimPrefix(parts[0], ".")
+		// A leading dot marks a domain cookie; none means host-only (see
+		// WithCookies).
+		if strings.EqualFold(parts[1], "TRUE") {
+			domain = "." + domain
+		}
 		path := parts[2]
 		secure := strings.EqualFold(parts[3], "TRUE")
 		expiryStr := parts[4]
@@ -90,6 +98,11 @@ func WithCookies(client *http.Client, cookies []*http.Cookie) *http.Client {
 	}
 	for _, c := range cookies {
 		host := strings.TrimPrefix(c.Domain, ".")
+		if !strings.HasPrefix(c.Domain, ".") {
+			hostOnly := *c
+			hostOnly.Domain = ""
+			c = &hostOnly
+		}
 		jar.SetCookies(&url.URL{Scheme: "https", Host: host}, []*http.Cookie{c})
 	}
 	clone := *client
