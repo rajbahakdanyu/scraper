@@ -16,18 +16,6 @@ import (
 	"github.com/rajbahakdanyu/scraper/internal/model"
 )
 
-type noopSleeper struct{}
-
-func (noopSleeper) Sleep(time.Duration)                                 {}
-func (noopSleeper) SleepCtx(ctx context.Context, _ time.Duration) error { return ctx.Err() }
-
-func newTestGoonBoxScraper() *Scraper {
-	scraper := NewGoonBoxScraper()
-	scraper.client = &http.Client{}
-	scraper.SetSleeper(noopSleeper{})
-	return scraper
-}
-
 func TestParseGoonBoxAlbumRetriesTransientPageError(t *testing.T) {
 	var page2Calls atomic.Int32
 	mux := http.NewServeMux()
