@@ -146,6 +146,23 @@ func (c *Core) Begin(key string, item model.MediaItem, cancelledEvent model.Prog
 
 func (c *Core) SetLimiter(limiter *rate.Limiter) { c.limiter = limiter }
 
+// WaitN blocks until limiter admits n bytes. rate.Limiter rejects any single
+// request larger than its burst, so large reads are admitted in chunks.
+func WaitN(ctx context.Context, limiter *rate.Limiter, n int) error {
+	if limiter == nil {
+		return nil
+	}
+	burst := limiter.Burst()
+	for n > 0 {
+		chunk := min(n, burst)
+		if err := limiter.WaitN(ctx, chunk); err != nil {
+			return err
+		}
+		n -= chunk
+	}
+	return nil
+}
+
 func (c *Core) SetSkipSum(skip bool) { c.skipSum = skip }
 
 func (c *Core) Limiter() *rate.Limiter { return c.limiter }

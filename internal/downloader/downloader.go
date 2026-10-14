@@ -460,7 +460,7 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, res
 		}
 	}
 
-	copiedBytes, copyErr := io.CopyBuffer(out, source, make([]byte, 512*1024))
+	copiedBytes, copyErr := io.Copy(out, source)
 	copiedBytes += int64(headBytes)
 	closeErr := out.Close()
 	if unknownSizeLimit != nil && copiedBytes > MaxUnknownFileSize {
@@ -541,10 +541,10 @@ type progressReader struct {
 func (pr *progressReader) Read(p []byte) (int, error) {
 	n, err := pr.reader.Read(p)
 	if n > 0 {
-		if pr.limiter != nil {
-			if waitErr := pr.limiter.WaitN(pr.ctx, n); waitErr != nil {
-				return 0, waitErr
-			}
+		if waitErr := downloadercore.WaitN(pr.ctx, pr.limiter, n); waitErr != nil {
+			// The n bytes are already consumed from the body; hand them on
+			// so the partial file stays contiguous for a later resume.
+			return n, waitErr
 		}
 		pr.read += int64(n)
 		pr.onProgress(pr.base + pr.read)

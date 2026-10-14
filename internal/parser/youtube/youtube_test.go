@@ -20,10 +20,21 @@ import (
 	"time"
 
 	ytdl "github.com/kkdai/youtube/v2"
+	"golang.org/x/time/rate"
 
+	"github.com/rajbahakdanyu/scraper/internal/downloadercore"
 	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 	"github.com/rajbahakdanyu/scraper/internal/model"
 )
+
+func TestCopyStreamToFileRateLimitedLargeReads(t *testing.T) {
+	limiter := rate.NewLimiter(rate.Limit(1<<30), downloadercore.MinRateLimitBurst)
+	payload := strings.Repeat("x", 1<<20)
+	path := filepath.Join(t.TempDir(), "f")
+	if _, err := copyStreamToFile(t.Context(), strings.NewReader(payload), int64(len(payload)), path, limiter, nil); err != nil {
+		t.Fatalf("rate-limited copy with reads larger than the burst failed: %v", err)
+	}
+}
 
 func TestCopyStreamToFileRefusesSymlink(t *testing.T) {
 	dest := t.TempDir()

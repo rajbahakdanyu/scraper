@@ -20,10 +20,42 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/time/rate"
+
+	"github.com/rajbahakdanyu/scraper/internal/downloadercore"
 	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 	"github.com/rajbahakdanyu/scraper/internal/model"
 	"github.com/rajbahakdanyu/scraper/internal/netutil"
 )
+
+func TestProgressReaderRateLimitedLargeRead(t *testing.T) {
+	pr := &progressReader{
+		reader:     bytes.NewReader(make([]byte, 1<<20)),
+		onProgress: func(int64) {},
+		limiter:    rate.NewLimiter(rate.Limit(1<<30), downloadercore.MinRateLimitBurst),
+		ctx:        context.Background(),
+	}
+	n, err := pr.Read(make([]byte, 512*1024))
+	if err != nil || n != 512*1024 {
+		t.Fatalf("Read larger than the limiter burst = %d, %v", n, err)
+	}
+}
+
+func TestProgressReaderKeepsBytesWhenWaitCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	pr := &progressReader{
+		reader:     bytes.NewReader(make([]byte, 100)),
+		onProgress: func(int64) {},
+		limiter:    rate.NewLimiter(1, downloadercore.MinRateLimitBurst),
+		ctx:        ctx,
+	}
+	pr.limiter.AllowN(time.Now(), downloadercore.MinRateLimitBurst)
+	n, err := pr.Read(make([]byte, 100))
+	if err == nil || n != 100 {
+		t.Fatalf("cancelled wait must still report the consumed bytes, got %d, %v", n, err)
+	}
+}
 
 type noopSleeper struct{}
 

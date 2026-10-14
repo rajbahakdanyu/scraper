@@ -550,10 +550,8 @@ func copyStreamToFile(ctx context.Context, stream io.Reader, size int64, path st
 	for {
 		n, readErr := reader.Read(buf)
 		if n > 0 {
-			if limiter != nil {
-				if err := limiter.WaitN(ctx, n); err != nil {
-					return "", err
-				}
+			if err := downloadercore.WaitN(ctx, limiter, n); err != nil {
+				return "", err
 			}
 			if _, werr := out.Write(buf[:n]); werr != nil {
 				return "", model.NewNonRetryable(werr)

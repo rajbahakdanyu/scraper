@@ -1,10 +1,23 @@
 package downloadercore
 
 import (
+	"context"
 	"testing"
+
+	"golang.org/x/time/rate"
 
 	"github.com/rajbahakdanyu/scraper/internal/model"
 )
+
+func TestWaitNAdmitsMoreThanBurst(t *testing.T) {
+	limiter := rate.NewLimiter(rate.Limit(1<<30), MinRateLimitBurst)
+	if err := WaitN(context.Background(), limiter, 16*MinRateLimitBurst+1); err != nil {
+		t.Fatalf("WaitN beyond burst: %v", err)
+	}
+	if err := WaitN(context.Background(), nil, 1<<20); err != nil {
+		t.Fatalf("nil limiter must not block: %v", err)
+	}
+}
 
 func TestBeginReportsQueuedCancellation(t *testing.T) {
 	core := New(1, 1, nil, false)
