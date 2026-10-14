@@ -46,10 +46,11 @@ jobs:
       - name: Compress binaries
         run: |
           cd dist
-          sha256sum scraper-* > checksums.txt
           for f in scraper-*; do
             tar -czf "${f}.tar.gz" "$f"
           done
+          # Cover the published archives as well as the binaries inside them.
+          sha256sum scraper-* > checksums.txt
 
       - name: Create release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
