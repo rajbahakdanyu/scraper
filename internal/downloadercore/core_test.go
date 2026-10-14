@@ -9,6 +9,15 @@ import (
 	"github.com/rajbahakdanyu/scraper/internal/model"
 )
 
+func TestNewFloorsConcurrency(t *testing.T) {
+	if got := cap(New(0, 1, nil, false).sem); got != 1 {
+		t.Fatalf("concurrency floor = %d, want 1", got)
+	}
+	if got := cap(New(3, 1, nil, false).sem); got != 3 {
+		t.Fatalf("concurrency = %d, want 3", got)
+	}
+}
+
 func TestWaitNAdmitsMoreThanBurst(t *testing.T) {
 	limiter := rate.NewLimiter(rate.Limit(1<<30), MinRateLimitBurst)
 	if err := WaitN(context.Background(), limiter, 16*MinRateLimitBurst+1); err != nil {

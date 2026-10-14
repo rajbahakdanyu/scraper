@@ -1,7 +1,6 @@
 package turbo
 
 import (
-	"context"
 	"strings"
 	"testing"
 )
@@ -20,7 +19,7 @@ func FuzzExtractEmbeddedItems(f *testing.F) {
 	}
 	scraper := newTestScraper()
 	f.Fuzz(func(t *testing.T, html []byte) {
-		items := extractEmbeddedItems(html, context.Background(), scraper)
+		items := scraper.extractEmbeddedItems(html)
 		for _, item := range items {
 			if !strings.HasPrefix(item.URL, scraper.baseURL+"/d/") {
 				t.Fatalf("item URL = %q, want a page URL under %s", item.URL, scraper.baseURL)

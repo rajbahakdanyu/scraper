@@ -134,10 +134,6 @@ func nonCancelledErrs(errs []error) []error {
 	return kept
 }
 
-func assignIDs(items []model.MediaItem, prefix string) {
-	model.AssignIDs(items, prefix)
-}
-
 func writeItemResult(out io.Writer, items []model.MediaItem, errs []error, paths map[string]string, album, quality, audioOnly string) (completed, failed, cancelled, total int, totalBytes int64) {
 	for i, item := range items {
 		if item.URL == "" {
@@ -228,7 +224,7 @@ func runPlain(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error
 	}
 
 	// Mirror the dashboard: positional IDs keep duplicate URLs distinct.
-	assignIDs(items, "")
+	model.AssignIDs(items, "")
 
 	// Mirror the dashboard: albums download into a slug subfolder.
 	if len(items) > 1 && slug != "" {
@@ -402,7 +398,7 @@ batchLoop:
 
 		printCh <- fmt.Sprintf("%d items, downloading to %s\n", len(items), a.Dest)
 
-		assignIDs(items, fmt.Sprintf("%d:", albumIdx))
+		model.AssignIDs(items, fmt.Sprintf("%d:", albumIdx))
 
 		if err := fileutil.EnsureDir(a.Dest); err != nil {
 			printCh <- fmt.Sprintf("failed: %v\n", err)
@@ -484,7 +480,7 @@ func runJSON(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error)
 		return nil
 	}
 
-	assignIDs(items, "")
+	model.AssignIDs(items, "")
 
 	if len(items) > 1 && slug != "" {
 		albumDest, dErr := fileutil.SafeJoin(dest, slug)
@@ -615,7 +611,7 @@ batchLoop:
 			continue
 		}
 
-		assignIDs(items, fmt.Sprintf("%d:", albumIdx))
+		model.AssignIDs(items, fmt.Sprintf("%d:", albumIdx))
 
 		if err := fileutil.EnsureDir(a.Dest); err != nil {
 			writeJSONLine(out, model.JSONEvent{Event: "album_error", Site: a.Site, URL: a.URL, Slug: a.Slug, Error: err.Error()})

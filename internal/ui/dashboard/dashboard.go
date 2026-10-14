@@ -133,15 +133,20 @@ type Dashboard struct {
 const logo = "◢◤  SCRAPER  ◢◤"
 
 func New(scraperFn func(context.Context) ([]model.MediaItem, error), dl Downloader, dest string, site string) *Dashboard {
-	columns := []table.Column{
-		{Title: "", Width: 2},
-		{Title: "FILE", Width: 34},
-		{Title: "STATUS", Width: 12},
-		{Title: "PROGRESS", Width: 26},
-	}
+	d := newDashboard(dl, dest, site)
+	d.scraperFn = scraperFn
+	return d
+}
 
+// newDashboard builds the state shared by single-URL and batch runs.
+func newDashboard(dl Downloader, dest, site string) *Dashboard {
 	t := table.New(
-		table.WithColumns(columns),
+		table.WithColumns([]table.Column{
+			{Title: "", Width: 2},
+			{Title: "FILE", Width: 34},
+			{Title: "STATUS", Width: 12},
+			{Title: "PROGRESS", Width: 26},
+		}),
 		table.WithFocused(true),
 		table.WithHeight(4),
 	)
@@ -159,7 +164,6 @@ func New(scraperFn func(context.Context) ([]model.MediaItem, error), dl Download
 		dest:       dest,
 		site:       site,
 		phase:      phaseLoading,
-		scraperFn:  scraperFn,
 	}
 	d.scrapeCtx, d.cancelScrape = context.WithCancel(context.Background())
 	return d
@@ -182,50 +186,23 @@ func (d *Dashboard) SetRetryWriter(fn func([]FailedItem) (string, error)) { d.wr
 // NewBatch creates a dashboard for batch mode. Items are appended
 // incrementally as each album is scraped via the scrape-chain in Init.
 func NewBatch(dl Downloader, destRoot string, urls []DashAlbumURL) *Dashboard {
-	columns := []table.Column{
-		{Title: "", Width: 2},
-		{Title: "FILE", Width: 34},
-		{Title: "STATUS", Width: 12},
-		{Title: "PROGRESS", Width: 26},
-	}
-
-	t := table.New(
-		table.WithColumns(columns),
-		table.WithFocused(true),
-		table.WithHeight(4),
-	)
-
-	sp := spinner.New()
-	sp.Spinner = spinner.MiniDot
-	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(styles.ColorCyan))
-
 	siteLabel := fmt.Sprintf("%d albums", len(urls))
 	if len(urls) == 1 {
 		siteLabel = urls[0].Site
 	}
 
-	d := &Dashboard{
-		table:          t,
-		progress:       progress.New(progress.WithSolidFill(styles.ColorAccent)),
-		spinner:        sp,
-		theme:          styles.DefaultTheme(),
-		downloader:     dl,
-		dest:           destRoot,
-		site:           siteLabel,
-		phase:          phaseLoading,
-		batchMode:      true,
-		batchURLs:      urls,
-		batchRemaining: len(urls),
-	}
-	d.scrapeCtx, d.cancelScrape = context.WithCancel(context.Background())
+	d := newDashboard(dl, destRoot, siteLabel)
+	d.batchMode = true
+	d.batchURLs = urls
+	d.batchRemaining = len(urls)
 	return d
 }
 
 func (d *Dashboard) Init() tea.Cmd {
 	if d.batchMode {
-		return tea.Batch(tea.EnterAltScreen, d.spinner.Tick, d.startNextScrape())
+		return tea.Batch(d.spinner.Tick, d.startNextScrape())
 	}
-	return tea.Batch(tea.EnterAltScreen, d.spinner.Tick, d.startScrape(),
+	return tea.Batch(d.spinner.Tick, d.startScrape(),
 		tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg { return tickMsg(t) }))
 }
 

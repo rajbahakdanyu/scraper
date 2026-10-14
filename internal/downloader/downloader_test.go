@@ -420,13 +420,7 @@ func TestCancelQueuedDownload(t *testing.T) {
 	go func() { _, err := dl.Download(second, dest); secondDone <- err }()
 
 	deadline := time.Now().Add(time.Second)
-	for {
-		dl.mu.Lock()
-		_, waiting := dl.cancelMap[second.Key()]
-		dl.mu.Unlock()
-		if waiting {
-			break
-		}
+	for !dl.Waiting(second.Key()) {
 		if time.Now().After(deadline) {
 			t.Fatal("second download never entered the queue")
 		}
@@ -464,9 +458,9 @@ func TestDownloadOnceTimesOutWaitingForResponseHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDownloaderWithConfig failed: %v", err)
 	}
-	client, err := netutil.NewPublicStreamingClient(50*time.Millisecond, ts.URL)
+	client, err := netutil.NewPublicStreamingClientWithConcurrency(1, 50*time.Millisecond, ts.URL)
 	if err != nil {
-		t.Fatalf("NewPublicStreamingClient failed: %v", err)
+		t.Fatalf("NewPublicStreamingClientWithConcurrency failed: %v", err)
 	}
 	dl.client = client
 	item := model.MediaItem{URL: ts.URL, Title: "headers.bin"}
@@ -486,9 +480,6 @@ func TestNewDownloaderWithConfig(t *testing.T) {
 	dl := newTestDownloader(3, 10*time.Second, "CustomAgent/2.0")
 	if dl.userAgent != "CustomAgent/2.0" {
 		t.Errorf("expected CustomAgent/2.0, got %s", dl.userAgent)
-	}
-	if cap(dl.sem) != 3 {
-		t.Errorf("expected concurrency 3, got %d", cap(dl.sem))
 	}
 }
 
@@ -1709,13 +1700,7 @@ func TestShutdownUnblocksQueuedDownloads(t *testing.T) {
 
 	// Wait until the second download is queued behind the semaphore.
 	deadline := time.Now().Add(time.Second)
-	for {
-		dl.mu.Lock()
-		_, waiting := dl.cancelMap[second.Key()]
-		dl.mu.Unlock()
-		if waiting {
-			break
-		}
+	for !dl.Waiting(second.Key()) {
 		if time.Now().After(deadline) {
 			t.Fatal("second download never entered the queue")
 		}

@@ -86,13 +86,13 @@ func TestCopyStreamToFileReturnsInlineChecksum(t *testing.T) {
 }
 
 func TestExtractVideoID(t *testing.T) {
-	scraper := NewYouTubeScraper()
-
 	tests := []struct {
 		url      string
 		expected string
 	}{
 		{"https://www.youtube.com/watch?v=dQw4w9WgXcQ", "dQw4w9WgXcQ"},
+		{"https://www.youtube.com/watch?v=abc123XYZ_-", "abc123XYZ_-"},
+		{"https://www.youtube.com/playlist?list=PL123", ""},
 		{"https://youtu.be/dQw4w9WgXcQ", "dQw4w9WgXcQ"},
 		{"https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42", "dQw4w9WgXcQ"},
 		{"https://youtu.be/dQw4w9WgXcQ?si=abc", "dQw4w9WgXcQ"},
@@ -113,9 +113,9 @@ func TestExtractVideoID(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := scraper.extractVideoID(tt.url)
+		got := ExtractVideoID(tt.url)
 		if got != tt.expected {
-			t.Errorf("extractVideoID(%s) = %s, want %s", tt.url, got, tt.expected)
+			t.Errorf("ExtractVideoID(%s) = %s, want %s", tt.url, got, tt.expected)
 		}
 	}
 }
@@ -198,25 +198,10 @@ func TestExtractPlaylistID(t *testing.T) {
 	}
 }
 
-func TestExtractVideoIDPackageFunction(t *testing.T) {
-	tests := []struct{ url, want string }{
-		{"https://www.youtube.com/watch?v=abc123XYZ_-", "abc123XYZ_-"},
-		{"https://youtu.be/abc123XYZ_-", "abc123XYZ_-"},
-		{"https://www.youtube.com/playlist?list=PL123", ""},
-		{"https://example.com/nothing", ""},
-	}
-	for _, tt := range tests {
-		if got := ExtractVideoID(tt.url); got != tt.want {
-			t.Errorf("ExtractVideoID(%q) = %q, want %q", tt.url, got, tt.want)
-		}
-	}
-}
-
 func TestVideoWatchURLRoundTripsWithExtractVideoID(t *testing.T) {
-	s := NewYouTubeScraper()
-	got := s.extractVideoID(videoWatchURL("dQw4w9WgXcQ"))
+	got := ExtractVideoID(videoWatchURL("dQw4w9WgXcQ"))
 	if got != "dQw4w9WgXcQ" {
-		t.Errorf("videoWatchURL/extractVideoID round trip = %q, want %q", got, "dQw4w9WgXcQ")
+		t.Errorf("videoWatchURL/ExtractVideoID round trip = %q, want %q", got, "dQw4w9WgXcQ")
 	}
 }
 
@@ -317,13 +302,6 @@ func TestEstimatedSizeSumsVideoAndAudio(t *testing.T) {
 	}
 }
 
-func TestNewDownloaderEnforcesMinConcurrency(t *testing.T) {
-	d, _ := NewDownloaderWithConfig(NewYouTubeScraper(), DownloaderConfig{})
-	if cap(d.sem) != 1 {
-		t.Errorf("expected a concurrency floor of 1, got %d", cap(d.sem))
-	}
-}
-
 func TestNewDownloaderWithConfigAppliesTransferPolicy(t *testing.T) {
 	d, _ := NewDownloaderWithConfig(NewYouTubeScraper(), DownloaderConfig{
 		Concurrency:  3,
@@ -331,9 +309,10 @@ func TestNewDownloaderWithConfigAppliesTransferPolicy(t *testing.T) {
 		UserAgent:    "Custom/1.0",
 		RateLimit:    1024,
 		SkipChecksum: true,
+		Quality:      "720p",
 	})
-	if cap(d.sem) != 3 || d.limiter == nil || !d.skipSum {
-		t.Fatalf("policy not applied: sem=%d limiter=%v skip=%v", cap(d.sem), d.limiter, d.skipSum)
+	if d.Limiter() == nil || !d.SkipSum() || d.quality != 720 || d.qualityLabel != "720p" {
+		t.Fatalf("policy not applied: limiter=%v skip=%v quality=%d/%q", d.Limiter(), d.SkipSum(), d.quality, d.qualityLabel)
 	}
 }
 

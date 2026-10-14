@@ -300,9 +300,9 @@ func TestStreamingClientTimesOutStalledBodyRead(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client, err := NewPublicStreamingClient(50*time.Millisecond, ts.URL)
+	client, err := NewPublicStreamingClientWithConcurrency(1, 50*time.Millisecond, ts.URL)
 	if err != nil {
-		t.Fatalf("NewPublicStreamingClient failed: %v", err)
+		t.Fatalf("NewPublicStreamingClientWithConcurrency failed: %v", err)
 	}
 	resp, err := client.Get(ts.URL)
 	if err != nil {

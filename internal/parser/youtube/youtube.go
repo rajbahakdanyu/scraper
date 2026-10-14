@@ -74,7 +74,7 @@ func (s *Scraper) Parse(ctx context.Context, rawURL string) ([]model.MediaItem, 
 		return s.parsePlaylist(ctx, rawURL)
 	}
 
-	videoID := s.extractVideoID(rawURL)
+	videoID := ExtractVideoID(rawURL)
 	if videoID == "" {
 		return nil, fmt.Errorf("youtube: could not extract video ID from URL")
 	}
@@ -304,9 +304,7 @@ func (s *Scraper) downloadAudioOnly(ctx context.Context, video *ytdl.Video, vide
 		ext = "mp3"
 	}
 	finalPath := safeOutputPath(dest, title)
-	if ext != "mp4" {
-		finalPath = strings.TrimSuffix(finalPath, filepath.Ext(finalPath)) + "." + ext
-	}
+	finalPath = strings.TrimSuffix(finalPath, filepath.Ext(finalPath)) + "." + ext
 	finalPath = paths.Claim(finalPath, owner)
 	skip, err := prepareOutput(finalPath, skipChecksums)
 	if err != nil {
@@ -663,12 +661,13 @@ func commitOutputWithChecksum(tempPath, finalPath string, skipChecksums bool, ch
 	return nil
 }
 
-// extractVideoID pulls the video ID out of a YouTube URL. It handles the
-// modern URL shapes (/watch?v=, youtu.be, /shorts/, /embed/, /live/) by
-// parsing the URL properly rather than substring-matching "v=" — the old
-// approach both missed the path-based shapes and false-positived on
-// unrelated query parameters that merely contain "v=" (e.g. ?iv=...).
-func (s *Scraper) extractVideoID(rawURL string) string {
+// ExtractVideoID pulls the video ID out of a YouTube URL, or "" if rawURL
+// is not a single-video URL. It handles the modern URL shapes (/watch?v=,
+// youtu.be, /shorts/, /embed/, /live/) by parsing the URL properly rather
+// than substring-matching "v=" — the old approach both missed the
+// path-based shapes and false-positived on unrelated query parameters that
+// merely contain "v=" (e.g. ?iv=...).
+func ExtractVideoID(rawURL string) string {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return ""
@@ -712,15 +711,8 @@ func ExtractPlaylistID(rawURL string) string {
 	return u.Query().Get("list")
 }
 
-// ExtractVideoID returns the video ID from a watch or youtu.be URL, or ""
-// if rawURL is not a single-video URL.
-func ExtractVideoID(rawURL string) string {
-	s := &Scraper{}
-	return s.extractVideoID(rawURL)
-}
-
 // videoWatchURL builds a canonical watch URL from a bare video ID, so
-// MediaItem.URL is always something extractVideoID can round-trip.
+// MediaItem.URL is always something ExtractVideoID can round-trip.
 func videoWatchURL(videoID string) string {
 	return "https://www.youtube.com/watch?v=" + videoID
 }
@@ -787,15 +779,11 @@ type DownloaderConfig struct {
 // ffmpeg when they aren't already combined in one stream.
 type Downloader struct {
 	*downloadercore.Core
-	scraper *Scraper
-	// These aliases preserve the package-level policy inspection used by
-	// existing tests; Core remains authoritative for coordination and policy.
-	sem       chan struct{}
-	paths     *fileutil.PathAllocator
-	limiter   *rate.Limiter
-	skipSum   bool
-	quality   int    // maxHeight; 0 = no cap
-	audioOnly string // "" or "m4a"/"mp3"
+	scraper      *Scraper
+	paths        *fileutil.PathAllocator
+	quality      int    // maxHeight; 0 = no cap
+	qualityLabel string // the configured cap as given, e.g. "1080p"
+	audioOnly    string // "" or "m4a"/"mp3"
 }
 
 func NewDownloaderWithConfig(scraper *Scraper, config DownloaderConfig) (*Downloader, error) {
@@ -809,40 +797,23 @@ func NewDownloaderWithConfig(scraper *Scraper, config DownloaderConfig) (*Downlo
 		config.UserAgent = configpkg.DefaultUserAgent
 	}
 	scraper.warn = config.Warn
-	if config.ProxyURL != "" {
-		httpClient, err := netutil.NewPublicStreamingClientWithProxy(config.Timeout, config.ProxyURL)
-		if err != nil {
-			return nil, err
-		}
-		scraper.video.HTTPClient = netutil.WithUserAgent(httpClient, config.UserAgent)
-		scraper.video.HTTPClient = netutil.WithCookies(scraper.video.HTTPClient, config.Cookies)
-	} else {
-		httpClient, err := netutil.NewPublicStreamingClient(config.Timeout)
-		if err != nil {
-			return nil, err
-		}
-		scraper.video.HTTPClient = netutil.WithUserAgent(httpClient, config.UserAgent)
-		scraper.video.HTTPClient = netutil.WithCookies(scraper.video.HTTPClient, config.Cookies)
+	httpClient, err := netutil.NewPublicStreamingClientWithProxy(config.Timeout, config.ProxyURL)
+	if err != nil {
+		return nil, err
 	}
+	scraper.video.HTTPClient = netutil.WithCookies(netutil.WithUserAgent(httpClient, config.UserAgent), config.Cookies)
 
 	var limiter *rate.Limiter
 	if config.RateLimit > 0 {
 		limiter = rate.NewLimiter(rate.Limit(config.RateLimit), downloadercore.MinRateLimitBurst)
 	}
-	var maxHeight int
-	if config.Quality != "" {
-		maxHeight = parseQualityHeight(config.Quality)
-	}
-	core := downloadercore.New(config.Concurrency, downloadercore.ProgressBufSize, limiter, config.SkipChecksum)
 	return &Downloader{
-		Core:      core,
-		scraper:   scraper,
-		sem:       core.Semaphore(),
-		paths:     fileutil.NewPathAllocator(),
-		limiter:   limiter,
-		skipSum:   config.SkipChecksum,
-		quality:   maxHeight,
-		audioOnly: config.AudioOnly,
+		Core:         downloadercore.New(config.Concurrency, downloadercore.ProgressBufSize, limiter, config.SkipChecksum),
+		scraper:      scraper,
+		paths:        fileutil.NewPathAllocator(),
+		quality:      qualityHeights[config.Quality],
+		qualityLabel: config.Quality,
+		audioOnly:    config.AudioOnly,
 	}, nil
 }
 
@@ -856,33 +827,14 @@ var qualityHeights = map[string]int{
 	"240p":  240,
 }
 
-var validQualities = map[string]bool{
-	"": true, "2160p": true, "1440p": true, "1080p": true,
-	"720p": true, "480p": true, "360p": true, "240p": true,
-}
-
+// ValidQuality reports whether q is a supported --quality value and its
+// height cap; "" (no cap) is valid with height 0.
 func ValidQuality(q string) (int, bool) {
-	if !validQualities[q] {
-		return 0, false
-	}
 	if q == "" {
 		return 0, true
 	}
-	return qualityHeights[q], true
-}
-
-var qualityHeightsReverse = map[int]string{
-	2160: "2160p",
-	1440: "1440p",
-	1080: "1080p",
-	720:  "720p",
-	480:  "480p",
-	360:  "360p",
-	240:  "240p",
-}
-
-func parseQualityHeight(q string) int {
-	return qualityHeights[q]
+	height, ok := qualityHeights[q]
+	return height, ok
 }
 
 // Compile-time check that Downloader satisfies the dashboard's Downloader
@@ -901,23 +853,24 @@ func (d *Downloader) Prepare(item model.MediaItem) {
 }
 
 func (d *Downloader) Download(item model.MediaItem, dest string) (string, error) {
-	cancelledEvent := model.ProgressEvent{Item: item, Status: model.StatusCancelled, Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly}
-	ctx, _, release, err := d.Core.Begin(item.Key(), item, cancelledEvent)
+	ctx, _, release, err := d.Core.Begin(item.Key(), item, d.event(item, model.StatusCancelled))
 	if err != nil {
 		return "", err
 	}
 	defer release()
 
 	if err := os.MkdirAll(dest, 0750); err != nil {
-		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed, Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
+		d.sendProgress(d.event(item, model.StatusFailed))
 		return "", model.NewNonRetryable(fmt.Errorf("create output directory: %w", err))
 	}
 
-	d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusDownloading, Start: time.Now(), Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
+	started := d.event(item, model.StatusDownloading)
+	started.Start = time.Now()
+	d.sendProgress(started)
 
-	videoID := d.scraper.extractVideoID(item.URL)
+	videoID := ExtractVideoID(item.URL)
 	if videoID == "" {
-		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed, Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
+		d.sendProgress(d.event(item, model.StatusFailed))
 		return "", fmt.Errorf("youtube: could not extract video ID from %s", item.URL)
 	}
 
@@ -925,22 +878,31 @@ func (d *Downloader) Download(item model.MediaItem, dest string) (string, error)
 	err = withRetry(ctx, func() error {
 		var err error
 		finalPath, err = d.scraper.downloadBest(ctx, videoID, dest, item.Key(), d.paths, d.Core.Limiter(), d.Core.SkipSum(), d.quality, d.audioOnly, func(bytes, total int64) {
-			d.sendProgress(model.ProgressEvent{Item: item, Bytes: bytes, Total: total, Status: model.StatusDownloading, Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
+			evt := d.event(item, model.StatusDownloading)
+			evt.Bytes, evt.Total = bytes, total
+			d.sendProgress(evt)
 		})
 		return err
 	})
 
 	switch {
 	case err == nil:
-		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCompleted, Filename: finalPath, Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
+		done := d.event(item, model.StatusCompleted)
+		done.Filename = finalPath
+		d.sendProgress(done)
 		return finalPath, nil
 	case ctx.Err() != nil:
-		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCancelled, Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
+		d.sendProgress(d.event(item, model.StatusCancelled))
 		return "", &model.CancelledError{URL: item.URL}
 	default:
-		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed, Quality: qualityHeightsReverse[d.quality], AudioOnly: d.audioOnly})
+		d.sendProgress(d.event(item, model.StatusFailed))
 		return "", err
 	}
+}
+
+// event builds a progress event tagged with this run's quality settings.
+func (d *Downloader) event(item model.MediaItem, status model.DownloadStatus) model.ProgressEvent {
+	return model.ProgressEvent{Item: item, Status: status, Quality: d.qualityLabel, AudioOnly: d.audioOnly}
 }
 
 // Cancel cancels an active download for the given item, aborting an

@@ -209,8 +209,7 @@ func (s *Scraper) parseFolder(ctx context.Context, id string) ([]model.MediaItem
 
 func itemsFromEntries(allEntries []folderEntry, s *Scraper) []model.MediaItem {
 	items := make([]model.MediaItem, 0, len(allEntries))
-	for _, e := range allEntries {
-		entry := e
+	for _, entry := range allEntries {
 		title := entry.name
 		if title == "" {
 			title = entry.slug

@@ -81,9 +81,9 @@ func (s *Scraper) parseAlbum(ctx context.Context, rawURL string) ([]model.MediaI
 
 	// Older pages render the file table server-side; current pages embed
 	// the list in a script and build the rows client-side.
-	items := extractRowItems(doc, ctx, s)
+	items := s.extractRowItems(doc)
 	if len(items) == 0 {
-		items = extractEmbeddedItems(html, ctx, s)
+		items = s.extractEmbeddedItems(html)
 	}
 
 	if len(items) == 0 {
@@ -95,7 +95,7 @@ func (s *Scraper) parseAlbum(ctx context.Context, rawURL string) ([]model.MediaI
 
 // extractRowItems reads the legacy server-rendered <tr class="file-row">
 // table rows.
-func extractRowItems(doc *goquery.Document, ctx context.Context, s *Scraper) []model.MediaItem {
+func (s *Scraper) extractRowItems(doc *goquery.Document) []model.MediaItem {
 	var items []model.MediaItem
 	doc.Find("tr.file-row").Each(func(_ int, sel *goquery.Selection) {
 		fileID, _ := sel.Attr("data-id")
@@ -104,7 +104,7 @@ func extractRowItems(doc *goquery.Document, ctx context.Context, s *Scraper) []m
 		}
 		fileName, _ := sel.Attr("data-name")
 		sizeStr, _ := sel.Attr("data-size")
-		items = append(items, albumItem(ctx, s, fileID, fileName, parseSize(sizeStr)))
+		items = append(items, s.albumItem(fileID, fileName, parseSize(sizeStr)))
 	})
 	return items
 }
@@ -116,24 +116,24 @@ var turboEmbeddedFile = regexp.MustCompile(`\{\s*id:"([^"]+)"\s*,\s*name:"((?:[^
 
 // extractEmbeddedItems reads the file list the page embeds for its
 // client-side rendering.
-func extractEmbeddedItems(html []byte, ctx context.Context, s *Scraper) []model.MediaItem {
+func (s *Scraper) extractEmbeddedItems(html []byte) []model.MediaItem {
 	matches := turboEmbeddedFile.FindAllSubmatch(html, -1)
 	items := make([]model.MediaItem, 0, len(matches))
 	for _, m := range matches {
 		fileID := string(m[1])
 		name := decodeJSString(string(m[2]))
-		items = append(items, albumItem(ctx, s, fileID, name, parseSize(string(m[3]))))
+		items = append(items, s.albumItem(fileID, name, parseSize(string(m[3]))))
 	}
 	return items
 }
 
-func albumItem(ctx context.Context, s *Scraper, fileID, name string, size int64) model.MediaItem {
+func (s *Scraper) albumItem(fileID, name string, size int64) model.MediaItem {
 	return model.MediaItem{
 		URL:     fmt.Sprintf("%s/d/%s", s.baseURL, fileID),
 		Title:   name,
 		Size:    size,
 		Type:    model.MediaTypeForName(name),
-		Resolve: s.resolveFile(ctx, fileID),
+		Resolve: s.resolveFile(fileID),
 	}
 }
 
@@ -158,7 +158,7 @@ func decodeJSString(raw string) string {
 	return raw
 }
 
-func (s *Scraper) resolveFile(ctx context.Context, fileID string) func(context.Context) (string, error) {
+func (s *Scraper) resolveFile(fileID string) func(context.Context) (string, error) {
 	return func(ctx context.Context) (string, error) {
 		return s.signURL(ctx, fileID)
 	}
@@ -198,7 +198,7 @@ func (s *Scraper) parseFile(ctx context.Context, rawURL string) ([]model.MediaIt
 		Title:   fileName,
 		Size:    size,
 		Type:    model.MediaTypeForName(fileName),
-		Resolve: s.resolveFile(ctx, fileID),
+		Resolve: s.resolveFile(fileID),
 	}}, nil
 }
 

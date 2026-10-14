@@ -16,7 +16,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -40,13 +39,8 @@ var renameFile = os.Rename
 // cancellation, retry, and atomic file writes.
 type Downloader struct {
 	*downloadercore.Core
-	client    *http.Client
-	userAgent string
-	// These aliases keep existing package tests able to inspect coordination
-	// state while the embedded core owns the state and its lifecycle.
-	mu            *sync.Mutex
-	cancelMap     map[string]context.CancelFunc
-	sem           chan struct{}
+	client        *http.Client
+	userAgent     string
 	skipChecksums bool
 	paths         *fileutil.PathAllocator
 	sleeper       netutil.Sleeper
@@ -74,14 +68,10 @@ func NewDownloaderWithConfig(concurrency int, timeout time.Duration, userAgent, 
 		return nil, err
 	}
 	client = netutil.WithCookies(client, cookies)
-	core := downloadercore.New(concurrency, downloadercore.ProgressBufSize, nil, false)
 	return &Downloader{
-		Core:      core,
+		Core:      downloadercore.New(concurrency, downloadercore.ProgressBufSize, nil, false),
 		client:    client,
 		userAgent: userAgent,
-		mu:        core.Mutex(),
-		cancelMap: core.CancelMap(),
-		sem:       core.Semaphore(),
 		paths:     fileutil.NewPathAllocator(),
 		sleeper:   netutil.RealSleeper{},
 	}, nil

@@ -242,10 +242,6 @@ func (p *Policy) dialContext(dialer *net.Dialer, readTimeout time.Duration) func
 	}
 }
 
-func NewPublicStreamingClient(responseHeaderTimeout time.Duration, allowedPrivateURLs ...string) (*http.Client, error) {
-	return newPublicClientWithConcurrency(1, 0, responseHeaderTimeout, responseHeaderTimeout, "", allowedPrivateURLs...)
-}
-
 // BrowserUserAgent is what the site scrapers send; several hosts reject
 // non-browser agents on their page and API endpoints.
 const BrowserUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"

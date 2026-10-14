@@ -16,7 +16,7 @@ const (
 	MinRateLimitBurst = 32 * 1024
 )
 
-type downloaderCore struct {
+type Core struct {
 	mu           sync.Mutex
 	wg           sync.WaitGroup
 	sem          chan struct{}
@@ -28,9 +28,6 @@ type downloaderCore struct {
 	limiter      *rate.Limiter
 	skipSum      bool
 }
-
-// Core is the cross-package name for the unexported shared implementation.
-type Core = downloaderCore
 
 func New(concurrency, progressBuffer int, limiter *rate.Limiter, skipSum bool) *Core {
 	if concurrency < 1 {
@@ -163,14 +160,15 @@ func WaitN(ctx context.Context, limiter *rate.Limiter, n int) error {
 	return nil
 }
 
-func (c *Core) SetSkipSum(skip bool) { c.skipSum = skip }
-
 func (c *Core) Limiter() *rate.Limiter { return c.limiter }
 
 func (c *Core) SkipSum() bool { return c.skipSum }
 
-func (c *Core) Semaphore() chan struct{} { return c.sem }
-
-func (c *Core) Mutex() *sync.Mutex { return &c.mu }
-
-func (c *Core) CancelMap() map[string]context.CancelFunc { return c.cancelMap }
+// Waiting reports whether key's download has begun (it may still be
+// blocked on a concurrency slot). Tests use it to sequence cancellation.
+func (c *Core) Waiting(key string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_, ok := c.cancelMap[key]
+	return ok
+}
