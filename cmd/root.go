@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -431,9 +433,41 @@ func exitCode(err error) int {
 // logFile is the optional --log-file sink; nil when unset.
 var logFile io.Writer
 
-// diskWarn is the sink for --disk-check warnings (a test seam mirroring
-// logFile).
-var diskWarn io.Writer = os.Stderr
+// noticeSink, when non-nil, receives in-run warnings instead of stderr.
+var (
+	noticeMu   sync.Mutex
+	noticeSink io.Writer
+)
+
+// notice prints an in-run warning (filters, caps, disk space). Scrapes run
+// while the TUI owns the terminal, so these must not go straight to stderr.
+func notice(format string, args ...any) {
+	noticeMu.Lock()
+	defer noticeMu.Unlock()
+	w := noticeSink
+	if w == nil {
+		w = os.Stderr
+	}
+	fmt.Fprintf(w, format, args...)
+}
+
+// withBufferedNotices holds notices while fn owns the terminal and prints
+// them once it returns.
+func withBufferedNotices(fn func() error) error {
+	var buf bytes.Buffer
+	noticeMu.Lock()
+	noticeSink = &buf
+	noticeMu.Unlock()
+
+	err := fn()
+
+	noticeMu.Lock()
+	noticeSink = nil
+	held := buf.String()
+	noticeMu.Unlock()
+	fmt.Fprint(os.Stderr, held)
+	return err
+}
 
 // openLogFile opens (appending) the optional run log. A failure is fatal so
 // a typo'd path is caught before any downloads start.
@@ -893,6 +927,7 @@ func buildDownloader(scraper model.Scraper, siteName string, cfg *config.Config,
 			Cookies:      cfg.ParsedCookies(),
 			Quality:      cfg.Quality,
 			AudioOnly:    cfg.AudioOnly,
+			Warn:         func(msg string) { notice("%s\n", msg) },
 		})
 		if err != nil {
 			return nil, fmt.Errorf("youtube downloader: %w", err)
@@ -922,7 +957,7 @@ func finishRun(cfg *config.Config, opts globalOptions, jsonRun, plainRun, tuiRun
 	} else if opts.noTui || !term.IsTerminal(int(os.Stdout.Fd())) {
 		err = plainRun()
 	} else {
-		err = tuiRun()
+		err = withBufferedNotices(tuiRun)
 	}
 	if cfg.Notify {
 		tryNotify(notificationSummary(err))
@@ -1361,9 +1396,9 @@ func (f *filterScraper) Parse(ctx context.Context, url string) ([]model.MediaIte
 	if len(f.include) > 0 || len(f.exclude) > 0 || f.minSize > 0 || f.maxSize > 0 {
 		var summary model.FilterSummary
 		filtered, summary = model.FilterItems(items, f.include, f.exclude, f.minSize, f.maxSize)
-		fmt.Fprintf(os.Stderr, "filters: %s\n", summary)
+		notice("filters: %s\n", summary)
 		if len(filtered) == 0 {
-			fmt.Fprintln(os.Stderr, "No items matched filters.")
+			notice("No items matched filters.\n")
 		}
 	}
 	if f.diskCheck && !f.diskChecked {
@@ -1392,7 +1427,7 @@ func applyAlbumItemCap(items []model.MediaItem, max int) []model.MediaItem {
 	if max <= 0 || len(items) <= max {
 		return items
 	}
-	fmt.Fprintf(os.Stderr, "album item cap: keeping first %d of %d items (max_album_items)\n", max, len(items))
+	notice("album item cap: keeping first %d of %d items (max_album_items)\n", max, len(items))
 	return items[:max]
 }
 
@@ -1402,10 +1437,10 @@ func applyAlbumItemCap(items []model.MediaItem, max int) []model.MediaItem {
 func applyMediaFilter(items []model.MediaItem, extraExtensions []string) []model.MediaItem {
 	kept, skipped := model.NewMediaFilter(extraExtensions).Filter(items)
 	if skipped > 0 {
-		fmt.Fprintf(os.Stderr, "media filter: %d/%d items (%d skipped non-media)\n", len(kept), len(items), skipped)
+		notice("media filter: %d/%d items (%d skipped non-media)\n", len(kept), len(items), skipped)
 	}
 	if len(items) > 0 && len(kept) == 0 {
-		fmt.Fprintln(os.Stderr, "No media items found.")
+		notice("No media items found.\n")
 	}
 	return kept
 }
@@ -1430,11 +1465,11 @@ func runDiskCheck(items []model.MediaItem, outputDir string, diskCheck bool) {
 	if err != nil {
 		// The check was requested: failing to see the filesystem is
 		// worth a line, not silence.
-		fmt.Fprintf(diskWarn, "disk: could not check free space for %s: %v\n", outputDir, err)
+		notice("disk: could not check free space for %s: %v\n", outputDir, err)
 		return
 	}
 	if free < total {
-		fmt.Fprintln(diskWarn, diskWarning(total, free, unknown))
+		notice("%s\n", diskWarning(total, free, unknown))
 	}
 }
 

@@ -35,6 +35,9 @@ type Scraper struct {
 	// a second time. Guarded by mu because downloads run concurrently.
 	mu     sync.Mutex
 	parsed map[string]*ytdl.Video
+
+	// warn receives non-fatal notices (quality fallback); nil drops them.
+	warn func(string)
 }
 
 // NewYouTubeScraper creates a YouTube scraper using the kkdai/youtube library
@@ -154,7 +157,7 @@ func estimatedSize(video *ytdl.Video, maxHeight int) int64 {
 
 // selectFormats picks the best video format (capped at maxHeight when set,
 // 0 = no cap) and the best audio-only format. When maxHeight is set and
-// no format fits, the displayable best is returned with a stderr warning.
+// no format fits, the displayable best is returned instead.
 func selectFormats(video *ytdl.Video, maxHeight int) (videoFmt, audioFmt *ytdl.Format) {
 	for i := range video.Formats {
 		f := &video.Formats[i]
@@ -171,9 +174,6 @@ func selectFormats(video *ytdl.Video, maxHeight int) (videoFmt, audioFmt *ytdl.F
 	}
 	if videoFmt == nil && maxHeight > 0 {
 		videoFmt, _ = selectFormats(video, 0)
-		if videoFmt != nil {
-			fmt.Fprintf(os.Stderr, "youtube: quality %dp not available, falling back to %dp\n", maxHeight, videoFmt.Height)
-		}
 	}
 	if videoFmt == nil || videoFmt.AudioChannels > 0 {
 		return videoFmt, nil
@@ -281,6 +281,9 @@ func (s *Scraper) downloadBest(ctx context.Context, videoID, dest, owner string,
 		// members-only, audio-less, ...) — refetching the same metadata
 		// on a retry won't change that.
 		return "", model.NewNonRetryable(err)
+	}
+	if s.warn != nil && audioOnly == "" && maxHeight > 0 && videoFmt.Height > maxHeight {
+		s.warn(fmt.Sprintf("youtube: %s: %dp not available, using %dp", title, maxHeight, videoFmt.Height))
 	}
 
 	if audioOnly != "" {
@@ -767,6 +770,8 @@ type DownloaderConfig struct {
 	Cookies      []*http.Cookie
 	Quality      string // "" or "1080p" etc.
 	AudioOnly    string // "" or "m4a"/"mp3"
+	// Warn receives non-fatal notices such as a quality fallback.
+	Warn func(string)
 }
 
 // Downloader adapts Scraper to the dashboard's Downloader interface (see
@@ -798,6 +803,7 @@ func NewDownloaderWithConfig(scraper *Scraper, config DownloaderConfig) (*Downlo
 	if config.UserAgent == "" {
 		config.UserAgent = configpkg.DefaultUserAgent
 	}
+	scraper.warn = config.Warn
 	if config.ProxyURL != "" {
 		httpClient, err := netutil.NewPublicStreamingClientWithProxy(config.Timeout, config.ProxyURL)
 		if err != nil {

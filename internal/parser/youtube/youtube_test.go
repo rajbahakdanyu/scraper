@@ -486,6 +486,27 @@ func TestDownloadBestNoFormatsIsPermanent(t *testing.T) {
 	}
 }
 
+func TestDownloadBestWarnsOnQualityFallback(t *testing.T) {
+	scraper := NewYouTubeScraper()
+	var warnings []string
+	scraper.warn = func(msg string) { warnings = append(warnings, msg) }
+	scraper.parsed["v"] = &ytdl.Video{ID: "v", Title: "Clip", Formats: ytdl.FormatList{
+		{Height: 360, AudioChannels: 2, MimeType: "video/mp4"},
+	}}
+	dest := t.TempDir()
+	// An existing output makes downloadBest skip the network fetch.
+	if err := os.WriteFile(filepath.Join(dest, "Clip.mp4"), []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := scraper.downloadBest(t.Context(), "v", dest, "owner", fileutil.NewPathAllocator(), nil, true, 240, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "240p not available, using 360p") {
+		t.Fatalf("expected one quality-fallback warning, got %q", warnings)
+	}
+}
+
 // stubFFmpeg puts an executable named "ffmpeg" on PATH that runs the given
 // shell script body, so mux code can be tested without a real ffmpeg. The
 // stub records its arguments to the file named in $FFMPEG_ARGS_FILE.

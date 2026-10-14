@@ -955,13 +955,29 @@ func TestBunkerMirrorDomainsMatchSiteDomains(t *testing.T) {
 }
 
 func TestRunDiskCheckWarnsForMissingOutputDir(t *testing.T) {
-	var buf bytes.Buffer
-	prev := diskWarn
-	diskWarn = &buf
-	t.Cleanup(func() { diskWarn = prev })
-	runDiskCheck([]model.MediaItem{{Title: "big.mp4", Size: 1 << 62}}, filepath.Join(t.TempDir(), "missing"), true)
-	if !strings.Contains(buf.String(), "short") {
-		t.Fatalf("a huge download into a fresh directory must warn, got %q", buf.String())
+	stderr := captureStderr(func() {
+		runDiskCheck([]model.MediaItem{{Title: "big.mp4", Size: 1 << 62}}, filepath.Join(t.TempDir(), "missing"), true)
+	})
+	if !strings.Contains(stderr, "short") {
+		t.Fatalf("a huge download into a fresh directory must warn, got %q", stderr)
+	}
+}
+
+func TestWithBufferedNoticesHoldsWarningsUntilTheTUIExits(t *testing.T) {
+	var during string
+	after := captureStderr(func() {
+		_ = withBufferedNotices(func() error {
+			during = captureStderr(func() {
+				applyAlbumItemCap(make([]model.MediaItem, 3), 1)
+			})
+			return nil
+		})
+	})
+	if during != "" {
+		t.Fatalf("notices must not reach stderr while the TUI runs, got %q", during)
+	}
+	if !strings.Contains(after, "album item cap") {
+		t.Fatalf("held notices must be printed after the TUI exits, got %q", after)
 	}
 }
 
