@@ -138,6 +138,10 @@ with `--dry-run`, it emits a single JSON document describing the albums
 ./scraper -j --dry-run https://filester.sh/f/FOLDER_ID
 ```
 
+Exit status is the same in every mode (TUI, `--no-tui`, `--json`): `0` when
+everything downloaded, `1` when the run failed outright (e.g. the URL could not
+be scraped), and `2` when only some items or albums failed.
+
 ### YouTube
 
 Works on both a single video URL and a playlist URL (anything with a

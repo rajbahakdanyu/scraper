@@ -458,6 +458,36 @@ func TestRenderStatsShowsXWhenFailed(t *testing.T) {
 	}
 }
 
+func TestResultReportsFailuresForExitStatus(t *testing.T) {
+	items := []model.MediaItem{
+		{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100},
+		{URL: "https://example.com/b.mp4", Title: "b.mp4", Size: 100},
+	}
+	d := New(instantItems(items), nil, t.TempDir(), "cyberdrop")
+	d.Update(scrapeResultMsg{items: items})
+	d.applyDone(downloadDoneMsg{key: d.states[0].item.Key()})
+	if err := d.Result(); err != nil {
+		t.Fatalf("Result with no failures = %v, want nil", err)
+	}
+	d.applyDone(downloadDoneMsg{key: d.states[1].item.Key(), err: errors.New("boom")})
+	var partial *model.PartialError
+	if err := d.Result(); !errors.As(err, &partial) {
+		t.Fatalf("Result with a failed item = %v, want *model.PartialError", err)
+	}
+
+	dead := New(instantItems(nil), nil, t.TempDir(), "cyberdrop")
+	dead.Update(scrapeResultMsg{err: errors.New("404")})
+	if err := dead.Result(); err == nil || errors.As(err, &partial) {
+		t.Fatalf("a failed single-URL scrape must be a plain error, got %v", err)
+	}
+
+	batch := NewBatch(nil, t.TempDir(), []DashAlbumURL{{URL: "https://example.com/a/x"}})
+	batch.handleBatchScrape(batchScrapeMsg{album: DashAlbumURL{URL: "https://example.com/a/x"}, err: errors.New("gone")})
+	if err := batch.Result(); !errors.As(err, &partial) {
+		t.Fatalf("a failed batch album must be a partial error, got %v", err)
+	}
+}
+
 func TestDuplicateURLsUpdateIndependentRows(t *testing.T) {
 	items := []model.MediaItem{
 		{URL: "https://example.com/same", Title: "first.mp4", Size: 100},

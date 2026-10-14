@@ -891,24 +891,36 @@ func runWithScraperAndConfig(cfg *config.Config, scraper model.Scraper, targetUR
 			d := dashboard.New(scraperFn, dl, cfg.OutputDir, siteName)
 			d.SetAlbumSlug(slug)
 			d.SetSourceURL(targetURL)
-			d.SetRetryWriter(func(items []dashboard.FailedItem) (string, error) {
-				path, _, err := retryReport(cfg.OutputDir, failuresFromDashboard(items), time.Now())
-				return path, err
-			})
-
-			p := tea.NewProgram(d, tea.WithAltScreen(), tea.WithMouseCellMotion())
-
-			final, err := p.Run()
-			if dash, ok := final.(*dashboard.Dashboard); ok {
-				if _, summary, rErr := retryReport(cfg.OutputDir, failuresFromDashboard(dash.Failures()), time.Now()); rErr != nil {
-					fmt.Fprintf(os.Stderr, "retry list: %v\n", rErr)
-				} else if summary != "" {
-					fmt.Fprintln(os.Stdout, summary)
-				}
-			}
-			return err
+			return runTUI(d, cfg.OutputDir)
 		},
 	)
+}
+
+// runTUI runs the dashboard and, once it exits, writes the retry list and
+// reports failures as an error so the exit code matches plain/JSON runs.
+func runTUI(d *dashboard.Dashboard, outputDir string) error {
+	d.SetRetryWriter(func(items []dashboard.FailedItem) (string, error) {
+		path, _, err := retryReport(outputDir, failuresFromDashboard(items), time.Now())
+		return path, err
+	})
+	final, err := tea.NewProgram(d, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
+	if err != nil {
+		return err
+	}
+	return tuiResult(final, outputDir)
+}
+
+func tuiResult(final tea.Model, outputDir string) error {
+	dash, ok := final.(*dashboard.Dashboard)
+	if !ok {
+		return nil
+	}
+	if _, summary, rErr := retryReport(outputDir, failuresFromDashboard(dash.Failures()), time.Now()); rErr != nil {
+		fmt.Fprintf(os.Stderr, "retry list: %v\n", rErr)
+	} else if summary != "" {
+		fmt.Fprintln(os.Stdout, summary)
+	}
+	return dash.Result()
 }
 
 func buildDownloader(scraper model.Scraper, siteName string, cfg *config.Config, rateLimitBytesPerSec int64) (dashboard.Downloader, error) {
@@ -1250,23 +1262,7 @@ func runBatchGroup(cfg *config.Config, opts globalOptions, reg map[string]model.
 			return runBatchPlain(dl, dashAlbums, cfg.OutputDir, os.Stdout)
 		},
 		func() error {
-			d := dashboard.NewBatch(dl, cfg.OutputDir, dashAlbums)
-			d.SetRetryWriter(func(items []dashboard.FailedItem) (string, error) {
-				path, _, err := retryReport(cfg.OutputDir, failuresFromDashboard(items), time.Now())
-				return path, err
-			})
-
-			p := tea.NewProgram(d, tea.WithAltScreen(), tea.WithMouseCellMotion())
-
-			final, err := p.Run()
-			if dash, ok := final.(*dashboard.Dashboard); ok {
-				if _, summary, rErr := retryReport(cfg.OutputDir, failuresFromDashboard(dash.Failures()), time.Now()); rErr != nil {
-					fmt.Fprintf(os.Stderr, "retry list: %v\n", rErr)
-				} else if summary != "" {
-					fmt.Fprintln(os.Stdout, summary)
-				}
-			}
-			return err
+			return runTUI(dashboard.NewBatch(dl, cfg.OutputDir, dashAlbums), cfg.OutputDir)
 		},
 	)
 }

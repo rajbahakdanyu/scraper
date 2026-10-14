@@ -3,6 +3,7 @@ package dashboard
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -118,6 +119,7 @@ type Dashboard struct {
 	batchURLs      []DashAlbumURL
 	batchIdx       int
 	batchRemaining int
+	scrapeErrs     []error
 	scrapeCtx      context.Context
 	cancelScrape   context.CancelFunc
 
@@ -611,6 +613,7 @@ func (d *Dashboard) applyPendingProgress() {
 func (d *Dashboard) handleBatchScrape(msg batchScrapeMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil && len(msg.items) == 0 {
 		d.loadingErr = fmt.Sprintf("%s: %v", msg.album.URL, msg.err)
+		d.scrapeErrs = append(d.scrapeErrs, errors.New(d.loadingErr))
 		d.appendError(d.loadingErr)
 		d.batchRemaining--
 		d.batchIdx++
@@ -647,17 +650,20 @@ func (d *Dashboard) handleBatchScrape(msg batchScrapeMsg) (tea.Model, tea.Cmd) {
 
 	if err := os.MkdirAll(msg.album.Dest, 0750); err != nil {
 		d.loadingErr = fmt.Sprintf("create album directory: %v", err)
+		d.scrapeErrs = append(d.scrapeErrs, errors.New(d.loadingErr))
 		d.phase = phaseDone
 		return d, nil
 	}
 	fi, err := os.Lstat(msg.album.Dest)
 	if err != nil {
 		d.loadingErr = err.Error()
+		d.scrapeErrs = append(d.scrapeErrs, err)
 		d.phase = phaseDone
 		return d, nil
 	}
 	if fi.Mode()&os.ModeSymlink != 0 {
 		d.loadingErr = fmt.Sprintf("refusing to use symlinked output directory: %s", msg.album.Dest)
+		d.scrapeErrs = append(d.scrapeErrs, errors.New(d.loadingErr))
 		d.phase = phaseDone
 		return d, nil
 	}
@@ -851,6 +857,20 @@ type FailedItem struct {
 	Item      model.MediaItem
 	Err       error
 	SourceURL string
+}
+
+// Result reports how the run ended, mirroring the plain/JSON runners for
+// the CLI's exit status: a failed single-URL scrape is a plain error, and
+// failed items or batch albums are a *model.PartialError.
+func (d *Dashboard) Result() error {
+	if !d.batchMode && d.loadingErr != "" {
+		return errors.New(d.loadingErr)
+	}
+	errs := append([]error(nil), d.scrapeErrs...)
+	for _, f := range d.Failures() {
+		errs = append(errs, f.Err)
+	}
+	return model.NewPartialError("download", errs)
 }
 
 // Failures returns the items that ended in the failed state, in display
