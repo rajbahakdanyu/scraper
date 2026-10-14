@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	ytdl "github.com/kkdai/youtube/v2"
@@ -376,14 +377,6 @@ func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFm
 		audioExt = "webm"
 	}
 
-	tmpDir, err := newMuxWorkDir(dest)
-	if err != nil {
-		return model.NewNonRetryable(err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	videoPath := filepath.Join(tmpDir, "video."+videoExt)
-	audioPath := filepath.Join(tmpDir, "audio."+audioExt)
 	outputPath := paths.Claim(safeOutputPath(dest, title), owner)
 	skip, err := prepareOutput(outputPath, skipChecksums)
 	if err != nil {
@@ -392,6 +385,15 @@ func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFm
 	if skip {
 		return nil
 	}
+
+	tmpDir, err := newMuxWorkDir(dest)
+	if err != nil {
+		return model.NewNonRetryable(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	videoPath := filepath.Join(tmpDir, "video."+videoExt)
+	audioPath := filepath.Join(tmpDir, "audio."+audioExt)
 	ext := filepath.Ext(outputPath)
 	tempOutputPath := strings.TrimSuffix(outputPath, ext) + ".part" + ext
 	defer os.Remove(tempOutputPath)
@@ -406,27 +408,40 @@ func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFm
 	}
 	combinedTotal := videoSize + audioSize
 
-	var videoRead, audioRead int64
+	var videoRead, audioRead atomic.Int64
 	report := func() {
 		if onProgress != nil {
-			onProgress(videoRead+audioRead, combinedTotal)
+			onProgress(videoRead.Load()+audioRead.Load(), combinedTotal)
 		}
 	}
 
-	// Download video stream.
-	if _, err := s.downloadStreamToFileProgress(ctx, video, videoFmt, videoPath, limiter, func(n, _ int64) {
-		videoRead = n
-		report()
-	}); err != nil {
-		return fmt.Errorf("youtube: failed to download video: %w", err)
-	}
-
-	// Download audio stream.
-	if _, err := s.downloadStreamToFileProgress(ctx, video, audioFmt, audioPath, limiter, func(n, _ int64) {
-		audioRead = n
-		report()
-	}); err != nil {
-		return fmt.Errorf("youtube: failed to download audio: %w", err)
+	// Fetch both streams at once; the first failure cancels the other.
+	streamCtx, cancelStreams := context.WithCancel(ctx)
+	defer cancelStreams()
+	var wg sync.WaitGroup
+	var videoErr, audioErr error
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		if _, videoErr = s.downloadStreamToFileProgress(streamCtx, video, videoFmt, videoPath, limiter, func(n, _ int64) {
+			videoRead.Store(n)
+			report()
+		}); videoErr != nil {
+			cancelStreams()
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if _, audioErr = s.downloadStreamToFileProgress(streamCtx, video, audioFmt, audioPath, limiter, func(n, _ int64) {
+			audioRead.Store(n)
+			report()
+		}); audioErr != nil {
+			cancelStreams()
+		}
+	}()
+	wg.Wait()
+	if err := streamPairErr(videoErr, audioErr); err != nil {
+		return err
 	}
 
 	// Mux with ffmpeg — report as nearly complete while muxing.
@@ -442,6 +457,18 @@ func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFm
 
 	if onProgress != nil {
 		onProgress(combinedTotal, combinedTotal)
+	}
+	return nil
+}
+
+// streamPairErr reports the root cause of a failed parallel stream fetch,
+// not the sibling stream its failure cancelled.
+func streamPairErr(videoErr, audioErr error) error {
+	switch {
+	case videoErr != nil && (audioErr == nil || !errors.Is(videoErr, context.Canceled)):
+		return fmt.Errorf("youtube: failed to download video: %w", videoErr)
+	case audioErr != nil:
+		return fmt.Errorf("youtube: failed to download audio: %w", audioErr)
 	}
 	return nil
 }

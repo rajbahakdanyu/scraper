@@ -1201,6 +1201,20 @@ func TestParsePlaylistTitleFallsBackToURL(t *testing.T) {
 	}
 }
 
+func TestStreamPairErrReportsRootCause(t *testing.T) {
+	boom := errors.New("boom")
+	cancelled := fmt.Errorf("read: %w", context.Canceled)
+	if err := streamPairErr(nil, nil); err != nil {
+		t.Fatalf("no errors = %v", err)
+	}
+	if err := streamPairErr(cancelled, boom); !errors.Is(err, boom) || !strings.Contains(err.Error(), "audio") {
+		t.Fatalf("audio failure that cancelled video = %v, want the audio error", err)
+	}
+	if err := streamPairErr(boom, cancelled); !errors.Is(err, boom) || !strings.Contains(err.Error(), "video") {
+		t.Fatalf("video failure that cancelled audio = %v, want the video error", err)
+	}
+}
+
 func TestDownloadAndMuxDownloadsSeparateStreams(t *testing.T) {
 	const videoID = "mux-video-01"
 	videoContent := "video stream bytes"
