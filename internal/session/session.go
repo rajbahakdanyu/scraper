@@ -228,7 +228,7 @@ func downloadTask(item model.MediaItem, dest string) Task {
 func (s *Session) applyScrape(items []model.MediaItem, err error) []Task {
 	if err != nil && len(items) == 0 {
 		s.LoadingErr = err.Error()
-		s.appendError(err.Error())
+		s.AppendError(err.Error())
 		s.Phase = PhaseDone
 		return nil
 	}
@@ -239,7 +239,7 @@ func (s *Session) applyScrape(items []model.MediaItem, err error) []Task {
 	}
 	if err != nil {
 		s.SetStatus("warning: %v", err)
-		s.appendError(err.Error())
+		s.AppendError(err.Error())
 	}
 
 	s.Items = make([]Item, len(items))
@@ -266,14 +266,14 @@ func (s *Session) applyScrape(items []model.MediaItem, err error) []Task {
 
 	s.Phase = PhaseDownload
 	s.startDrain()
-	return s.startAllDownloads()
+	return s.StartAllDownloads()
 }
 
 func (s *Session) applyBatchScrape(album model.Album, items []model.MediaItem, err error) []Task {
 	if err != nil && len(items) == 0 {
 		s.LoadingErr = fmt.Sprintf("%s: %v", album.URL, err)
 		s.ScrapeErrs = append(s.ScrapeErrs, errors.New(s.LoadingErr))
-		s.appendError(s.LoadingErr)
+		s.AppendError(s.LoadingErr)
 		s.BatchRemaining--
 		s.BatchIdx++
 		if s.BatchRemaining == 0 && len(s.Items) == 0 {
@@ -285,7 +285,7 @@ func (s *Session) applyBatchScrape(album model.Album, items []model.MediaItem, e
 
 	if err != nil {
 		s.SetStatus("warning: %v", err)
-		s.appendError(fmt.Sprintf("%s: %v", album.URL, err))
+		s.AppendError(fmt.Sprintf("%s: %v", album.URL, err))
 	}
 
 	s.BatchRemaining--
@@ -326,7 +326,7 @@ func (s *Session) applyBatchScrape(album model.Album, items []model.MediaItem, e
 	if firstAlbum {
 		s.Phase = PhaseDownload
 		s.startDrain()
-		tasks = s.startAllDownloads()
+		tasks = s.StartAllDownloads()
 	} else if s.Downloader != nil {
 		for i := base + 1; i < len(s.Items); i++ {
 			if s.Items[i].Item.URL == "" {
@@ -342,7 +342,7 @@ func (s *Session) applyBatchScrape(album model.Album, items []model.MediaItem, e
 	return tasks
 }
 
-func (s *Session) startAllDownloads() []Task {
+func (s *Session) StartAllDownloads() []Task {
 	if s.Downloader == nil {
 		return nil
 	}
@@ -520,7 +520,8 @@ func (s *Session) SetStatus(format string, args ...any) {
 	s.Status = fmt.Sprintf(format, args...)
 }
 
-func (s *Session) appendError(line string) {
+// AppendError records a scrape error for the error log.
+func (s *Session) AppendError(line string) {
 	s.ErrorLog = append(s.ErrorLog, line)
 	if len(s.ErrorLog) > maxErrors {
 		s.ErrorLog = s.ErrorLog[len(s.ErrorLog)-maxErrors:]

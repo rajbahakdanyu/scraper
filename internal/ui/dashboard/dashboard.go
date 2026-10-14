@@ -3,8 +3,6 @@ package dashboard
 
 import (
 	"context"
-	"fmt"
-	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/progress"
@@ -14,106 +12,51 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/rajbahakdanyu/scraper/internal/model"
+	"github.com/rajbahakdanyu/scraper/internal/session"
 	"github.com/rajbahakdanyu/scraper/internal/ui/styles"
 )
 
-type phase int
-
-const (
-	phaseLoading phase = iota
-	phaseDownload
-	phaseDone
-	phaseSummary
-)
-
-type listFilter int
-
-const (
-	filterAll listFilter = iota
-	filterFailed
-	filterActive
-	filterPending
-)
-
-type itemState struct {
-	item      model.MediaItem
-	status    model.DownloadStatus
-	bytes     int64
-	total     int64
-	speed     float64
-	started   time.Time
-	dest      string
-	isHeader  bool
-	albumName string
-	albumSite string
-	sourceURL string
-	lastErr   error
-}
-
+// Dashboard is the Bubble Tea frontend for a session: run state lives in
+// the embedded Session, the Dashboard only adds terminal concerns.
 type Dashboard struct {
+	*session.Session
+
 	table    table.Model
 	progress progress.Model
 	spinner  spinner.Model
 	theme    styles.Theme
 
-	states        []itemState
-	stateIndex    map[string]int
-	indexedStates int
-	rows          []table.Row
-	visible       []int
-	visibleReady  bool
-	downloader    model.Downloader
-	dest          string
+	rows         []table.Row
+	visible      []int
+	visibleReady bool
 
 	width  int
 	height int
 	ready  bool
 
-	quitting  bool
-	status    string
-	statusSeq int
-	site      string
-	phase     phase
-
-	scraperFn  func(context.Context) ([]model.MediaItem, error)
-	loadingErr string
-
-	albumSlug         string
-	sourceURL         string
-	errorLog          []string
+	quitting          bool
 	showErrors        bool
 	searching         bool
 	searchQuery       string
-	progressMu        sync.Mutex
-	pending           map[string]model.ProgressEvent
+	inspectMsg        string
 	refreshTickActive bool
-
-	batchMode      bool
-	batchURLs      []model.Album
-	batchIdx       int
-	batchRemaining int
-	scrapeErrs     []error
-	scrapeCtx      context.Context
-	cancelScrape   context.CancelFunc
-
-	inspectMsg       string
-	folded           map[int]bool
-	manuallyUnfolded map[int]bool
-	filter           listFilter
-	writeRetryList   func([]model.FailedItem) (string, error)
+	writeRetryList    func([]model.FailedItem) (string, error)
 }
 
 // Futuristic logo — clean, minimal
 const logo = "◢◤  SCRAPER  ◢◤"
 
 func New(scraperFn func(context.Context) ([]model.MediaItem, error), dl model.Downloader, dest string, site string) *Dashboard {
-	d := newDashboard(dl, dest, site)
-	d.scraperFn = scraperFn
-	return d
+	return newDashboard(session.New(scraperFn, dl, dest, site))
 }
 
-// newDashboard builds the state shared by single-URL and batch runs.
-func newDashboard(dl model.Downloader, dest, site string) *Dashboard {
+// NewBatch creates a dashboard for batch mode. Items are appended
+// incrementally as each album is scraped.
+func NewBatch(dl model.Downloader, destRoot string, albums []model.Album) *Dashboard {
+	return newDashboard(session.NewBatch(dl, destRoot, albums))
+}
+
+func newDashboard(s *session.Session) *Dashboard {
 	t := table.New(
 		table.WithColumns([]table.Column{
 			{Title: "", Width: 2},
@@ -129,29 +72,24 @@ func newDashboard(dl model.Downloader, dest, site string) *Dashboard {
 	sp.Spinner = spinner.MiniDot
 	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(styles.ColorCyan))
 
-	d := &Dashboard{
-		table:      t,
-		progress:   progress.New(progress.WithSolidFill(styles.ColorAccent)),
-		spinner:    sp,
-		theme:      styles.DefaultTheme(),
-		downloader: dl,
-		dest:       dest,
-		site:       site,
-		phase:      phaseLoading,
+	return &Dashboard{
+		Session:  s,
+		table:    t,
+		progress: progress.New(progress.WithSolidFill(styles.ColorAccent)),
+		spinner:  sp,
+		theme:    styles.DefaultTheme(),
 	}
-	d.scrapeCtx, d.cancelScrape = context.WithCancel(context.Background())
-	return d
 }
 
 // SetAlbumSlug stores the URL slug for creating album subfolders.
 func (d *Dashboard) SetAlbumSlug(slug string) {
-	d.albumSlug = slug
+	d.AlbumSlug = slug
 }
 
 // SetSourceURL records the URL a single-URL run scraped, so failed items
 // can be reported with the source they came from (retry pairs).
 func (d *Dashboard) SetSourceURL(url string) {
-	d.sourceURL = url
+	d.SourceURL = url
 }
 
 // SetRetryWriter installs the CLI callback used by the summary screen.
@@ -159,26 +97,11 @@ func (d *Dashboard) SetRetryWriter(fn func([]model.FailedItem) (string, error)) 
 	d.writeRetryList = fn
 }
 
-// NewBatch creates a dashboard for batch mode. Items are appended
-// incrementally as each album is scraped via the scrape-chain in Init.
-func NewBatch(dl model.Downloader, destRoot string, urls []model.Album) *Dashboard {
-	siteLabel := fmt.Sprintf("%d albums", len(urls))
-	if len(urls) == 1 {
-		siteLabel = urls[0].Site
-	}
-
-	d := newDashboard(dl, destRoot, siteLabel)
-	d.batchMode = true
-	d.batchURLs = urls
-	d.batchRemaining = len(urls)
-	return d
-}
-
 func (d *Dashboard) Init() tea.Cmd {
-	if d.batchMode {
-		return tea.Batch(d.spinner.Tick, d.startNextScrape())
+	if d.BatchMode {
+		return tea.Batch(d.spinner.Tick, d.runTasks(d.Start()))
 	}
-	return tea.Batch(d.spinner.Tick, d.startScrape(),
+	return tea.Batch(d.spinner.Tick, d.runTasks(d.Start()),
 		tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg { return tickMsg(t) }))
 }
 
@@ -203,28 +126,27 @@ type batchScrapeMsg struct {
 	err   error
 }
 
-func (d *Dashboard) startScrape() tea.Cmd {
-	return func() tea.Msg {
-		items, err := d.scraperFn(d.scrapeCtx)
-		return scrapeResultMsg{items: items, err: err}
+// runTasks turns session tasks into commands that run them off the update
+// loop and report back as messages.
+func (d *Dashboard) runTasks(tasks []session.Task) tea.Cmd {
+	cmds := make([]tea.Cmd, 0, len(tasks))
+	for _, t := range tasks {
+		cmds = append(cmds, d.taskCmd(t))
 	}
+	return tea.Batch(cmds...)
 }
 
-func (d *Dashboard) startNextScrape() tea.Cmd {
+func (d *Dashboard) taskCmd(t session.Task) tea.Cmd {
 	return func() tea.Msg {
-		if d.batchIdx >= len(d.batchURLs) {
-			return batchScrapeMsg{idx: -1}
+		r := d.Exec(t)
+		switch {
+		case t.Kind == session.TaskDownload:
+			return downloadDoneMsg{key: t.Item.Key(), err: r.Err}
+		case t.Batch:
+			return batchScrapeMsg{album: t.Album, items: r.Items, err: r.Err}
+		default:
+			return scrapeResultMsg{items: r.Items, err: r.Err}
 		}
-		album := d.batchURLs[d.batchIdx]
-		items, err := album.Scraper.Parse(d.scrapeCtx, album.URL)
-		return batchScrapeMsg{album: album, idx: d.batchIdx, items: items, err: err}
-	}
-}
-
-func startDownload(dl model.Downloader, item model.MediaItem, dest string) tea.Cmd {
-	return func() tea.Msg {
-		_, err := dl.Download(item, dest)
-		return downloadDoneMsg{key: item.Key(), err: err}
 	}
 }
 
@@ -253,7 +175,7 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return d, nil
 
 	case spinner.TickMsg:
-		if !d.spinnerActive() {
+		if !d.Active() {
 			return d, nil
 		}
 		var cmd tea.Cmd
@@ -261,21 +183,13 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return d, cmd
 
 	case tickMsg:
-		if !d.spinnerActive() {
+		if !d.Active() {
 			// All downloads are done; stop re-arming instead of
 			// redrawing forever (the refreshTickMsg branch is gated the
 			// same way).
 			return d, nil
 		}
-		// Recalculate speed from elapsed time on each tick
-		for i := range d.states {
-			if d.states[i].status == model.StatusDownloading && !d.states[i].started.IsZero() {
-				elapsed := time.Since(d.states[i].started).Seconds()
-				if elapsed > 0 && d.states[i].bytes > 0 {
-					d.states[i].speed = float64(d.states[i].bytes) / elapsed
-				}
-			}
-		}
+		d.Tick()
 		// The fast refresh tick redraws rows on its own while it runs.
 		if !d.refreshTickActive {
 			d.refreshRows()
@@ -283,21 +197,13 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return d, tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg { return tickMsg(t) })
 
 	case scrapeResultMsg:
-		m, cmd := d.handleScrapeResult(msg)
-		if d.status != "" {
-			return m, tea.Batch(cmd, d.statusClearCmd())
-		}
-		return m, cmd
+		return d.withStatusClear(d.handleScrapeResult(msg))
 
 	case batchScrapeMsg:
-		m, cmd := d.handleBatchScrape(msg)
-		if d.status != "" {
-			return m, tea.Batch(cmd, d.statusClearCmd())
-		}
-		return m, cmd
+		return d.withStatusClear(d.handleBatchScrape(msg))
 
 	case tea.KeyMsg:
-		if d.phase == phaseSummary {
+		if d.Phase == session.PhaseSummary {
 			return d.handleSummaryKey(msg)
 		}
 		if d.searching {
@@ -315,13 +221,13 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return d, nil
 		case "F":
 			d.inspectMsg = ""
-			d.jumpIf(func(st itemState) bool { return st.status == model.StatusFailed })
+			d.jumpIf(session.IsFailed)
 			return d, nil
 		case "C":
 			d.cancelAll()
 			return d, nil
 		case "f":
-			d.filter = (d.filter + 1) % 4
+			d.CycleFilter()
 			d.rebuildVisible()
 			d.refreshRows()
 			d.fitTableHeight()
@@ -331,7 +237,7 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return d, nil
 		case "R":
 			d.inspectMsg = ""
-			return d, d.resumeAfter(d.retryAllFailed())
+			return d, d.retryAllFailed()
 		case "q", "ctrl+c", "esc":
 			return d.quit()
 		case "up", "k":
@@ -354,7 +260,7 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return d, nil
 		case "r":
 			d.inspectMsg = ""
-			return d, d.resumeAfter(d.retrySelected())
+			return d, d.retrySelected()
 		}
 	case tea.MouseMsg:
 		switch msg.Button {
@@ -366,22 +272,16 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return d, nil
 
 	case progressMsg:
-		d.applyProgress(model.ProgressEvent(msg))
+		d.ApplyProgress(model.ProgressEvent(msg))
 		d.rebuildVisible()
 		d.refreshRows()
 		return d, nil
 
 	case refreshTickMsg:
-		d.applyPendingProgress()
-		d.autoFoldCompletedAlbums()
+		keepTicking := d.Refresh()
 		d.rebuildVisible()
 		d.refreshRows()
-		if d.phase == phaseDownload && d.batchRemaining == 0 && len(d.states) > 0 && d.settled() {
-			d.phase = phaseSummary
-			d.refreshTickActive = false
-			return d, nil
-		}
-		if d.spinnerActive() || d.hasPending() {
+		if keepTicking {
 			return d, tea.Tick(time.Second/15, func(t time.Time) tea.Msg { return refreshTickMsg{} })
 		}
 		d.refreshTickActive = false
@@ -391,13 +291,13 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		d.applyDone(msg)
 		d.rebuildVisible()
 		d.refreshRows()
-		if d.status != "" {
+		if d.Status != "" {
 			return d, d.statusClearCmd()
 		}
 		return d, nil
 	case statusClearMsg:
-		if msg.seq == d.statusSeq {
-			d.status = ""
+		if msg.seq == d.StatusSeq {
+			d.Status = ""
 		}
 		return d, nil
 	}
@@ -407,23 +307,30 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return d, cmd
 }
 
+func (d *Dashboard) withStatusClear(m tea.Model, cmd tea.Cmd) (tea.Model, tea.Cmd) {
+	if d.Status != "" {
+		return m, tea.Batch(cmd, d.statusClearCmd())
+	}
+	return m, cmd
+}
+
 // handleSummaryKey accepts only the summary's own keys; the table behind it is hidden.
 func (d *Dashboard) handleSummaryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "enter":
-		d.phase = phaseDone
+		d.DismissSummary()
 	case "R":
 		if len(d.Failures()) > 0 {
-			return d, d.resumeAfter(d.retryAllFailed())
+			return d, d.retryAllFailed()
 		}
 	case "L":
 		if d.writeRetryList == nil {
 			return d, nil
 		}
 		if path, err := d.writeRetryList(d.Failures()); err != nil {
-			d.setStatus("retry list: %v", err)
+			d.SetStatus("retry list: %v", err)
 		} else {
-			d.setStatus("retry list written: %s", path)
+			d.SetStatus("retry list written: %s", path)
 		}
 		return d, d.statusClearCmd()
 	case "q", "ctrl+c", "esc":
@@ -432,22 +339,8 @@ func (d *Dashboard) handleSummaryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return d, nil
 }
 
-// resumeAfter re-arms summary detection when a retry restarts a settled run.
-func (d *Dashboard) resumeAfter(cmd tea.Cmd) tea.Cmd {
-	if cmd != nil {
-		d.phase = phaseDownload
-	}
-	return cmd
-}
-
 func (d *Dashboard) quit() (tea.Model, tea.Cmd) {
 	d.quitting = true
-	if d.cancelScrape != nil {
-		d.cancelScrape()
-	}
-	if d.downloader != nil {
-		// Closing the progress channel also ends drainProgress.
-		d.downloader.Shutdown()
-	}
+	d.Shutdown()
 	return d, tea.Quit
 }

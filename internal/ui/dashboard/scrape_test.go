@@ -6,9 +6,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/rajbahakdanyu/scraper/internal/model"
+	"github.com/rajbahakdanyu/scraper/internal/session"
 )
 
 func TestBatchProgressUpdatesRows(t *testing.T) {
@@ -19,17 +21,17 @@ func TestBatchProgressUpdatesRows(t *testing.T) {
 	d.Update(scrapeResultMsg{items: items})
 
 	d.Update(progressMsg(model.ProgressEvent{
-		Item:   d.states[0].item,
+		Item:   d.Items[0].Item,
 		Bytes:  50,
 		Total:  100,
 		Status: model.StatusDownloading,
 	}))
 
-	if d.states[0].bytes != 50 {
-		t.Errorf("expected bytes to update to 50, got %d", d.states[0].bytes)
+	if d.Items[0].Bytes != 50 {
+		t.Errorf("expected bytes to update to 50, got %d", d.Items[0].Bytes)
 	}
-	if d.states[0].status != model.StatusDownloading {
-		t.Errorf("expected status downloading, got %v", d.states[0].status)
+	if d.Items[0].Status != model.StatusDownloading {
+		t.Errorf("expected status downloading, got %v", d.Items[0].Status)
 	}
 }
 
@@ -41,27 +43,27 @@ func TestStaleProgressDoesNotResurrectCancelledItem(t *testing.T) {
 
 	// User cancels the item.
 	d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
-	if d.states[0].status != model.StatusCancelled {
-		t.Fatalf("expected cancelled, got %v", d.states[0].status)
+	if d.Items[0].Status != model.StatusCancelled {
+		t.Fatalf("expected cancelled, got %v", d.Items[0].Status)
 	}
 
 	// A progress event that was buffered before the cancel arrived gets
 	// delivered afterwards — it must not flip the item back to downloading.
 	d.Update(progressMsg(model.ProgressEvent{
-		Item:   d.states[0].item,
+		Item:   d.Items[0].Item,
 		Bytes:  42,
 		Total:  100,
 		Status: model.StatusDownloading,
 	}))
-	if d.states[0].status != model.StatusCancelled {
-		t.Fatalf("stale progress event resurrected a cancelled item: %v", d.states[0].status)
+	if d.Items[0].Status != model.StatusCancelled {
+		t.Fatalf("stale progress event resurrected a cancelled Item: %v", d.Items[0].Status)
 	}
 
 	// The cancelled download then returns an error — it must not be
 	// downgraded to failed either.
-	d.applyDone(downloadDoneMsg{key: d.states[0].item.Key(), err: errors.New("download cancelled")})
-	if d.states[0].status != model.StatusCancelled {
-		t.Fatalf("cancelled item ended as %v", d.states[0].status)
+	d.applyDone(downloadDoneMsg{key: d.Items[0].Item.Key(), err: errors.New("download cancelled")})
+	if d.Items[0].Status != model.StatusCancelled {
+		t.Fatalf("cancelled item ended as %v", d.Items[0].Status)
 	}
 }
 
@@ -70,18 +72,18 @@ func TestStaleProgressDoesNotResurrectCompletedItem(t *testing.T) {
 	items := []model.MediaItem{{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100}}
 	d := New(instantItems(items), fd, t.TempDir(), "cyberdrop")
 	d.Update(scrapeResultMsg{items: items})
-	d.applyDone(downloadDoneMsg{key: d.states[0].item.Key()})
+	d.applyDone(downloadDoneMsg{key: d.Items[0].Item.Key()})
 
 	// An out-of-order downloading event arriving after completion must not
 	// flip the row back to active (which would leave it stuck there).
 	d.Update(progressMsg(model.ProgressEvent{
-		Item:   d.states[0].item,
+		Item:   d.Items[0].Item,
 		Bytes:  10,
 		Total:  100,
 		Status: model.StatusDownloading,
 	}))
-	if d.states[0].status != model.StatusCompleted {
-		t.Fatalf("stale progress event resurrected a completed item: %v", d.states[0].status)
+	if d.Items[0].Status != model.StatusCompleted {
+		t.Fatalf("stale progress event resurrected a completed Item: %v", d.Items[0].Status)
 	}
 }
 
@@ -93,23 +95,23 @@ func TestDuplicateURLsUpdateIndependentRows(t *testing.T) {
 	d := New(instantItems(items), nil, t.TempDir(), "test")
 	d.Update(scrapeResultMsg{items: items})
 
-	if d.states[0].item.Key() == d.states[1].item.Key() {
+	if d.Items[0].Item.Key() == d.Items[1].Item.Key() {
 		t.Fatal("duplicate URLs received the same per-run identity")
 	}
 
-	d.applyProgress(model.ProgressEvent{
-		Item:   d.states[1].item,
+	d.ApplyProgress(model.ProgressEvent{
+		Item:   d.Items[1].Item,
 		Bytes:  50,
 		Total:  100,
 		Status: model.StatusDownloading,
 	})
-	if d.states[0].bytes != 0 || d.states[1].bytes != 50 {
-		t.Fatalf("progress updated wrong rows: first=%d second=%d", d.states[0].bytes, d.states[1].bytes)
+	if d.Items[0].Bytes != 0 || d.Items[1].Bytes != 50 {
+		t.Fatalf("progress updated wrong rows: first=%d second=%d", d.Items[0].Bytes, d.Items[1].Bytes)
 	}
 
-	d.applyDone(downloadDoneMsg{key: d.states[1].item.Key()})
-	if d.states[0].status == model.StatusCompleted || d.states[1].status != model.StatusCompleted {
-		t.Fatalf("completion updated wrong rows: first=%v second=%v", d.states[0].status, d.states[1].status)
+	d.applyDone(downloadDoneMsg{key: d.Items[1].Item.Key()})
+	if d.Items[0].Status == model.StatusCompleted || d.Items[1].Status != model.StatusCompleted {
+		t.Fatalf("completion updated wrong rows: first=%v second=%v", d.Items[0].Status, d.Items[1].Status)
 	}
 }
 
@@ -126,12 +128,12 @@ func TestBatchModePerItemDest(t *testing.T) {
 	msg := batchScrapeMsg{album: urls[0], idx: 0, items: items}
 	d.handleBatchScrape(msg)
 
-	for i, st := range d.states {
-		if st.isHeader {
+	for i, st := range d.Items {
+		if st.Header {
 			continue
 		}
-		if st.dest != "/tmp/test-album" {
-			t.Errorf("state[%d] dest = %q, want /tmp/test-album", i, st.dest)
+		if st.Dest != "/tmp/test-album" {
+			t.Errorf("state[%d] dest = %q, want /tmp/test-album", i, st.Dest)
 		}
 	}
 }
@@ -151,11 +153,11 @@ func TestBatchPartialScrapeWarningVisibleMidBatch(t *testing.T) {
 	partial := batchScrapeMsg{album: urls[1], idx: 1, items: []model.MediaItem{{URL: "https://example.com/b.mp4", Title: "b.mp4", Size: 100}}, err: errors.New("one item failed")}
 	d.handleBatchScrape(partial)
 
-	if d.batchRemaining != 1 {
-		t.Fatalf("expected batchRemaining = 1 (mid-batch), got %d", d.batchRemaining)
+	if d.BatchRemaining != 1 {
+		t.Fatalf("expected batchRemaining = 1 (mid-batch), got %d", d.BatchRemaining)
 	}
-	if !strings.Contains(d.status, "warning:") || !strings.Contains(d.status, "one item failed") {
-		t.Fatalf("partial warning not surfaced mid-batch: %q", d.status)
+	if !strings.Contains(d.Status, "warning:") || !strings.Contains(d.Status, "one item failed") {
+		t.Fatalf("partial warning not surfaced mid-batch: %q", d.Status)
 	}
 }
 
@@ -167,13 +169,13 @@ func TestApplyDoneStoresError(t *testing.T) {
 	d.Update(scrapeResultMsg{items: items})
 
 	wantErr := errors.New("HTTP 404")
-	d.applyDone(downloadDoneMsg{key: d.states[0].item.Key(), err: wantErr})
+	d.applyDone(downloadDoneMsg{key: d.Items[0].Item.Key(), err: wantErr})
 
-	if d.states[0].status != model.StatusFailed {
-		t.Errorf("expected StatusFailed, got %v", d.states[0].status)
+	if d.Items[0].Status != model.StatusFailed {
+		t.Errorf("expected StatusFailed, got %v", d.Items[0].Status)
 	}
-	if d.states[0].lastErr == nil || d.states[0].lastErr.Error() != "HTTP 404" {
-		t.Errorf("expected lastErr to be stored, got %v", d.states[0].lastErr)
+	if d.Items[0].Err == nil || d.Items[0].Err.Error() != "HTTP 404" {
+		t.Errorf("expected lastErr to be stored, got %v", d.Items[0].Err)
 	}
 }
 
@@ -185,13 +187,13 @@ func TestApplyDoneClearsErrorOnRetrySuccess(t *testing.T) {
 	d.Update(scrapeResultMsg{items: items})
 
 	wantErr := errors.New("transient")
-	d.applyDone(downloadDoneMsg{key: d.states[0].item.Key(), err: wantErr})
-	if d.states[0].lastErr == nil {
+	d.applyDone(downloadDoneMsg{key: d.Items[0].Item.Key(), err: wantErr})
+	if d.Items[0].Err == nil {
 		t.Fatal("expected error to be stored")
 	}
-	d.applyDone(downloadDoneMsg{key: d.states[0].item.Key()})
-	if d.states[0].lastErr != nil {
-		t.Errorf("expected lastErr to be cleared on successful retry, got %v", d.states[0].lastErr)
+	d.applyDone(downloadDoneMsg{key: d.Items[0].Item.Key()})
+	if d.Items[0].Err != nil {
+		t.Errorf("expected lastErr to be cleared on successful retry, got %v", d.Items[0].Err)
 	}
 }
 
@@ -204,7 +206,7 @@ func TestRefreshTickReArmsWhileDownloadsActive(t *testing.T) {
 	d.Update(scrapeResultMsg{items: items})
 
 	// Ensure a download is active (still pending/downloading)
-	if !d.spinnerActive() {
+	if !d.Active() {
 		t.Fatal("expected spinner active while download is pending")
 	}
 
@@ -223,8 +225,8 @@ func TestRefreshTickStopsWhenIdle(t *testing.T) {
 	d.Update(scrapeResultMsg{items: items})
 
 	// Mark the download complete so spinnerActive returns false.
-	d.applyDone(downloadDoneMsg{key: d.states[0].item.Key()})
-	if d.spinnerActive() {
+	d.applyDone(downloadDoneMsg{key: d.Items[0].Item.Key()})
+	if d.Active() {
 		t.Fatal("expected spinner inactive after all downloads done")
 	}
 
@@ -252,8 +254,8 @@ func TestEnsureRefreshTickerIsIdempotent(t *testing.T) {
 	d := New(instantItems(items), fd, t.TempDir(), "cyberdrop")
 	// Bypass handleScrapeResult (which calls ensureRefreshTicker) so we
 	// can test idempotency from a clean state.
-	d.states = []itemState{{item: items[0], status: model.StatusPending, total: items[0].Size}}
-	d.phase = phaseDownload
+	d.Items = []session.Item{{Item: items[0], Status: model.StatusPending, Total: items[0].Size}}
+	d.Phase = session.PhaseDownload
 
 	cmd1 := d.ensureRefreshTicker()
 	if cmd1 == nil {
@@ -274,28 +276,28 @@ func TestProgressAppliedViaRefreshTick(t *testing.T) {
 	d := New(instantItems(items), fd, t.TempDir(), "cyberdrop")
 	d.Update(scrapeResultMsg{items: items})
 
-	// Simulate drainProgress having populated the pending map.
-	d.progressMu.Lock()
-	d.pending = map[string]model.ProgressEvent{
-		d.states[0].item.Key(): {
-			Item:   d.states[0].item,
-			Bytes:  42,
-			Total:  100,
-			Status: model.StatusDownloading,
-		},
+	// The drain goroutine buffers the event until the next refresh tick.
+	fd.ch <- model.ProgressEvent{
+		Item:   d.Items[0].Item,
+		Bytes:  42,
+		Total:  100,
+		Status: model.StatusDownloading,
 	}
-	d.progressMu.Unlock()
+	deadline := time.Now().Add(time.Second)
+	for !d.HasPending() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
 
 	_, cmd := d.Update(refreshTickMsg{})
 	if cmd == nil {
 		t.Fatal("expected tick to re-arm while download active")
 	}
 
-	if d.states[0].bytes != 42 {
-		t.Errorf("expected progress applied via tick, got bytes=%d", d.states[0].bytes)
+	if d.Items[0].Bytes != 42 {
+		t.Errorf("expected progress applied via tick, got bytes=%d", d.Items[0].Bytes)
 	}
-	if d.states[0].status != model.StatusDownloading {
-		t.Errorf("expected status downloading, got %v", d.states[0].status)
+	if d.Items[0].Status != model.StatusDownloading {
+		t.Errorf("expected status downloading, got %v", d.Items[0].Status)
 	}
 }
 
@@ -344,8 +346,8 @@ func TestDownloadTickerStopsWhenIdle(t *testing.T) {
 		t.Fatal("expected the download ticker to re-arm while downloads are pending")
 	}
 
-	d.applyDone(downloadDoneMsg{key: d.states[0].item.Key()})
-	if d.spinnerActive() {
+	d.applyDone(downloadDoneMsg{key: d.Items[0].Item.Key()})
+	if d.Active() {
 		t.Fatal("expected spinner inactive after all downloads done")
 	}
 	if _, cmd := d.Update(tickMsg{}); cmd != nil {
@@ -355,7 +357,7 @@ func TestDownloadTickerStopsWhenIdle(t *testing.T) {
 
 func TestBatchScrapeRecordsError(t *testing.T) {
 	d := NewBatch(&fakeDownloader{ch: make(chan model.ProgressEvent, 1)}, t.TempDir(), nil)
-	d.phase = phaseLoading
+	d.Phase = session.PhaseLoading
 	updated, _ := d.handleBatchScrape(batchScrapeMsg{
 		album: model.Album{Site: "bunker", URL: "https://bunkr.cr/a/broken", Slug: "broken", Dest: t.TempDir()},
 		items: []model.MediaItem{{URL: "https://dl.bunkr.cr/file/1", Title: "one.mp4"}},
@@ -365,14 +367,14 @@ func TestBatchScrapeRecordsError(t *testing.T) {
 	if !ok {
 		t.Fatal("handleBatchScrape did not return *Dashboard")
 	}
-	if len(got.errorLog) != 1 || !strings.Contains(got.errorLog[0], "broken") || !strings.Contains(got.errorLog[0], "page 2 failed") {
-		t.Fatalf("errorLog = %v, want the album error", got.errorLog)
+	if len(got.ErrorLog) != 1 || !strings.Contains(got.ErrorLog[0], "broken") || !strings.Contains(got.ErrorLog[0], "page 2 failed") {
+		t.Fatalf("errorLog = %v, want the album error", got.ErrorLog)
 	}
 }
 
 func TestBatchScrapeRecordsAlbumSourceURL(t *testing.T) {
 	d := NewBatch(&fakeDownloader{ch: make(chan model.ProgressEvent, 1)}, t.TempDir(), nil)
-	d.phase = phaseLoading
+	d.Phase = session.PhaseLoading
 	updated, _ := d.handleBatchScrape(batchScrapeMsg{
 		album: model.Album{
 			Site: "bunker",
@@ -386,10 +388,10 @@ func TestBatchScrapeRecordsAlbumSourceURL(t *testing.T) {
 	if !ok {
 		t.Fatal("handleBatchScrape did not return *Dashboard")
 	}
-	if len(got.states) != 2 {
-		t.Fatalf("states = %d, want header + item", len(got.states))
+	if len(got.Items) != 2 {
+		t.Fatalf("states = %d, want header + item", len(got.Items))
 	}
-	if got.states[1].sourceURL != "https://bunkr.cr/a/rBSKhzaL" {
-		t.Fatalf("item sourceURL = %q, want the album URL", got.states[1].sourceURL)
+	if got.Items[1].AlbumURL != "https://bunkr.cr/a/rBSKhzaL" {
+		t.Fatalf("item sourceURL = %q, want the album URL", got.Items[1].AlbumURL)
 	}
 }

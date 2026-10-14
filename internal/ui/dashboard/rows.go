@@ -11,7 +11,7 @@ import (
 )
 
 func (d *Dashboard) refreshRows() {
-	if !d.visibleReady || (len(d.visible) > 0 && d.visible[len(d.visible)-1] >= len(d.states)) {
+	if !d.visibleReady || (len(d.visible) > 0 && d.visible[len(d.visible)-1] >= len(d.Items)) {
 		d.rebuildVisible()
 	}
 	if len(d.rows) != len(d.visible) {
@@ -19,46 +19,31 @@ func (d *Dashboard) refreshRows() {
 	}
 	// The table only renders rows within one viewport height of the cursor.
 	cursor, reach := max(d.table.Cursor(), 0), d.table.Height()+1
-	pending, next := 0, 0
-	for row := max(cursor-reach, 0); row < min(cursor+reach, len(d.visible)); row++ {
-		i := d.visible[row]
-		for ; next <= i; next++ {
-			if !d.states[next].isHeader && d.states[next].status == model.StatusPending {
-				pending++
-			}
-		}
-		st := d.states[i]
-		if st.isHeader {
-			var done, failed, total int
-			for j := i + 1; j < len(d.states) && !d.states[j].isHeader; j++ {
-				total++
-				switch d.states[j].status {
-				case model.StatusCompleted:
-					done++
-				case model.StatusFailed:
-					failed++
-				}
-			}
+	from := max(cursor-reach, 0)
+	for n, r := range d.Rows(d.visible, from, cursor+reach) {
+		row := from + n
+		st := r.State
+		if st.Header {
 			pct := 0
-			if total > 0 {
-				pct = 100 * done / total
+			if r.Count > 0 {
+				pct = 100 * r.Done / r.Count
 			}
 			chevron := "▾"
-			if d.folded[i] {
+			if r.Folded {
 				chevron = "▸"
 			}
-			headerText := fmt.Sprintf("%s %s  (%s)", chevron, displayText(st.albumName), displayText(st.albumSite))
-			progressText := fmt.Sprintf("%s %d%%", renderBar(int64(done), int64(total), 10), pct)
-			if failed > 0 {
-				progressText += fmt.Sprintf(" (%d failed)", failed)
+			headerText := fmt.Sprintf("%s %s  (%s)", chevron, displayText(st.Album), displayText(st.Site))
+			progressText := fmt.Sprintf("%s %d%%", renderBar(int64(r.Done), int64(r.Count), 10), pct)
+			if r.Failed > 0 {
+				progressText += fmt.Sprintf(" (%d failed)", r.Failed)
 			}
 			styled := d.theme.Cyan.Bold(true).Render(headerText)
-			d.rows[row] = table.Row{"", styled, fmt.Sprintf("%d/%d", done, total), progressText}
+			d.rows[row] = table.Row{"", styled, fmt.Sprintf("%d/%d", r.Done, r.Count), progressText}
 			continue
 		}
 
 		mark := " "
-		switch st.status {
+		switch st.Status {
 		case model.StatusDownloading:
 			mark = d.spinner.View()
 		case model.StatusCompleted:
@@ -72,88 +57,23 @@ func (d *Dashboard) refreshRows() {
 		}
 
 		progressText := miniBar(st)
-		if st.status == model.StatusDownloading && st.speed > 0 {
-			progressText += fmt.Sprintf("  %s/s", fileutil.HumanBytes(int64(st.speed)))
+		if st.Status == model.StatusDownloading && st.Speed > 0 {
+			progressText += fmt.Sprintf("  %s/s", fileutil.HumanBytes(int64(st.Speed)))
 		}
-		if st.status == model.StatusPending {
-			progressText = fmt.Sprintf("queued #%d", pending)
+		if st.Status == model.StatusPending {
+			progressText = fmt.Sprintf("queued #%d", r.QueuePos)
 		}
-		d.rows[row] = table.Row{mark, truncate(displayText(st.item.Title), 32), statusShort(st.status), progressText}
+		d.rows[row] = table.Row{mark, truncate(displayText(st.Item.Title), 32), statusShort(st.Status), progressText}
 	}
 	d.table.SetRows(d.rows)
 }
 
-// ensureStateIndex indexes newly appended states incrementally. States are
-// append-only, so rebuilding the whole map on every progress event (O(n) per
-// event, O(n²) per run in batch mode) is unnecessary.
-func (d *Dashboard) ensureStateIndex() {
-	if d.stateIndex == nil {
-		d.stateIndex = make(map[string]int)
-	}
-	for ; d.indexedStates < len(d.states); d.indexedStates++ {
-		st := &d.states[d.indexedStates]
-		if !st.isHeader {
-			d.stateIndex[st.item.Key()] = d.indexedStates
-		}
-	}
-}
-
 func (d *Dashboard) rebuildVisible() {
 	oldState := -1
-	if len(d.visible) > 0 && d.table.Cursor() >= 0 && d.table.Cursor() < len(d.visible) && d.visible[d.table.Cursor()] < len(d.states) {
+	if len(d.visible) > 0 && d.table.Cursor() >= 0 && d.table.Cursor() < len(d.visible) && d.visible[d.table.Cursor()] < len(d.Items) {
 		oldState = d.visible[d.table.Cursor()]
 	}
-	if d.folded == nil {
-		d.folded = make(map[int]bool)
-	}
-	if d.manuallyUnfolded == nil {
-		d.manuallyUnfolded = make(map[int]bool)
-	}
-	match := func(st itemState) bool {
-		switch d.filter {
-		case filterFailed:
-			return st.status == model.StatusFailed
-		case filterActive:
-			return st.status == model.StatusDownloading
-		case filterPending:
-			return st.status == model.StatusPending
-		default:
-			return true
-		}
-	}
-	var visible []int
-	for i := 0; i < len(d.states); i++ {
-		st := d.states[i]
-		if !st.isHeader {
-			if match(st) {
-				visible = append(visible, i)
-			}
-			continue
-		}
-		end := i + 1
-		for end < len(d.states) && !d.states[end].isHeader {
-			end++
-		}
-		children := make([]int, 0, end-i-1)
-		for j := i + 1; j < end; j++ {
-			if match(d.states[j]) {
-				children = append(children, j)
-			}
-		}
-		if len(children) > 0 {
-			visible = append(visible, i)
-			if !d.folded[i] {
-				visible = append(visible, children...)
-			}
-		}
-		i = end - 1
-	}
-	// Single-item runs have no album header and must remain visible.
-	if len(d.states) > 0 && len(visible) == 0 && d.filter == filterAll {
-		for i := range d.states {
-			visible = append(visible, i)
-		}
-	}
+	visible := d.Visible()
 	changed := !d.visibleReady || !slices.Equal(visible, d.visible)
 	d.visible = visible
 	d.visibleReady = true
@@ -166,14 +86,9 @@ func (d *Dashboard) rebuildVisible() {
 		if oldState >= 0 {
 			if r, ok := d.rowOfState(oldState); ok {
 				row = r
-			} else {
-				for h := oldState; h >= 0; h-- {
-					if d.states[h].isHeader {
-						if r, ok := d.rowOfState(h); ok {
-							row = r
-						}
-						break
-					}
+			} else if h := d.HeaderOf(oldState); h >= 0 {
+				if r, ok := d.rowOfState(h); ok {
+					row = r
 				}
 			}
 		}
@@ -190,7 +105,7 @@ func (d *Dashboard) rebuildVisible() {
 
 func (d *Dashboard) skipHeader(row int) bool {
 	idx := d.stateAt(row)
-	return d.states[idx].isHeader && !d.folded[idx]
+	return d.Items[idx].Header && !d.Folded[idx]
 }
 
 // selectRow jumps to row, scrolling it into view at the bottom edge.
@@ -223,8 +138,8 @@ func (d *Dashboard) stateAt(row int) int {
 		if row < 0 {
 			return 0
 		}
-		if row >= len(d.states) {
-			return len(d.states) - 1
+		if row >= len(d.Items) {
+			return len(d.Items) - 1
 		}
 		return row
 	}
@@ -252,13 +167,13 @@ func (d *Dashboard) rowOfState(stateIdx int) (int, bool) {
 // gets whatever height is left.
 func (d *Dashboard) tableChrome() int {
 	chrome := 9 // leading blank, header, bar, stats, blank, panel border(2), trailing blank, footer
-	if d.status != "" {
+	if d.Status != "" {
 		chrome += 2
 	}
 	if d.inspectMsg != "" {
 		chrome += 2
 	}
-	if d.showErrors && len(d.errorLog) > 0 {
+	if d.showErrors && len(d.ErrorLog) > 0 {
 		chrome += 1 + lipgloss.Height(d.viewErrorPanel())
 	}
 	if d.searching || d.searchQuery != "" {

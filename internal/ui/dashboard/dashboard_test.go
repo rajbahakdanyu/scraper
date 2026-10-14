@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/rajbahakdanyu/scraper/internal/model"
+	"github.com/rajbahakdanyu/scraper/internal/session"
 )
 
 func TestDashboardRefusesSymlinkedAlbumDirectory(t *testing.T) {
@@ -30,8 +31,8 @@ func TestDashboardRefusesSymlinkedAlbumDirectory(t *testing.T) {
 	d.SetAlbumSlug("album")
 	d.Update(scrapeResultMsg{items: items})
 
-	if d.phase != phaseDone || !strings.Contains(d.loadingErr, "refusing to use symlinked output directory") {
-		t.Fatalf("expected symlinked directory refusal, phase=%v error=%q", d.phase, d.loadingErr)
+	if d.Phase != session.PhaseDone || !strings.Contains(d.LoadingErr, "refusing to use symlinked output directory") {
+		t.Fatalf("expected symlinked directory refusal, phase=%v error=%q", d.Phase, d.LoadingErr)
 	}
 }
 
@@ -51,8 +52,8 @@ func TestBatchDashboardRefusesSymlinkedAlbumDirectory(t *testing.T) {
 	d := NewBatch(fd, root, urls)
 	d.handleBatchScrape(batchScrapeMsg{album: urls[0], items: []model.MediaItem{{URL: "https://example.com/a", Title: "a"}}})
 
-	if d.phase != phaseDone || !strings.Contains(d.loadingErr, "refusing to use symlinked output directory") {
-		t.Fatalf("expected symlinked directory refusal, phase=%v error=%q", d.phase, d.loadingErr)
+	if d.Phase != session.PhaseDone || !strings.Contains(d.LoadingErr, "refusing to use symlinked output directory") {
+		t.Fatalf("expected symlinked directory refusal, phase=%v error=%q", d.Phase, d.LoadingErr)
 	}
 }
 
@@ -62,16 +63,16 @@ func TestDashboardLoadingThenBatch(t *testing.T) {
 		{URL: "https://example.com/b.mp4", Title: "b.mp4", Size: 200},
 	}
 	d := New(instantItems(items), nil, t.TempDir(), "test")
-	if d.phase != phaseLoading {
-		t.Errorf("expected phaseLoading, got %d", d.phase)
+	if d.Phase != session.PhaseLoading {
+		t.Errorf("expected session.PhaseLoading, got %d", d.Phase)
 	}
 
 	d.Update(scrapeResultMsg{items: items})
-	if d.phase != phaseDownload {
-		t.Errorf("expected phaseDownload after scrape result, got %d", d.phase)
+	if d.Phase != session.PhaseDownload {
+		t.Errorf("expected session.PhaseDownload after scrape result, got %d", d.Phase)
 	}
-	if len(d.states) != 2 {
-		t.Errorf("expected 2 states, got %d", len(d.states))
+	if len(d.Items) != 2 {
+		t.Errorf("expected 2 states, got %d", len(d.Items))
 	}
 }
 
@@ -82,16 +83,16 @@ func TestDashboardYouTubeUsesBatchFlow(t *testing.T) {
 	}
 	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 10)}
 	d := New(instantItems(items), fd, t.TempDir(), "youtube")
-	if d.phase != phaseLoading {
-		t.Errorf("expected phaseLoading, got %d", d.phase)
+	if d.Phase != session.PhaseLoading {
+		t.Errorf("expected session.PhaseLoading, got %d", d.Phase)
 	}
 
 	d.Update(scrapeResultMsg{items: items})
-	if d.phase != phaseDownload {
-		t.Errorf("expected phaseDownload after scrape result (same as any other site), got %d", d.phase)
+	if d.Phase != session.PhaseDownload {
+		t.Errorf("expected session.PhaseDownload after scrape result (same as any other site), got %d", d.Phase)
 	}
-	if len(d.states) != 2 {
-		t.Errorf("expected 2 states, got %d", len(d.states))
+	if len(d.Items) != 2 {
+		t.Errorf("expected 2 states, got %d", len(d.Items))
 	}
 }
 
@@ -101,10 +102,10 @@ func TestDashboardLoadingError(t *testing.T) {
 	}, nil, t.TempDir(), "test")
 
 	d.Update(scrapeResultMsg{items: nil, err: nil})
-	if d.phase != phaseDone {
-		t.Errorf("expected phaseDone for no items, got %d", d.phase)
+	if d.Phase != session.PhaseDone {
+		t.Errorf("expected session.PhaseDone for no items, got %d", d.Phase)
 	}
-	if d.loadingErr == "" {
+	if d.LoadingErr == "" {
 		t.Error("expected loading error message")
 	}
 }
@@ -116,11 +117,11 @@ func TestDashboardShowsPartialScrapeWarningAndContinues(t *testing.T) {
 
 	d.Update(scrapeResultMsg{items: items, err: partialErr})
 
-	if d.phase != phaseDownload || len(d.states) != 1 {
-		t.Fatalf("partial result did not continue: phase=%v states=%d", d.phase, len(d.states))
+	if d.Phase != session.PhaseDownload || len(d.Items) != 1 {
+		t.Fatalf("partial result did not continue: phase=%v states=%d", d.Phase, len(d.Items))
 	}
-	if !strings.Contains(d.status, "warning:") || !strings.Contains(d.status, "one item failed") {
-		t.Fatalf("partial warning not surfaced: %q", d.status)
+	if !strings.Contains(d.Status, "warning:") || !strings.Contains(d.Status, "one item failed") {
+		t.Fatalf("partial warning not surfaced: %q", d.Status)
 	}
 }
 
@@ -138,8 +139,8 @@ func TestDashboardRejectsEscapingAlbumSlug(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("unsafe album slug started download commands")
 	}
-	if d.phase != phaseDone || !strings.Contains(d.loadingErr, "unsafe path component") {
-		t.Fatalf("unsafe album slug not rejected: phase=%v error=%q", d.phase, d.loadingErr)
+	if d.Phase != session.PhaseDone || !strings.Contains(d.LoadingErr, "unsafe path component") {
+		t.Fatalf("unsafe album slug not rejected: phase=%v error=%q", d.Phase, d.LoadingErr)
 	}
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
@@ -194,7 +195,7 @@ func TestDashboardQuitCancelsPendingScrape(t *testing.T) {
 		return nil, ctx.Err()
 	}, nil, t.TempDir(), "test")
 
-	go d.startScrape()()
+	go d.taskCmd(session.Task{Kind: session.TaskScrape})()
 	<-started
 	d.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 
@@ -212,12 +213,12 @@ func TestBatchAutoDownload(t *testing.T) {
 		{URL: "https://example.com/b.mp4", Title: "b.mp4", Size: 20},
 	}
 	d := New(instantItems(items), fd, t.TempDir(), "cyberdrop")
-	d.states = make([]itemState, len(items))
+	d.Items = make([]session.Item, len(items))
 	for i, it := range items {
-		d.states[i] = itemState{item: it, status: model.StatusPending, total: it.Size}
+		d.Items[i] = session.Item{Item: it, Status: model.StatusPending, Total: it.Size}
 	}
 
-	cmd := d.startAllDownloads()
+	cmd := d.runTasks(d.StartAllDownloads())
 	if cmd == nil {
 		t.Fatal("expected startAllDownloads to return a command")
 	}
@@ -243,24 +244,24 @@ func TestNewBatchCreatesDashboard(t *testing.T) {
 	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 10)}
 	d := NewBatch(fd, "/tmp", urls)
 
-	if !d.batchMode {
+	if !d.BatchMode {
 		t.Error("expected batchMode to be true")
 	}
-	if d.batchRemaining != 2 {
-		t.Errorf("expected batchRemaining = 2, got %d", d.batchRemaining)
+	if d.BatchRemaining != 2 {
+		t.Errorf("expected batchRemaining = 2, got %d", d.BatchRemaining)
 	}
-	if d.phase != phaseLoading {
-		t.Errorf("expected phaseLoading, got %d", d.phase)
+	if d.Phase != session.PhaseLoading {
+		t.Errorf("expected session.PhaseLoading, got %d", d.Phase)
 	}
 }
 
 func TestDashboardNewNavigationAndProgressFeatures(t *testing.T) {
 	d := NewBatch(&fakeDownloader{ch: make(chan model.ProgressEvent, 4)}, t.TempDir(), nil)
-	d.states = []itemState{
-		{isHeader: true, albumName: "a", albumSite: "site"},
-		{item: model.MediaItem{URL: "https://x/1", Title: "one.mp4", Size: 100}, status: model.StatusFailed, lastErr: errors.New("gone")},
-		{item: model.MediaItem{URL: "https://x/2", Title: "two.mp4"}, status: model.StatusPending},
-		{item: model.MediaItem{URL: "https://x/3", Title: "three.mp4"}, status: model.StatusPending},
+	d.Items = []session.Item{
+		{Header: true, Album: "a", Site: "site"},
+		{Item: model.MediaItem{URL: "https://x/1", Title: "one.mp4", Size: 100}, Status: model.StatusFailed, Err: errors.New("gone")},
+		{Item: model.MediaItem{URL: "https://x/2", Title: "two.mp4"}, Status: model.StatusPending},
+		{Item: model.MediaItem{URL: "https://x/3", Title: "three.mp4"}, Status: model.StatusPending},
 	}
 	d.refreshRows()
 	if len(d.visible) != 4 {
@@ -281,7 +282,7 @@ func TestDashboardNewNavigationAndProgressFeatures(t *testing.T) {
 
 	updated, _ = d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
 	d = updated.(*Dashboard)
-	if d.filter != filterFailed || len(d.visible) != 2 || d.visible[0] != 0 || d.visible[1] != 1 {
+	if d.Filter != session.FilterFailed || len(d.visible) != 2 || d.visible[0] != 0 || d.visible[1] != 1 {
 		t.Fatalf("failed filter visible = %v", d.visible)
 	}
 	if !strings.Contains(d.renderStats(), "/3") {

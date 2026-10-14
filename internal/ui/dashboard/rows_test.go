@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/rajbahakdanyu/scraper/internal/model"
+	"github.com/rajbahakdanyu/scraper/internal/session"
 )
 
 func TestBatchHeaderRowsCreated(t *testing.T) {
@@ -29,14 +30,14 @@ func TestBatchHeaderRowsCreated(t *testing.T) {
 		t.Fatal("expected command after first batch scrape")
 	}
 
-	if len(d.states) == 0 {
+	if len(d.Items) == 0 {
 		t.Fatal("expected states to be populated")
 	}
-	if !d.states[0].isHeader {
+	if !d.Items[0].Header {
 		t.Error("expected first state to be a header row")
 	}
-	if d.states[0].albumName != "test" {
-		t.Errorf("expected header album name 'test', got %q", d.states[0].albumName)
+	if d.Items[0].Album != "test" {
+		t.Errorf("expected header album name 'test', got %q", d.Items[0].Album)
 	}
 }
 
@@ -58,21 +59,21 @@ func TestBatchHeaderCursorSkip(t *testing.T) {
 	d.table.SetHeight(10)
 	d.refreshRows()
 
-	if !d.states[0].isHeader {
+	if !d.Items[0].Header {
 		t.Fatal("expected a header at row 0")
 	}
 
 	// Moving up from the first item must never park on row 0's header.
 	d.table.SetCursor(1)
 	d.moveUpSkippingHeaders()
-	if idx := d.table.Cursor(); idx < 0 || idx >= len(d.states) || d.states[idx].isHeader {
+	if idx := d.table.Cursor(); idx < 0 || idx >= len(d.Items) || d.Items[idx].Header {
 		t.Fatalf("moveUp parked on header at index %d", idx)
 	}
 
 	// Moving down from a header between albums must land on the next item.
 	secondHeader := -1
-	for i := 1; i < len(d.states); i++ {
-		if d.states[i].isHeader {
+	for i := 1; i < len(d.Items); i++ {
+		if d.Items[i].Header {
 			secondHeader = i
 			break
 		}
@@ -82,7 +83,7 @@ func TestBatchHeaderCursorSkip(t *testing.T) {
 	}
 	d.table.SetCursor(secondHeader)
 	d.moveDownSkippingHeaders()
-	if idx := d.table.Cursor(); d.states[idx].isHeader {
+	if idx := d.table.Cursor(); d.Items[idx].Header {
 		t.Fatalf("moveDown parked on header at index %d", idx)
 	}
 }
@@ -111,54 +112,10 @@ func TestHeaderRowRenderedInVisibleColumn(t *testing.T) {
 	}
 }
 
-func TestEnsureStateIndexIsIncremental(t *testing.T) {
-	urls := []model.Album{
-		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/one", Slug: "one", Dest: t.TempDir()},
-		{Site: "cyberdrop", URL: "https://cyberdrop.cr/a/two", Slug: "two", Dest: t.TempDir()},
-	}
-	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 10)}
-	d := NewBatch(fd, t.TempDir(), urls)
-
-	items := []model.MediaItem{{URL: "https://example.com/a.mp4", Title: "a.mp4", Size: 100}}
-	_, _ = d.handleBatchScrape(batchScrapeMsg{album: urls[0], idx: 0, items: items})
-	d.ensureStateIndex()
-	key := d.states[1].item.Key()
-	if got, ok := d.stateIndex[key]; !ok || got != 1 {
-		t.Fatalf("state index = %v, want key at 1", d.stateIndex)
-	}
-
-	_, _ = d.handleBatchScrape(batchScrapeMsg{album: urls[1], idx: 1, items: items})
-	d.ensureStateIndex()
-	if _, ok := d.stateIndex[key]; !ok {
-		t.Fatal("incremental indexing dropped an existing entry")
-	}
-	last := len(d.states) - 1
-	if got, ok := d.stateIndex[d.states[last].item.Key()]; !ok || got != last {
-		t.Fatalf("new state not indexed: %v", d.stateIndex)
-	}
-}
-
-func TestEnsureStateIndexDoesNotRebuildWhenNothingChanged(t *testing.T) {
-	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 10)}
-	d := NewBatch(fd, t.TempDir(), nil)
-	// Duplicate keys make len(stateIndex) != len(states); a rebuild-based
-	// implementation reallocates the whole map on every call.
-	d.states = []itemState{
-		{item: model.MediaItem{URL: "https://example.com/a"}},
-		{item: model.MediaItem{URL: "https://example.com/a"}},
-	}
-	d.ensureStateIndex()
-
-	allocs := testing.AllocsPerRun(10, d.ensureStateIndex)
-	if allocs > 0 {
-		t.Fatalf("ensureStateIndex allocated %.2f times per no-op call; expected incremental indexing", allocs)
-	}
-}
-
 func TestFitTableHeightFillsTerminal(t *testing.T) {
 	d := NewBatch(&fakeDownloader{ch: make(chan model.ProgressEvent, 1)}, t.TempDir(), nil)
 	for i := 0; i < 50; i++ {
-		d.states = append(d.states, itemState{item: model.MediaItem{Title: fmt.Sprintf("f%d.mp4", i)}})
+		d.Items = append(d.Items, session.Item{Item: model.MediaItem{Title: fmt.Sprintf("f%d.mp4", i)}})
 	}
 	d.refreshRows()
 	d.ready = true
@@ -170,7 +127,7 @@ func TestFitTableHeightFillsTerminal(t *testing.T) {
 	if got := lines(d.table.View()); got != 31 {
 		t.Fatalf("table renders %d lines, want 31 (terminal 40 minus 9 chrome)", got)
 	}
-	d.phase = phaseDownload // the table only shows in the batch view
+	d.Phase = session.PhaseDownload // the table only shows in the batch view
 	if got := lines(d.View()); got != d.height {
 		t.Fatalf("dashboard renders %d lines in a %d-line terminal: it must fill the terminal exactly", got, d.height)
 	}
@@ -178,9 +135,9 @@ func TestFitTableHeightFillsTerminal(t *testing.T) {
 
 func TestFitTableHeightCapsAtRowCount(t *testing.T) {
 	d := NewBatch(&fakeDownloader{ch: make(chan model.ProgressEvent, 1)}, t.TempDir(), nil)
-	d.states = []itemState{
-		{item: model.MediaItem{Title: "a.mp4"}},
-		{item: model.MediaItem{Title: "b.mp4"}},
+	d.Items = []session.Item{
+		{Item: model.MediaItem{Title: "a.mp4"}},
+		{Item: model.MediaItem{Title: "b.mp4"}},
 	}
 	d.refreshRows()
 	d.ready = true
@@ -197,7 +154,7 @@ func TestFitTableHeightCapsAtRowCount(t *testing.T) {
 func TestFitTableHeightFloorsAtMinimum(t *testing.T) {
 	d := NewBatch(&fakeDownloader{ch: make(chan model.ProgressEvent, 1)}, t.TempDir(), nil)
 	for i := 0; i < 50; i++ {
-		d.states = append(d.states, itemState{item: model.MediaItem{Title: fmt.Sprintf("f%d.mp4", i)}})
+		d.Items = append(d.Items, session.Item{Item: model.MediaItem{Title: fmt.Sprintf("f%d.mp4", i)}})
 	}
 	d.refreshRows()
 	d.ready = true
@@ -214,7 +171,7 @@ func TestFitTableHeightFloorsAtMinimum(t *testing.T) {
 func TestWindowSizeMsgRefitsTable(t *testing.T) {
 	d := NewBatch(&fakeDownloader{ch: make(chan model.ProgressEvent, 1)}, t.TempDir(), nil)
 	for i := 0; i < 50; i++ {
-		d.states = append(d.states, itemState{item: model.MediaItem{Title: fmt.Sprintf("f%d.mp4", i)}})
+		d.Items = append(d.Items, session.Item{Item: model.MediaItem{Title: fmt.Sprintf("f%d.mp4", i)}})
 	}
 	d.refreshRows()
 
@@ -227,17 +184,17 @@ func TestWindowSizeMsgRefitsTable(t *testing.T) {
 
 func TestVisibleMappingPreservesSelectionWhenGrowing(t *testing.T) {
 	d := NewBatch(nil, t.TempDir(), nil)
-	d.states = []itemState{
-		{isHeader: true, albumName: "first"},
-		{item: model.MediaItem{Title: "completed"}, status: model.StatusCompleted},
-		{isHeader: true, albumName: "second"},
-		{item: model.MediaItem{Title: "failed"}, status: model.StatusFailed},
-		{isHeader: true, albumName: "third"},
-		{item: model.MediaItem{Title: "completed"}, status: model.StatusCompleted},
-		{isHeader: true, albumName: "last"},
-		{item: model.MediaItem{Title: "selected"}, status: model.StatusPending},
+	d.Items = []session.Item{
+		{Header: true, Album: "first"},
+		{Item: model.MediaItem{Title: "completed"}, Status: model.StatusCompleted},
+		{Header: true, Album: "second"},
+		{Item: model.MediaItem{Title: "failed"}, Status: model.StatusFailed},
+		{Header: true, Album: "third"},
+		{Item: model.MediaItem{Title: "completed"}, Status: model.StatusCompleted},
+		{Header: true, Album: "last"},
+		{Item: model.MediaItem{Title: "selected"}, Status: model.StatusPending},
 	}
-	d.filter = filterPending
+	d.Filter = session.FilterPending
 	d.refreshRows()
 	d.table.SetCursor(1)
 	d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
@@ -248,41 +205,41 @@ func TestVisibleMappingPreservesSelectionWhenGrowing(t *testing.T) {
 
 func TestFilterCycleTracksLiveStatesAndGlobalTotals(t *testing.T) {
 	d := NewBatch(nil, t.TempDir(), nil)
-	d.states = []itemState{
-		{isHeader: true, albumName: "mixed"},
-		{item: model.MediaItem{URL: "https://example.com/one", Title: "completed", Size: 100}, status: model.StatusCompleted},
-		{item: model.MediaItem{URL: "https://example.com/two", Title: "failed", Size: 100}, status: model.StatusFailed},
-		{item: model.MediaItem{URL: "https://example.com/three", Title: "active", Size: 100}, status: model.StatusDownloading, bytes: 50},
-		{isHeader: true, albumName: "queued"},
-		{item: model.MediaItem{URL: "https://example.com/four", Title: "pending", Size: 100}, status: model.StatusPending},
+	d.Items = []session.Item{
+		{Header: true, Album: "mixed"},
+		{Item: model.MediaItem{URL: "https://example.com/one", Title: "completed", Size: 100}, Status: model.StatusCompleted},
+		{Item: model.MediaItem{URL: "https://example.com/two", Title: "failed", Size: 100}, Status: model.StatusFailed},
+		{Item: model.MediaItem{URL: "https://example.com/three", Title: "active", Size: 100}, Status: model.StatusDownloading, Bytes: 50},
+		{Header: true, Album: "queued"},
+		{Item: model.MediaItem{URL: "https://example.com/four", Title: "pending", Size: 100}, Status: model.StatusPending},
 	}
 	d.refreshRows()
 	for _, test := range []struct {
-		filter listFilter
+		filter session.Filter
 		rows   []int
 	}{
-		{filterFailed, []int{0, 2}},
-		{filterActive, []int{0, 3}},
-		{filterPending, []int{4, 5}},
-		{filterAll, []int{0, 1, 2, 3, 4, 5}},
+		{session.FilterFailed, []int{0, 2}},
+		{session.FilterActive, []int{0, 3}},
+		{session.FilterPending, []int{4, 5}},
+		{session.FilterAll, []int{0, 1, 2, 3, 4, 5}},
 	} {
 		d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
-		if d.filter != test.filter || !slices.Equal(d.visible, test.rows) {
-			t.Fatalf("filter %d: visible = %v, want %v", d.filter, d.visible, test.rows)
+		if d.Filter != test.filter || !slices.Equal(d.visible, test.rows) {
+			t.Fatalf("filter %d: visible = %v, want %v", d.Filter, d.visible, test.rows)
 		}
-		if done, total, _ := d.runProgressSums(); done != 150 || total != 400 {
+		if done, total, _ := d.ProgressSums(); done != 150 || total != 400 {
 			t.Fatalf("filter changed global byte totals: %d/%d", done, total)
 		}
 	}
-	d.filter = filterActive
+	d.Filter = session.FilterActive
 	d.rebuildVisible()
-	d.Update(progressMsg(model.ProgressEvent{Item: d.states[5].item, Status: model.StatusDownloading, Bytes: 25, Total: 100}))
+	d.Update(progressMsg(model.ProgressEvent{Item: d.Items[5].Item, Status: model.StatusDownloading, Bytes: 25, Total: 100}))
 	if !slices.Equal(d.visible, []int{0, 3, 4, 5}) {
 		t.Fatalf("active filter did not track live progress: %v", d.visible)
 	}
-	d.Update(downloadDoneMsg{key: d.states[3].item.Key()})
+	d.Update(downloadDoneMsg{key: d.Items[3].Item.Key()})
 	if !slices.Equal(d.visible, []int{4, 5}) {
-		t.Fatalf("active filter retained a completed item: %v", d.visible)
+		t.Fatalf("active filter retained a completed Item: %v", d.visible)
 	}
 }
 
@@ -290,15 +247,15 @@ func TestFoldedHeadersRemainReachable(t *testing.T) {
 	for _, wheel := range []bool{false, true} {
 		t.Run(fmt.Sprintf("wheel-%v", wheel), func(t *testing.T) {
 			d := NewBatch(nil, t.TempDir(), nil)
-			d.states = []itemState{
-				{isHeader: true, albumName: "first"},
-				{item: model.MediaItem{Title: "one"}, status: model.StatusPending},
-				{isHeader: true, albumName: "second"},
-				{item: model.MediaItem{Title: "two"}, status: model.StatusPending},
-				{isHeader: true, albumName: "third"},
-				{item: model.MediaItem{Title: "three"}, status: model.StatusPending},
+			d.Items = []session.Item{
+				{Header: true, Album: "first"},
+				{Item: model.MediaItem{Title: "one"}, Status: model.StatusPending},
+				{Header: true, Album: "second"},
+				{Item: model.MediaItem{Title: "two"}, Status: model.StatusPending},
+				{Header: true, Album: "third"},
+				{Item: model.MediaItem{Title: "three"}, Status: model.StatusPending},
 			}
-			d.folded = map[int]bool{2: true, 4: true}
+			d.Folded = map[int]bool{2: true, 4: true}
 			d.refreshRows()
 			d.table.SetCursor(1)
 			var down, up tea.Msg = tea.KeyMsg{Type: tea.KeyDown}, tea.KeyMsg{Type: tea.KeyUp}
@@ -327,9 +284,9 @@ func TestFoldedHeadersRemainReachable(t *testing.T) {
 func TestEmptyFilterCannotSelectHiddenItem(t *testing.T) {
 	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 1)}
 	d := NewBatch(fd, t.TempDir(), nil)
-	d.states = []itemState{{item: model.MediaItem{URL: "https://x/1", Title: "done"}, status: model.StatusCompleted}}
+	d.Items = []session.Item{{Item: model.MediaItem{URL: "https://x/1", Title: "done"}, Status: model.StatusCompleted}}
 	d.refreshRows()
-	d.filter = filterFailed
+	d.Filter = session.FilterFailed
 	d.rebuildVisible()
 	if len(d.visible) != 0 || d.stateAt(0) != -1 {
 		t.Fatalf("empty filtered view maps to a hidden state: %v, stateAt=%d", d.visible, d.stateAt(0))
@@ -343,12 +300,12 @@ func TestEmptyFilterCannotSelectHiddenItem(t *testing.T) {
 func TestRefreshTickCostGrowsLinearly(t *testing.T) {
 	cost := func(n int) time.Duration {
 		d := NewBatch(nil, t.TempDir(), nil)
-		d.states = append(d.states, itemState{isHeader: true, albumName: "album"})
+		d.Items = append(d.Items, session.Item{Header: true, Album: "album"})
 		for index := 0; index < n; index++ {
-			d.states = append(d.states, itemState{item: model.MediaItem{URL: fmt.Sprintf("https://example.com/%d", index), Title: "file"}, status: model.StatusPending})
+			d.Items = append(d.Items, session.Item{Item: model.MediaItem{URL: fmt.Sprintf("https://example.com/%d", index), Title: "file"}, Status: model.StatusPending})
 		}
 		d.refreshRows()
-		d.phase = phaseDownload
+		d.Phase = session.PhaseDownload
 		best := time.Hour
 		for range 3 {
 			start := time.Now()
@@ -367,10 +324,10 @@ func TestRefreshTickCostGrowsLinearly(t *testing.T) {
 func TestScrollPositionStableAcrossNavigationAndTicks(t *testing.T) {
 	d := NewBatch(nil, t.TempDir(), nil)
 	for index := 0; index < 60; index++ {
-		d.states = append(d.states, itemState{item: model.MediaItem{URL: fmt.Sprintf("https://example.com/%d", index), Title: fmt.Sprintf("item-%02d", index)}, status: model.StatusPending})
+		d.Items = append(d.Items, session.Item{Item: model.MediaItem{URL: fmt.Sprintf("https://example.com/%d", index), Title: fmt.Sprintf("item-%02d", index)}, Status: model.StatusPending})
 	}
 	d.refreshRows()
-	d.phase = phaseDownload
+	d.Phase = session.PhaseDownload
 	d.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
 	for range 40 {
 		d.Update(tea.KeyMsg{Type: tea.KeyDown})

@@ -272,6 +272,19 @@ func TestRowsQueuePositions(t *testing.T) {
 	}
 }
 
+func TestIndexOfIsIncremental(t *testing.T) {
+	s := New(nil, nil, t.TempDir(), "test")
+	s.Items = []Item{{Item: model.MediaItem{URL: "a"}}, {Item: model.MediaItem{URL: "a"}}}
+	s.IndexOf("a")
+	if allocs := testing.AllocsPerRun(10, func() { s.IndexOf("a") }); allocs > 0 {
+		t.Fatalf("IndexOf allocated %.2f times per no-op call; expected incremental indexing", allocs)
+	}
+	s.Items = append(s.Items, Item{Header: true}, Item{Item: model.MediaItem{URL: "b"}})
+	if i, ok := s.IndexOf("b"); !ok || i != 3 {
+		t.Fatalf("IndexOf(b) = %d, %v; want 3", i, ok)
+	}
+}
+
 func TestCancelAllAndShutdown(t *testing.T) {
 	dl := newFakeDownloader()
 	s := New(nil, dl, t.TempDir(), "test")

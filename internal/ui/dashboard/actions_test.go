@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/rajbahakdanyu/scraper/internal/model"
+	"github.com/rajbahakdanyu/scraper/internal/session"
 )
 
 func TestCancelSelectedItem(t *testing.T) {
@@ -34,14 +35,14 @@ func TestCancelSelectedPendingItem(t *testing.T) {
 	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 1)}
 	items := []model.MediaItem{{URL: "https://example.com/a.mp4", Title: "a.mp4"}}
 	d := New(instantItems(items), fd, t.TempDir(), "test")
-	d.states = []itemState{{item: items[0], status: model.StatusPending}}
+	d.Items = []session.Item{{Item: items[0], Status: model.StatusPending}}
 
 	d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
 
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
-	if len(fd.cancelled) != 1 || d.states[0].status != model.StatusCancelled {
-		t.Fatalf("pending cancel failed: calls=%d status=%v", len(fd.cancelled), d.states[0].status)
+	if len(fd.cancelled) != 1 || d.Items[0].Status != model.StatusCancelled {
+		t.Fatalf("pending cancel failed: calls=%d status=%v", len(fd.cancelled), d.Items[0].Status)
 	}
 }
 
@@ -52,7 +53,7 @@ func TestCancelDoesNothingForCompletedItem(t *testing.T) {
 	}
 	d := New(instantItems(items), fd, t.TempDir(), "cyberdrop")
 	d.Update(scrapeResultMsg{items: items})
-	d.applyDone(downloadDoneMsg{key: d.states[0].item.Key()})
+	d.applyDone(downloadDoneMsg{key: d.Items[0].Item.Key()})
 
 	d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
 
@@ -70,11 +71,11 @@ func TestResultReportsFailuresForExitStatus(t *testing.T) {
 	}
 	d := New(instantItems(items), nil, t.TempDir(), "cyberdrop")
 	d.Update(scrapeResultMsg{items: items})
-	d.applyDone(downloadDoneMsg{key: d.states[0].item.Key()})
+	d.applyDone(downloadDoneMsg{key: d.Items[0].Item.Key()})
 	if err := d.Result(); err != nil {
 		t.Fatalf("Result with no failures = %v, want nil", err)
 	}
-	d.applyDone(downloadDoneMsg{key: d.states[1].item.Key(), err: errors.New("boom")})
+	d.applyDone(downloadDoneMsg{key: d.Items[1].Item.Key(), err: errors.New("boom")})
 	var partial *model.PartialError
 	if err := d.Result(); !errors.As(err, &partial) {
 		t.Fatalf("Result with a failed item = %v, want *model.PartialError", err)
@@ -108,7 +109,7 @@ func TestCancelSelectedSkipsHeader(t *testing.T) {
 
 	// Select the header row (index 0)
 	d.table.SetCursor(0)
-	preCancel := d.states[0].isHeader
+	preCancel := d.Items[0].Header
 	if !preCancel {
 		t.Fatal("expected first row to be a header")
 	}
@@ -128,8 +129,8 @@ func TestInspectSelectedSetsInspectMsg(t *testing.T) {
 	d := New(instantItems(items), nil, t.TempDir(), "test")
 	d.Update(scrapeResultMsg{items: items})
 
-	d.states[0].status = model.StatusFailed
-	d.states[0].lastErr = errors.New("connection refused")
+	d.Items[0].Status = model.StatusFailed
+	d.Items[0].Err = errors.New("connection refused")
 
 	d.inspectSelected()
 
@@ -145,7 +146,7 @@ func TestInspectSelectedOnlyShowsFailedItems(t *testing.T) {
 	d := New(instantItems(items), nil, t.TempDir(), "test")
 	d.Update(scrapeResultMsg{items: items})
 
-	d.states[0].status = model.StatusCompleted
+	d.Items[0].Status = model.StatusCompleted
 
 	d.inspectSelected()
 
@@ -163,8 +164,8 @@ func TestRetrySelectedResetsState(t *testing.T) {
 	d.Update(scrapeResultMsg{items: items})
 
 	wantErr := errors.New("transient error")
-	d.applyDone(downloadDoneMsg{key: d.states[0].item.Key(), err: wantErr})
-	if d.states[0].status != model.StatusFailed {
+	d.applyDone(downloadDoneMsg{key: d.Items[0].Item.Key(), err: wantErr})
+	if d.Items[0].Status != model.StatusFailed {
 		t.Fatal("expected StatusFailed before retry")
 	}
 
@@ -174,14 +175,14 @@ func TestRetrySelectedResetsState(t *testing.T) {
 	}
 	cmd() // execute the download
 
-	if d.states[0].status != model.StatusPending {
-		t.Errorf("expected StatusPending after retry, got %v", d.states[0].status)
+	if d.Items[0].Status != model.StatusPending {
+		t.Errorf("expected StatusPending after retry, got %v", d.Items[0].Status)
 	}
-	if d.states[0].lastErr != nil {
-		t.Errorf("expected lastErr to be cleared on retry, got %v", d.states[0].lastErr)
+	if d.Items[0].Err != nil {
+		t.Errorf("expected lastErr to be cleared on retry, got %v", d.Items[0].Err)
 	}
-	if d.states[0].bytes != 0 {
-		t.Errorf("expected bytes reset to 0, got %d", d.states[0].bytes)
+	if d.Items[0].Bytes != 0 {
+		t.Errorf("expected bytes reset to 0, got %d", d.Items[0].Bytes)
 	}
 }
 
@@ -193,7 +194,7 @@ func TestRetrySelectedReturnsNilForNonFailed(t *testing.T) {
 	d := New(instantItems(items), fd, t.TempDir(), "test")
 	d.Update(scrapeResultMsg{items: items})
 
-	d.states[0].status = model.StatusCompleted
+	d.Items[0].Status = model.StatusCompleted
 
 	if cmd := d.retrySelected(); cmd != nil {
 		t.Errorf("expected nil command for completed item")
@@ -203,7 +204,7 @@ func TestRetrySelectedReturnsNilForNonFailed(t *testing.T) {
 func TestRetrySelectedReturnsNilForHeader(t *testing.T) {
 	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 10)}
 	d := New(instantItems(nil), fd, t.TempDir(), "test")
-	d.states = []itemState{{isHeader: true}}
+	d.Items = []session.Item{{Header: true}}
 
 	if cmd := d.retrySelected(); cmd != nil {
 		t.Errorf("expected nil command for header row")
@@ -217,8 +218,8 @@ func TestEnterKeyInspectClearsOnNavigation(t *testing.T) {
 	d := New(instantItems(items), nil, t.TempDir(), "test")
 	d.Update(scrapeResultMsg{items: items})
 
-	d.states[0].status = model.StatusFailed
-	d.states[0].lastErr = errors.New("boom")
+	d.Items[0].Status = model.StatusFailed
+	d.Items[0].Err = errors.New("boom")
 	d.inspectSelected()
 	if d.inspectMsg == "" {
 		t.Fatal("expected inspectMsg to be set")
@@ -241,38 +242,38 @@ func TestStaleFailedProgressDoesNotCorruptRetry(t *testing.T) {
 
 	// First attempt fails — applyDone stores the error.
 	wantErr := errors.New("transient")
-	d.applyDone(downloadDoneMsg{key: d.states[0].item.Key(), err: wantErr})
-	if d.states[0].status != model.StatusFailed {
+	d.applyDone(downloadDoneMsg{key: d.Items[0].Item.Key(), err: wantErr})
+	if d.Items[0].Status != model.StatusFailed {
 		t.Fatal("expected StatusFailed after applyDone")
 	}
 
 	// User retries — state resets to Pending.
 	_ = d.retrySelected()
-	if d.states[0].status != model.StatusPending {
-		t.Fatalf("expected StatusPending after retry, got %v", d.states[0].status)
+	if d.Items[0].Status != model.StatusPending {
+		t.Fatalf("expected StatusPending after retry, got %v", d.Items[0].Status)
 	}
 
 	// A stale StatusFailed progress event from the first attempt arrives.
-	d.applyProgress(model.ProgressEvent{
-		Item:   d.states[0].item,
+	d.ApplyProgress(model.ProgressEvent{
+		Item:   d.Items[0].Item,
 		Status: model.StatusFailed,
 		Bytes:  0,
 		Total:  100,
 	})
 
 	// The retried item must not be corrupted back to Failed.
-	if d.states[0].status == model.StatusFailed {
+	if d.Items[0].Status == model.StatusFailed {
 		t.Fatal("stale StatusFailed progress event corrupted a retried item")
 	}
 }
 
 func TestFailuresReturnsOnlyFailedItems(t *testing.T) {
 	d := NewBatch(&fakeDownloader{ch: make(chan model.ProgressEvent, 1)}, t.TempDir(), nil)
-	d.states = []itemState{
-		{isHeader: true},
-		{item: model.MediaItem{URL: "https://x/1", Title: "done"}, status: model.StatusCompleted},
-		{item: model.MediaItem{URL: "https://x/2", Title: "bad"}, status: model.StatusFailed, lastErr: errors.New("boom"), sourceURL: "https://bunkr.cr/a/rBSKhzaL"},
-		{item: model.MediaItem{URL: "https://x/3", Title: "cancelled"}, status: model.StatusCancelled},
+	d.Items = []session.Item{
+		{Header: true},
+		{Item: model.MediaItem{URL: "https://x/1", Title: "done"}, Status: model.StatusCompleted},
+		{Item: model.MediaItem{URL: "https://x/2", Title: "bad"}, Status: model.StatusFailed, Err: errors.New("boom"), AlbumURL: "https://bunkr.cr/a/rBSKhzaL"},
+		{Item: model.MediaItem{URL: "https://x/3", Title: "cancelled"}, Status: model.StatusCancelled},
 	}
 
 	got := d.Failures()
@@ -289,11 +290,11 @@ func TestFailuresReturnsOnlyFailedItems(t *testing.T) {
 
 func TestFailureJumpWrapsVisibleRows(t *testing.T) {
 	d := NewBatch(nil, t.TempDir(), nil)
-	d.states = []itemState{
-		{isHeader: true, albumName: "mixed"},
-		{item: model.MediaItem{Title: "first"}, status: model.StatusFailed},
-		{item: model.MediaItem{Title: "pending"}, status: model.StatusPending},
-		{item: model.MediaItem{Title: "last"}, status: model.StatusFailed},
+	d.Items = []session.Item{
+		{Header: true, Album: "mixed"},
+		{Item: model.MediaItem{Title: "first"}, Status: model.StatusFailed},
+		{Item: model.MediaItem{Title: "pending"}, Status: model.StatusPending},
+		{Item: model.MediaItem{Title: "last"}, Status: model.StatusFailed},
 	}
 	d.refreshRows()
 	for _, want := range []int{1, 3, 1} {
@@ -302,7 +303,7 @@ func TestFailureJumpWrapsVisibleRows(t *testing.T) {
 			t.Fatalf("F selected state %d, want %d", got, want)
 		}
 	}
-	d.filter = filterPending
+	d.Filter = session.FilterPending
 	d.rebuildVisible()
 	d.selectRow(1)
 	d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
@@ -314,59 +315,59 @@ func TestFailureJumpWrapsVisibleRows(t *testing.T) {
 func TestPendingPreventsSummaryAndCancelAll(t *testing.T) {
 	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 1)}
 	d := NewBatch(fd, t.TempDir(), nil)
-	d.states = []itemState{{item: model.MediaItem{URL: "https://x/1", Title: "one"}, status: model.StatusPending}, {item: model.MediaItem{URL: "https://x/2", Title: "two"}, status: model.StatusDownloading}}
+	d.Items = []session.Item{{Item: model.MediaItem{URL: "https://x/1", Title: "one"}, Status: model.StatusPending}, {Item: model.MediaItem{URL: "https://x/2", Title: "two"}, Status: model.StatusDownloading}}
 	d.refreshRows()
-	d.phase = phaseDownload
+	d.Phase = session.PhaseDownload
 	updated, _ := d.Update(refreshTickMsg{})
 	d = updated.(*Dashboard)
-	if d.phase == phaseSummary {
+	if d.Phase == session.PhaseSummary {
 		t.Fatal("pending/downloading items must prevent summary")
 	}
 	updated, _ = d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'C'}})
 	d = updated.(*Dashboard)
-	if len(fd.cancelled) != 2 || d.states[0].status != model.StatusCancelled || d.states[1].status != model.StatusCancelled {
+	if len(fd.cancelled) != 2 || d.Items[0].Status != model.StatusCancelled || d.Items[1].Status != model.StatusCancelled {
 		t.Fatalf("cancel-all did not cancel both items")
 	}
 }
 
 func TestCompletedAlbumAutoFoldsAndManualUnfoldSticks(t *testing.T) {
 	d := NewBatch(&fakeDownloader{ch: make(chan model.ProgressEvent, 1)}, t.TempDir(), nil)
-	d.states = []itemState{
-		{isHeader: true, albumName: "a", albumSite: "s"},
-		{item: model.MediaItem{URL: "https://x/1", Title: "one"}, status: model.StatusCompleted},
+	d.Items = []session.Item{
+		{Header: true, Album: "a", Site: "s"},
+		{Item: model.MediaItem{URL: "https://x/1", Title: "one"}, Status: model.StatusCompleted},
 	}
 	d.refreshRows()
-	d.phase = phaseDownload
-	d.batchRemaining = 1 // another album is still scraping, so the summary stays away
+	d.Phase = session.PhaseDownload
+	d.BatchRemaining = 1 // another album is still scraping, so the summary stays away
 	updated, _ := d.Update(refreshTickMsg{})
 	d = updated.(*Dashboard)
-	if len(d.visible) != 1 || !d.folded[0] {
+	if len(d.visible) != 1 || !d.Folded[0] {
 		t.Fatalf("completed album did not auto-fold: %v", d.visible)
 	}
 	updated, _ = d.Update(tea.KeyMsg{Type: tea.KeyTab})
 	d = updated.(*Dashboard)
 	updated, _ = d.Update(refreshTickMsg{})
 	d = updated.(*Dashboard)
-	if len(d.visible) != 2 || d.folded[0] {
-		t.Fatalf("manual unfold did not stick: visible=%v folded=%v", d.visible, d.folded)
+	if len(d.visible) != 2 || d.Folded[0] {
+		t.Fatalf("manual unfold did not stick: visible=%v folded=%v", d.visible, d.Folded)
 	}
 }
 
 func TestFailedAlbumStaysOpenWhenOtherAlbumsFold(t *testing.T) {
 	d := NewBatch(nil, t.TempDir(), nil)
-	d.states = []itemState{
-		{isHeader: true, albumName: "complete"},
-		{item: model.MediaItem{Title: "one", Size: 100}, status: model.StatusCompleted},
-		{isHeader: true, albumName: "failed"},
-		{item: model.MediaItem{Title: "two", Size: 100}, status: model.StatusFailed},
+	d.Items = []session.Item{
+		{Header: true, Album: "complete"},
+		{Item: model.MediaItem{Title: "one", Size: 100}, Status: model.StatusCompleted},
+		{Header: true, Album: "failed"},
+		{Item: model.MediaItem{Title: "two", Size: 100}, Status: model.StatusFailed},
 	}
 	d.refreshRows()
-	d.phase = phaseDownload
+	d.Phase = session.PhaseDownload
 	d.Update(refreshTickMsg{})
-	if !d.folded[0] || d.folded[2] {
-		t.Fatalf("album folds = %v, want only the completed album folded", d.folded)
+	if !d.Folded[0] || d.Folded[2] {
+		t.Fatalf("album folds = %v, want only the completed album folded", d.Folded)
 	}
-	if done, total, _ := d.runProgressSums(); done != 100 || total != 200 {
+	if done, total, _ := d.ProgressSums(); done != 100 || total != 200 {
 		t.Fatalf("folding changed global byte totals: %d/%d", done, total)
 	}
 }
@@ -374,12 +375,12 @@ func TestFailedAlbumStaysOpenWhenOtherAlbumsFold(t *testing.T) {
 func TestSummaryIgnoresTableKeysAndCanReturnToList(t *testing.T) {
 	fd := &fakeDownloader{ch: make(chan model.ProgressEvent, 1)}
 	d := NewBatch(fd, t.TempDir(), nil)
-	d.states = []itemState{
-		{item: model.MediaItem{URL: "https://example.com/1", Title: "done"}, status: model.StatusCompleted},
-		{item: model.MediaItem{URL: "https://example.com/2", Title: "broken"}, status: model.StatusFailed, lastErr: errors.New("boom")},
+	d.Items = []session.Item{
+		{Item: model.MediaItem{URL: "https://example.com/1", Title: "done"}, Status: model.StatusCompleted},
+		{Item: model.MediaItem{URL: "https://example.com/2", Title: "broken"}, Status: model.StatusFailed, Err: errors.New("boom")},
 	}
 	d.refreshRows()
-	d.phase = phaseSummary
+	d.Phase = session.PhaseSummary
 	d.table.SetCursor(1)
 	for _, key := range []tea.KeyMsg{
 		{Type: tea.KeyRunes, Runes: []rune{'r'}},
@@ -395,28 +396,28 @@ func TestSummaryIgnoresTableKeysAndCanReturnToList(t *testing.T) {
 			t.Fatalf("summary key %q started work", key.String())
 		}
 	}
-	if d.phase != phaseSummary || d.states[1].status != model.StatusFailed || d.filter != filterAll || d.searching || d.showErrors || len(fd.cancelled) != 0 || d.table.Cursor() != 1 {
+	if d.Phase != session.PhaseSummary || d.Items[1].Status != model.StatusFailed || d.Filter != session.FilterAll || d.searching || d.showErrors || len(fd.cancelled) != 0 || d.table.Cursor() != 1 {
 		t.Fatal("summary keys changed the hidden table")
 	}
 	d.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	if d.phase != phaseDone || !strings.Contains(d.View(), "broken") {
-		t.Fatalf("enter must return to the file list, phase=%v", d.phase)
+	if d.Phase != session.PhaseDone || !strings.Contains(d.View(), "broken") {
+		t.Fatalf("enter must return to the file list, phase=%v", d.Phase)
 	}
 	d.Update(refreshTickMsg{})
-	if d.phase != phaseDone {
+	if d.Phase != session.PhaseDone {
 		t.Fatal("the summary reappeared without new work")
 	}
-	if _, cmd := d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}}); cmd == nil || d.phase != phaseDownload {
-		t.Fatalf("retry from the list must restart the run, phase=%v", d.phase)
+	if _, cmd := d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}}); cmd == nil || d.Phase != session.PhaseDownload {
+		t.Fatalf("retry from the list must restart the run, phase=%v", d.Phase)
 	}
 }
 
 func TestRetryAllFailedResetsStates(t *testing.T) {
 	d := NewBatch(&fakeDownloader{ch: make(chan model.ProgressEvent, 1)}, t.TempDir(), nil)
-	d.states = []itemState{
-		{item: model.MediaItem{URL: "https://x/1", Title: "one"}, status: model.StatusFailed, lastErr: errors.New("boom")},
-		{item: model.MediaItem{URL: "https://x/2", Title: "two"}, status: model.StatusCompleted},
-		{item: model.MediaItem{URL: "https://x/3", Title: "three"}, status: model.StatusFailed, lastErr: errors.New("boom")},
+	d.Items = []session.Item{
+		{Item: model.MediaItem{URL: "https://x/1", Title: "one"}, Status: model.StatusFailed, Err: errors.New("boom")},
+		{Item: model.MediaItem{URL: "https://x/2", Title: "two"}, Status: model.StatusCompleted},
+		{Item: model.MediaItem{URL: "https://x/3", Title: "three"}, Status: model.StatusFailed, Err: errors.New("boom")},
 	}
 	d.refreshRows()
 
@@ -428,20 +429,20 @@ func TestRetryAllFailedResetsStates(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected retry commands for the failed items")
 	}
-	if got.states[0].status != model.StatusPending || got.states[2].status != model.StatusPending {
-		t.Fatalf("failed items not reset: %v, %v", got.states[0].status, got.states[2].status)
+	if got.Items[0].Status != model.StatusPending || got.Items[2].Status != model.StatusPending {
+		t.Fatalf("failed items not reset: %v, %v", got.Items[0].Status, got.Items[2].Status)
 	}
-	if got.states[1].status != model.StatusCompleted {
+	if got.Items[1].Status != model.StatusCompleted {
 		t.Fatal("completed item must stay completed")
 	}
 }
 
 func TestSearchJumpsToMatch(t *testing.T) {
 	d := NewBatch(&fakeDownloader{ch: make(chan model.ProgressEvent, 1)}, t.TempDir(), nil)
-	d.states = []itemState{
-		{item: model.MediaItem{Title: "alpha.mp4"}, status: model.StatusPending},
-		{item: model.MediaItem{Title: "beta.mp4"}, status: model.StatusPending},
-		{item: model.MediaItem{Title: "gamma.mp4"}, status: model.StatusPending},
+	d.Items = []session.Item{
+		{Item: model.MediaItem{Title: "alpha.mp4"}, Status: model.StatusPending},
+		{Item: model.MediaItem{Title: "beta.mp4"}, Status: model.StatusPending},
+		{Item: model.MediaItem{Title: "gamma.mp4"}, Status: model.StatusPending},
 	}
 	d.refreshRows()
 
