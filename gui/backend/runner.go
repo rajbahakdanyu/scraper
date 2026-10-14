@@ -14,8 +14,6 @@ import (
 	"github.com/rajbahakdanyu/scraper/internal/session"
 )
 
-var errNoRun = errors.New("no run in progress")
-
 // group is one same-type slice of a run (YouTube first, then other sites),
 // each with its own downloader — the same split the CLI makes.
 type group struct {

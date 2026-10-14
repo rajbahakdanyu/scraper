@@ -63,3 +63,71 @@ jobs:
 
       - name: Browser extension tests
         run: node --test 'browser-extension/tests/*.test.mjs'
+
+  gui:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: gui
+    env:
+      GUI_TAGS: desktop,production,webkit2_41
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: gui/go.mod
+          cache-dependency-path: gui/go.sum
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Install WebKitGTK
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - name: Frontend check, test and build
+        working-directory: gui/frontend
+        run: |
+          npm ci
+          npm run check
+          npm test
+          npm run build
+
+      - name: Check formatting
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "The following files are not gofmt'd:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Bindings are up to date
+        run: |
+          go run github.com/wailsapp/wails/v2/cmd/wails@v2.16.0 generate module
+          git -c core.fileMode=false diff --exit-code frontend/wailsjs
+
+      - name: Vet
+        run: go vet -tags "$GUI_TAGS" ./...
+
+      - name: Staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 -tags "$GUI_TAGS" ./...
+
+      - name: Security scan
+        run: go run github.com/securego/gosec/v2/cmd/gosec@v2.28.0 -quiet -tags "$GUI_TAGS" ./...
+
+      - name: Build
+        run: go run github.com/wailsapp/wails/v2/cmd/wails@v2.16.0 build -s -tags webkit2_41
+
+      - name: Vulnerability check
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -tags "$GUI_TAGS" ./...
+
+      - name: Module integrity
+        run: |
+          go mod verify
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
+      - name: Test
+        run: go test -race ./...
