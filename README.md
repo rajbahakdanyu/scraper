@@ -4,7 +4,8 @@
 
 A Go-based CLI tool for scraping and downloading media from YouTube,
 CyberDrop, Bunker, GoonBox, and Filester — with a futuristic terminal UI that
-launches instantly and shows live download progress.
+launches instantly and shows live download progress, and a
+[desktop GUI](#desktop-gui) with the same features.
 
 ## Requirements
 
@@ -23,6 +24,51 @@ Or install directly:
 ```bash
 go install github.com/rajbahakdanyu/scraper/cmd/scraper@latest
 ```
+
+## Desktop GUI
+
+`scraper-gui` is a desktop app ([Wails](https://wails.io) + Svelte) built on
+the same scraping, download, and run-state code as the TUI. Release builds
+for macOS (universal), Windows, and Linux are attached to each
+[release](https://github.com/rajbahakdanyu/scraper/releases). They are
+unsigned: on macOS, right-click the app and choose **Open** the first time;
+on Windows, choose **More info → Run anyway**. Linux needs the WebKitGTK 4.1
+runtime (`libwebkit2gtk-4.1-0` on Debian/Ubuntu).
+
+The GUI reads and writes the same `~/.scraper.yaml` as the CLI. Settings can
+be applied to the next run only, or saved to the file (comments and unknown
+keys are kept).
+
+| TUI / CLI | GUI |
+|-----------|-----|
+| `scraper <url>`, per-site subcommands | Paste URLs; **Site** forces the site for a single URL |
+| Batch args, `-i/--input-file`, stdin, retry lists | Paste several URLs or **Import list…** (always runs as a batch) |
+| `--dry-run` | **Preview** (items, sizes, unknown sizes, disk warning) |
+| `--watch` | **Watch every** interval, **Stop watching** |
+| Flags and config keys | **Settings** (every config key) |
+| Dashboard: progress bar, stats, speed, ETA, album headers | Run view with the same totals, grouped, foldable list |
+| `c` `C` `r` `R` `F` `/` `n` `f` `Tab` `e` `enter` | Same keys, plus row buttons and filter chips |
+| Summary: `enter`, `R`, `L`, `q` | Summary dialog with the same actions |
+| Retry list written on exit | Written when each group closes; **Show** reveals it |
+| Warnings after the TUI exits | **Notices** panel |
+| `--notify`, `--log-file` | Same settings |
+
+The GUI also opens the output folder, reveals finished files, and copies
+item URLs.
+
+To build it yourself you need Node.js 24, the
+[Wails v2 CLI](https://wails.io/docs/gettingstarted/installation), and on
+Linux `libgtk-3-dev libwebkit2gtk-4.1-dev`:
+
+```bash
+go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0
+cd gui
+wails build                    # Linux: wails build -tags webkit2_41
+# app in gui/build/bin/
+```
+
+`wails dev` (in `gui/`) runs it with hot reload and also serves the UI at
+<http://localhost:34115> with live Go bindings.
 
 ## Usage
 
@@ -355,3 +401,15 @@ go build ./...
 go vet ./...
 go test ./...
 ```
+
+The GUI is a separate Go module in `gui/` (so the CLI stays CGO-free):
+
+```bash
+cd gui/frontend && npm ci && npm run check && npm test && npm run build
+cd .. && go test ./...
+wails generate module   # after changing the bound backend API
+```
+
+Shared code: `internal/app` (site detection, filters, previews, downloaders,
+retry lists), `internal/session` (the download-run state machine both the TUI
+dashboard and the GUI drive), `internal/config` (load/save).
