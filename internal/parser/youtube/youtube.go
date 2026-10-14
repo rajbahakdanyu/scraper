@@ -782,20 +782,7 @@ func partOutputPath(finalPath string) string {
 
 // --- Downloader ---
 
-const (
-	defaultReadTimeout = 30 * time.Second
-	maxRetries         = netutil.MaxRetries
-)
-
-// withRetry runs fn up to maxRetries times with exponential backoff +
-// jitter between attempts, mirroring the generic downloader's policy: a
-// single transient network blip shouldn't fail a whole video. A cancelled
-// context stops the loop immediately instead of sleeping through backoff,
-// and a model.NonRetryableError (a permanent failure retrying can't fix) stops
-// it after the first attempt.
-func withRetry(ctx context.Context, fn func() error) error {
-	return netutil.Retry(ctx, maxRetries, netutil.RetryBaseDelay, netutil.RealSleeper{}, fn)
-}
+const defaultReadTimeout = 30 * time.Second
 
 type DownloaderConfig struct {
 	Concurrency  int
@@ -824,6 +811,7 @@ type Downloader struct {
 	quality      int    // maxHeight; 0 = no cap
 	qualityLabel string // the configured cap as given, e.g. "1080p"
 	audioOnly    string // "" or "m4a"/"mp3"
+	sleeper      netutil.Sleeper
 }
 
 func NewDownloaderWithConfig(scraper *Scraper, config DownloaderConfig) (*Downloader, error) {
@@ -854,6 +842,7 @@ func NewDownloaderWithConfig(scraper *Scraper, config DownloaderConfig) (*Downlo
 		quality:      qualityHeights[config.Quality],
 		qualityLabel: config.Quality,
 		audioOnly:    config.AudioOnly,
+		sleeper:      netutil.RealSleeper{},
 	}, nil
 }
 
@@ -915,7 +904,9 @@ func (d *Downloader) Download(item model.MediaItem, dest string) (string, error)
 	}
 
 	var finalPath string
-	err = withRetry(ctx, func() error {
+	// Same retry policy as the generic downloader: a transient network
+	// blip must not fail a whole video.
+	err = netutil.Retry(ctx, netutil.MaxRetries, netutil.RetryBaseDelay, d.sleeper, func() error {
 		var err error
 		finalPath, err = d.scraper.downloadBest(ctx, videoID, dest, item.Key(), d.paths, d.Core.Limiter(), d.Core.SkipSum(), d.quality, d.audioOnly, func(bytes, total int64) {
 			evt := d.event(item, model.StatusDownloading)

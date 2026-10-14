@@ -387,67 +387,6 @@ func TestCopyStreamToFileSkipsCheckWhenSizeUnknown(t *testing.T) {
 	}
 }
 
-func TestWithRetrySucceedsAfterTransientFailures(t *testing.T) {
-	attempts := 0
-	err := withRetry(t.Context(), func() error {
-		attempts++
-		if attempts < 3 {
-			return errors.New("transient network blip")
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("expected retry to succeed, got %v", err)
-	}
-	if attempts != 3 {
-		t.Fatalf("attempts = %d, want 3", attempts)
-	}
-}
-
-func TestWithRetryGivesUpAfterMaxAttempts(t *testing.T) {
-	attempts := 0
-	err := withRetry(t.Context(), func() error {
-		attempts++
-		return errors.New("always failing")
-	})
-	if err == nil {
-		t.Fatal("expected an error after exhausting retries")
-	}
-	if attempts != maxRetries {
-		t.Fatalf("attempts = %d, want %d", attempts, maxRetries)
-	}
-}
-
-func TestWithRetryStopsWhenContextCancelled(t *testing.T) {
-	ctx, cancel := context.WithCancel(t.Context())
-	attempts := 0
-	err := withRetry(ctx, func() error {
-		attempts++
-		cancel() // first failure cancels the context (user pressed 'c')
-		return errors.New("cancelled mid-stream")
-	})
-	if err == nil {
-		t.Fatal("expected an error")
-	}
-	if attempts != 1 {
-		t.Fatalf("retry slept through cancellation: attempts = %d, want 1", attempts)
-	}
-}
-
-func TestWithRetryDoesNotRetryPermanentErrors(t *testing.T) {
-	attempts := 0
-	err := withRetry(t.Context(), func() error {
-		attempts++
-		return model.NewNonRetryable(errors.New("youtube: no video formats found for xyz"))
-	})
-	if err == nil {
-		t.Fatal("expected an error")
-	}
-	if attempts != 1 {
-		t.Fatalf("permanent error was retried: attempts = %d, want 1", attempts)
-	}
-}
-
 func TestDownloadBestNoFormatsIsPermanent(t *testing.T) {
 	// A video whose metadata carries no downloadable formats can never
 	// succeed no matter how many times the download is retried, so

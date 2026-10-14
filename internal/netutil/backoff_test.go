@@ -53,6 +53,32 @@ func TestRetryStopsOnNonRetryableError(t *testing.T) {
 	}
 }
 
+func TestRetryGivesUpAfterMaxAttempts(t *testing.T) {
+	sleeper := &recordingSleeper{}
+	attempts := 0
+	want := errors.New("always failing")
+	err := netutil.Retry(context.Background(), netutil.MaxRetries, time.Millisecond, sleeper, func() error {
+		attempts++
+		return want
+	})
+	if !errors.Is(err, want) || attempts != netutil.MaxRetries {
+		t.Fatalf("Retry() error = %v, attempts = %d, want %d", err, attempts, netutil.MaxRetries)
+	}
+}
+
+func TestRetryStopsWhenContextCancelledDuringAttempt(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	attempts := 0
+	err := netutil.Retry(ctx, netutil.MaxRetries, time.Millisecond, netutil.RealSleeper{}, func() error {
+		attempts++
+		cancel()
+		return errors.New("cancelled mid-stream")
+	})
+	if !errors.Is(err, context.Canceled) || attempts != 1 {
+		t.Fatalf("Retry() error = %v, attempts = %d, want context.Canceled after 1", err, attempts)
+	}
+}
+
 func TestRetryReturnsSleeperCancellation(t *testing.T) {
 	want := context.Canceled
 	sleeper := &recordingSleeper{err: want}
