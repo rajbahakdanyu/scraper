@@ -1,27 +1,27 @@
 <script lang="ts">
   import {
-    CancelAll,
-    CancelItem,
-    ContinueRun,
-    DismissSummary,
-    ErrorLog,
-    FindNext,
-    ItemURL,
-    OpenOutputFolder,
-    RetryAllFailed,
-    RetryItem,
-    RevealItem,
-    RevealRetryList,
-    Rows,
-    RunState,
-    SaveRetryList,
-    SetFilter,
-    StopRun,
-    StopWatch,
-    ToggleFold,
+      CancelAll,
+      CancelItem,
+      ContinueRun,
+      DismissSummary,
+      ErrorLog,
+      FindNext,
+      ItemURL,
+      OpenOutputFolder,
+      RetryAllFailed,
+      RetryItem,
+      RevealItem,
+      RevealRetryList,
+      Rows,
+      RunState,
+      SaveRetryList,
+      SetFilter,
+      StopRun,
+      StopWatch,
+      ToggleFold,
   } from '../../wailsjs/go/backend/App'
-  import { ClipboardSetText } from '../../wailsjs/runtime/runtime'
   import type { backend } from '../../wailsjs/go/models'
+  import { ClipboardSetText } from '../../wailsjs/runtime/runtime'
   import { duration, humanBytes, percent, statusMarks } from '../lib/format'
   import { errorText, toast, ui } from '../lib/state.svelte'
   import ItemRow from './ItemRow.svelte'
