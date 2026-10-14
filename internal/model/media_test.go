@@ -86,21 +86,21 @@ func TestMediaFilterExtraExtensions(t *testing.T) {
 	}
 }
 
-func TestFilterMediaItems(t *testing.T) {
+func TestMediaFilterPreservesOrder(t *testing.T) {
 	items := []MediaItem{
 		{Title: "a.mp4"},
 		{Title: "b.exe"},
 		{Title: "c.zip"},
 		{Title: "d"},
 	}
-	kept, skipped := FilterMediaItems(items)
+	kept, skipped := MediaFilter{}.Filter(items)
 	if skipped != 2 {
 		t.Fatalf("skipped = %d, want 2", skipped)
 	}
 	if len(kept) != 2 || kept[0].Title != "a.mp4" || kept[1].Title != "c.zip" {
 		t.Fatalf("kept = %+v, want a.mp4 then c.zip", kept)
 	}
-	if kept, skipped := FilterMediaItems(nil); len(kept) != 0 || skipped != 0 {
+	if kept, skipped := (MediaFilter{}).Filter(nil); len(kept) != 0 || skipped != 0 {
 		t.Fatalf("empty input = %d kept, %d skipped", len(kept), skipped)
 	}
 }

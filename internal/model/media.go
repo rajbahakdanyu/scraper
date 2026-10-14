@@ -137,9 +137,3 @@ func extensionOf(name string) string {
 	name = strings.TrimRight(name, ". ")
 	return strings.TrimPrefix(strings.ToLower(path.Ext(name)), ".")
 }
-
-// FilterMediaItems drops items that are not media or archives, preserving
-// order, and reports how many were skipped, using the default allowlist.
-func FilterMediaItems(items []MediaItem) ([]MediaItem, int) {
-	return MediaFilter{}.Filter(items)
-}
