@@ -25,3 +25,9 @@ go.work.sum
 *.part
 *.resume.json
 *.sha256
+
+# Personal URL lists (browser-extension exports, retry lists)
+/download.txt
+scraper-tabs*.txt
+scraper-youtube*.txt
+scraper-failed-*.txt
