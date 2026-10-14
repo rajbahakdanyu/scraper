@@ -43,6 +43,7 @@ func firefoxProfileDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// #nosec G304 -- Firefox's own profile index under the user's home directory.
 	data, err := os.ReadFile(filepath.Join(root, "profiles.ini"))
 	if err != nil {
 		return "", fmt.Errorf("find Firefox profile: %w", err)
@@ -136,6 +137,12 @@ func readFirefoxCookies(dbPath string) ([]*http.Cookie, error) {
 	}
 	query := "SELECT name, value, host, path, expiry, isSecure, isHttpOnly FROM moz_cookies WHERE " +
 		strings.Join(clauses, " OR ")
+	// An absolute path can never be mistaken for a sqlite3 option.
+	dbPath, err := filepath.Abs(dbPath)
+	if err != nil {
+		return nil, err
+	}
+	// #nosec G204 -- fixed binary, no shell; the query is built from static domains only.
 	out, err := exec.Command("sqlite3", "-separator", "\t", dbPath, query).Output()
 	if err != nil {
 		return nil, fmt.Errorf("read Firefox cookies: %w", err)

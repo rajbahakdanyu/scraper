@@ -21,6 +21,7 @@ func OpenFileNoFollow(path string, flag int, perm os.FileMode) (*os.File, error)
 	if err == nil && fi.Mode()&os.ModeSymlink != 0 {
 		return nil, &os.PathError{Op: "open", Path: path, Err: errSymlink}
 	}
+	// #nosec G304 -- callers pass internally allocated paths; this helper only adds the symlink check.
 	return os.OpenFile(path, flag, perm)
 }
 
