@@ -16,6 +16,11 @@ func DefaultPath() string {
 	return getDefaultConfigPath()
 }
 
+// Default returns the built-in defaults, as used when no config file exists.
+func Default() *Config {
+	return defaultConfig()
+}
+
 // Save writes cfg to path (DefaultPath when empty). Comments and keys the
 // Config doesn't know about are kept; keys absent from the file are only
 // added when their value differs from the default. The file is replaced
