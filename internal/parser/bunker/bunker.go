@@ -23,7 +23,6 @@ import (
 type Scraper struct {
 	client    *http.Client
 	userAgent string
-	baseURL   string
 	signURL   string
 	sleeper   netutil.Sleeper
 }
@@ -79,7 +78,6 @@ func NewBunkerScraper() *Scraper {
 	return &Scraper{
 		client:    client,
 		userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-		baseURL:   "https://bunkr.cr",
 		signURL:   "https://glb-apisign.cdn.cr/sign",
 		sleeper:   netutil.RealSleeper{},
 	}
@@ -95,7 +93,6 @@ func NewBunkerScraperWithProxy(proxyURL string) (*Scraper, error) {
 	return &Scraper{
 		client:    client,
 		userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-		baseURL:   "https://bunkr.cr",
 		signURL:   "https://glb-apisign.cdn.cr/sign",
 		sleeper:   netutil.RealSleeper{},
 	}, nil

@@ -68,7 +68,6 @@ func TestParseBunkerRejectsOversizedHTML(t *testing.T) {
 	defer ts.Close()
 
 	scraper := newTestBunkerScraper()
-	scraper.baseURL = ts.URL
 	items, err := scraper.Parse(context.Background(), ts.URL)
 	if err == nil || len(items) != 0 {
 		t.Fatalf("expected link truncated by HTML limit, items=%d err=%v", len(items), err)
@@ -119,7 +118,6 @@ func TestParseBunkerAlbum(t *testing.T) {
 	})
 
 	scraper := newTestBunkerScraper()
-	scraper.baseURL = ts.URL
 	scraper.signURL = ts.URL + "/sign"
 	items, err := scraper.Parse(context.Background(), ts.URL+"/a/test123")
 	if err != nil {
@@ -198,7 +196,6 @@ func TestResolve404IsPermanentNotRetried(t *testing.T) {
 	})
 
 	scraper := newTestBunkerScraper()
-	scraper.baseURL = ts.URL
 
 	items, err := scraper.Parse(context.Background(), ts.URL+"/a/album")
 	if err != nil {
@@ -243,7 +240,6 @@ func TestGetSignedMediaURLRejectsNonOKSigningResponse(t *testing.T) {
 	})
 
 	scraper := newTestBunkerScraper()
-	scraper.baseURL = ts.URL
 	scraper.signURL = ts.URL + "/sign"
 	dlURL, err := url.Parse(ts.URL + "/file/123")
 	if err != nil {
@@ -282,7 +278,6 @@ func TestResolveSigningServerErrorIsNotDownloaderForbidden(t *testing.T) {
 	})
 
 	scraper := newTestBunkerScraper()
-	scraper.baseURL = ts.URL
 	scraper.signURL = ts.URL + "/sign"
 	items, err := scraper.Parse(context.Background(), ts.URL+"/a/album")
 	if err != nil {
@@ -436,7 +431,6 @@ func TestParseBunkerAlbumHrefResolution(t *testing.T) {
 			defer ts.Close()
 
 			scraper := newTestBunkerScraper()
-			scraper.baseURL = ts.URL
 			scraper.signURL = ts.URL + "/sign"
 			if tt.tls {
 				scraper.client = ts.Client()
@@ -476,7 +470,6 @@ func TestParseBunkerAlbumJSOnlyPageGetsClearError(t *testing.T) {
 	defer ts.Close()
 
 	scraper := newTestBunkerScraper()
-	scraper.baseURL = ts.URL
 	_, err := scraper.Parse(context.Background(), ts.URL+"/a/jsalbum")
 	if err == nil {
 		t.Fatal("expected an error for a JS-only album page")
@@ -494,7 +487,6 @@ func TestParseBunkerAlbumNoLinks(t *testing.T) {
 	defer ts.Close()
 
 	scraper := newTestBunkerScraper()
-	scraper.baseURL = ts.URL
 	_, err := scraper.Parse(context.Background(), ts.URL+"/a/test")
 	if err == nil {
 		t.Error("expected error for album with no file links")
@@ -509,7 +501,6 @@ func TestParseBunkerAlbumErrorIncludesURL(t *testing.T) {
 	defer ts.Close()
 
 	scraper := newTestBunkerScraper()
-	scraper.baseURL = ts.URL
 	albumURL := ts.URL + "/a/empty"
 	_, err := scraper.Parse(context.Background(), albumURL)
 	if err == nil {
@@ -542,7 +533,6 @@ func TestParseBunkerAlbumRetriesTransientEmptyPage(t *testing.T) {
 	})
 
 	scraper := newTestBunkerScraper()
-	scraper.baseURL = ts.URL
 
 	items, err := scraper.Parse(context.Background(), ts.URL+"/a/flaky")
 	if err != nil {
@@ -578,7 +568,6 @@ func TestParseBunkerAlbumRetriesTransientStatus(t *testing.T) {
 	})
 
 	scraper := newTestBunkerScraper()
-	scraper.baseURL = ts.URL
 
 	items, err := scraper.Parse(context.Background(), ts.URL+"/a/ratelimited")
 	if err != nil {
@@ -602,7 +591,6 @@ func TestParseBunkerAlbumPermanentErrorNotRetried(t *testing.T) {
 	defer ts.Close()
 
 	scraper := newTestBunkerScraper()
-	scraper.baseURL = ts.URL
 
 	if _, err := scraper.Parse(context.Background(), ts.URL+"/a/gone"); err == nil {
 		t.Fatal("expected a 404 album to fail")
@@ -685,7 +673,6 @@ func TestBunkerFileIDIgnoresHrefQueryString(t *testing.T) {
 	})
 
 	scraper := newTestBunkerScraper()
-	scraper.baseURL = ts.URL
 	scraper.signURL = ts.URL + "/sign"
 
 	items, err := scraper.Parse(context.Background(), ts.URL+"/a/album")
@@ -728,7 +715,6 @@ func TestBunkerSignResponseBodyIsBounded(t *testing.T) {
 	})
 
 	scraper := newTestBunkerScraper()
-	scraper.baseURL = ts.URL
 	scraper.signURL = ts.URL + "/sign"
 
 	items, err := scraper.Parse(context.Background(), ts.URL+"/a/album")
