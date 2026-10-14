@@ -8,7 +8,6 @@ import (
 
 	"github.com/rajbahakdanyu/scraper/internal/app"
 	"github.com/rajbahakdanyu/scraper/internal/config"
-	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 	"github.com/rajbahakdanyu/scraper/internal/model"
 	"github.com/rajbahakdanyu/scraper/internal/parser/youtube"
 	"github.com/rajbahakdanyu/scraper/internal/ui/dashboard"
@@ -175,7 +174,7 @@ func runBatchGroup(cfg *config.Config, opts globalOptions, reg map[string]model.
 	}
 	defer dl.Shutdown()
 
-	albums, err := buildAlbums(cfg, reg, entries, ytScraper)
+	albums, err := app.BuildAlbums(cfg, reg, entries, ytScraper, cliHooks)
 	if err != nil {
 		return err
 	}
@@ -191,33 +190,6 @@ func runBatchGroup(cfg *config.Config, opts globalOptions, reg map[string]model.
 			return runTUI(dashboard.NewBatch(dl, cfg.OutputDir, albums), cfg.OutputDir)
 		},
 	)
-}
-
-// buildAlbums maps batch entries to filtered albums under the output root.
-// A non-nil ytScraper is shared by every (YouTube) entry.
-func buildAlbums(cfg *config.Config, reg map[string]model.Scraper, entries []app.Entry, ytScraper model.Scraper) ([]model.Album, error) {
-	albums := make([]model.Album, 0, len(entries))
-	for _, e := range entries {
-		site, scraper := "youtube", ytScraper
-		slug := app.AlbumSlug(site, e.URL)
-		if ytScraper == nil {
-			site, _ = app.DetectSite(e.URL)
-			scraper = reg[site]
-			slug = app.DestSlug(site, e)
-		}
-		dest, err := fileutil.SafeJoin(cfg.OutputDir, slug)
-		if err != nil {
-			return nil, err
-		}
-		albums = append(albums, model.Album{
-			Site:    site,
-			URL:     e.URL,
-			Slug:    slug,
-			Dest:    dest,
-			Scraper: app.NewFilterScraper(scraper, cfg, cfg.ScrapeDelay, cfg.DiskCheck, cliHooks),
-		})
-	}
-	return albums, nil
 }
 
 var batchScraperRegistry = app.Registry

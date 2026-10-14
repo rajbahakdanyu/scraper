@@ -72,6 +72,8 @@ type Item struct {
 	Site     string
 	AlbumURL string
 	Err      error
+	// Path is where a completed item was saved.
+	Path string
 }
 
 // Session is the state of one download run. Exported fields are read by
@@ -171,6 +173,7 @@ type Task struct {
 type Result struct {
 	Task  Task
 	Items []model.MediaItem
+	Path  string
 	Err   error
 }
 
@@ -194,8 +197,8 @@ func (s *Session) nextScrape() []Task {
 func (s *Session) Exec(t Task) Result {
 	switch t.Kind {
 	case TaskDownload:
-		_, err := s.Downloader.Download(t.Item, t.Dest)
-		return Result{Task: t, Err: err}
+		path, err := s.Downloader.Download(t.Item, t.Dest)
+		return Result{Task: t, Path: path, Err: err}
 	default:
 		if t.Batch {
 			items, err := t.Album.Scraper.Parse(s.scrapeCtx, t.Album.URL)
@@ -211,6 +214,9 @@ func (s *Session) Apply(r Result) []Task {
 	switch {
 	case r.Task.Kind == TaskDownload:
 		s.ApplyDone(r.Task.Item.Key(), r.Err)
+		if i, ok := s.IndexOf(r.Task.Item.Key()); ok && s.Items[i].Status == model.StatusCompleted {
+			s.Items[i].Path = r.Path
+		}
 		return nil
 	case r.Task.Batch:
 		return s.applyBatchScrape(r.Task.Album, r.Items, r.Err)
@@ -594,6 +600,7 @@ func (s *Session) reset(i int) Task {
 	st.Speed = 0
 	st.Started = time.Time{}
 	st.Err = nil
+	st.Path = ""
 	s.Downloader.Prepare(st.Item)
 	return downloadTask(st.Item, s.destOf(i))
 }
