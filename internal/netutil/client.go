@@ -392,6 +392,11 @@ var nonPublicIPBlocks = func() []*net.IPNet {
 		"2001:2::/48",     // benchmarking (RFC 5180)
 		"2001:db8::/32",   // documentation (RFC 3849)
 		"3fff::/20",       // documentation (RFC 9637)
+		// IPv6 ranges that embed an IPv4 address a gateway would translate
+		// to, possibly a private one (64:ff9b::7f00:1 -> 127.0.0.1).
+		"64:ff9b::/96",   // NAT64 well-known prefix (RFC 6052)
+		"64:ff9b:1::/48", // NAT64 local-use (RFC 8215)
+		"2002::/16",      // 6to4 (RFC 3056)
 	}
 	blocks := make([]*net.IPNet, 0, len(cidrs))
 	for _, cidr := range cidrs {

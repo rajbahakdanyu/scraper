@@ -520,6 +520,9 @@ func TestIsPublicIPRejectsSpecialPurposeRanges(t *testing.T) {
 		"3fff::1",     // documentation (RFC 9637)
 		"100::1",      // discard-only (RFC 6666)
 		"2001:2::1",   // benchmarking (RFC 5180)
+		"64:ff9b::7f00:1",
+		"64:ff9b:1::a00:1",
+		"2002:c0a8:0101::1", // 6to4 wrapping 192.168.1.1
 	}
 	for _, addr := range blockedV6 {
 		if isPublicIP(net.ParseIP(addr)) {
