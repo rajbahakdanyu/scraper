@@ -30,6 +30,9 @@ import (
 
 type Scraper struct {
 	video *ytdl.Client
+	// videoMu serializes calls into video: kkdai's player-config cache is
+	// unsynchronized, and concurrent downloads share this client.
+	videoMu sync.Mutex
 
 	// parsed holds video info already fetched by Parse, keyed by video ID,
 	// so the download path reuses it instead of fetching the same metadata
@@ -65,6 +68,12 @@ func (s *Scraper) Name() string {
 	return "youtube"
 }
 
+func (s *Scraper) getVideo(ctx context.Context, videoID string) (*ytdl.Video, error) {
+	s.videoMu.Lock()
+	defer s.videoMu.Unlock()
+	return s.video.GetVideoContext(ctx, videoID)
+}
+
 // Parse returns one MediaItem per video: a single item for a plain video
 // URL, or one item per video in the playlist if the URL has a "list" query
 // parameter. Quality is resolved lazily at download time (see
@@ -80,7 +89,7 @@ func (s *Scraper) Parse(ctx context.Context, rawURL string) ([]model.MediaItem, 
 		return nil, fmt.Errorf("youtube: could not extract video ID from URL")
 	}
 
-	video, err := s.video.GetVideoContext(ctx, videoID)
+	video, err := s.getVideo(ctx, videoID)
 	if err != nil {
 		return nil, fmt.Errorf("youtube: failed to fetch video info: %w", err)
 	}
@@ -109,7 +118,9 @@ func (s *Scraper) Parse(ctx context.Context, rawURL string) ([]model.MediaItem, 
 // docs), not format info, so each item's Size is left at 0 (unknown) here;
 // it's known once the video is actually resolved at download time.
 func (s *Scraper) parsePlaylist(ctx context.Context, rawURL string) ([]model.MediaItem, error) {
+	s.videoMu.Lock()
 	playlist, err := s.video.GetPlaylistContext(ctx, rawURL)
+	s.videoMu.Unlock()
 	if err != nil {
 		return nil, fmt.Errorf("youtube: failed to fetch playlist info: %w", err)
 	}
@@ -258,7 +269,7 @@ func (s *Scraper) downloadBest(ctx context.Context, videoID, dest, owner string,
 	video := s.takeParsedVideo(videoID)
 	if video == nil {
 		var err error
-		video, err = s.video.GetVideoContext(ctx, videoID)
+		video, err = s.getVideo(ctx, videoID)
 		if err != nil {
 			return "", fmt.Errorf("youtube: failed to fetch video info: %w", err)
 		}
@@ -562,7 +573,9 @@ func ffmpegError(op string, err error, stderr *bytes.Buffer) error {
 }
 
 func (s *Scraper) downloadStreamToFileProgress(ctx context.Context, video *ytdl.Video, format *ytdl.Format, path string, limiter *rate.Limiter, onProgress func(int64, int64)) (string, error) {
+	s.videoMu.Lock()
 	stream, size, err := s.video.GetStreamContext(ctx, video, format)
+	s.videoMu.Unlock()
 	if err != nil {
 		return "", err
 	}
