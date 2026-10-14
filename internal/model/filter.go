@@ -47,20 +47,24 @@ func FilterItems(items []MediaItem, include, exclude []string, minSize, maxSize 
 
 	filtered := make([]MediaItem, 0, len(items))
 	for _, item := range items {
-		filename := netutil.PathSlug(item.URL)
-		// Match the human-readable filename: the URL slug is usually
-		// percent-encoded (e.g. "my%20video.mp4"). Decoding failure falls
-		// back to the raw slug. Matching stays case-sensitive, and
-		// patterns are validated by the CLI before reaching here.
-		if decoded, err := url.PathUnescape(filename); err == nil {
-			filename = decoded
+		// Many hosts' URLs end in an opaque ID (/file/123, watch?v=...), so
+		// the title (the real filename) is matched as well as the URL slug.
+		slug := netutil.PathSlug(item.URL)
+		// Decoding failure falls back to the raw slug. Matching stays
+		// case-sensitive, and patterns are validated by the CLI.
+		if decoded, err := url.PathUnescape(slug); err == nil {
+			slug = decoded
+		}
+		names := []string{slug}
+		if item.Title != "" {
+			names = append(names, item.Title)
 		}
 
-		if hasInclude && !matchesAny(filename, include) {
+		if hasInclude && !matchesAny(names, include) {
 			s.ExcludedByGlob++
 			continue
 		}
-		if hasExclude && matchesAny(filename, exclude) {
+		if hasExclude && matchesAny(names, exclude) {
 			s.ExcludedByGlob++
 			continue
 		}
@@ -80,10 +84,12 @@ func FilterItems(items []MediaItem, include, exclude []string, minSize, maxSize 
 	return filtered, s
 }
 
-func matchesAny(name string, patterns []string) bool {
+func matchesAny(names, patterns []string) bool {
 	for _, p := range patterns {
-		if matched, _ := filepath.Match(p, name); matched {
-			return true
+		for _, name := range names {
+			if matched, _ := filepath.Match(p, name); matched {
+				return true
+			}
 		}
 	}
 	return false

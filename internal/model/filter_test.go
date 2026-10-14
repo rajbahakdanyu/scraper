@@ -155,3 +155,18 @@ func TestFilterItemsMatchesURLDecodedFilename(t *testing.T) {
 		t.Fatalf("kept = %d, want 1 (glob must match the decoded filename)", s.Kept)
 	}
 }
+
+func TestFilterItemsMatchesTitleWhenURLIsAnID(t *testing.T) {
+	items := []MediaItem{
+		{URL: "https://dl.bunkr.cr/file/61567794", Title: "clip.mp4"},
+		{URL: "https://dl.bunkr.cr/file/61567795", Title: "photo.jpg"},
+	}
+	kept, _ := FilterItems(items, []string{"*.mp4"}, nil, 0, 0)
+	if len(kept) != 1 || kept[0].Title != "clip.mp4" {
+		t.Fatalf("include must match the title, got %+v", kept)
+	}
+	kept, _ = FilterItems(items, nil, []string{"*.mp4"}, 0, 0)
+	if len(kept) != 1 || kept[0].Title != "photo.jpg" {
+		t.Fatalf("exclude must match the title, got %+v", kept)
+	}
+}
