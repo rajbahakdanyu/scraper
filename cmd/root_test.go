@@ -1815,15 +1815,53 @@ func TestRootCommandReadsInputFileWithoutPositionalArgs(t *testing.T) {
 	}
 }
 
-func TestShouldFilterMedia(t *testing.T) {
-	if !shouldFilterMedia(&config.Config{MediaOnly: true}, "bunker") {
-		t.Fatal("media filtering must be on for file hosts")
+func TestFilterScraperMediaOnlySkipsYouTube(t *testing.T) {
+	items := []model.MediaItem{{URL: "https://www.youtube.com/watch?v=x", Title: "a video"}}
+	yt := newFilterScraper(&mockScraper{name: "youtube", items: items}, &config.Config{MediaOnly: true}, 0, false)
+	if got, _ := yt.Parse(context.Background(), "u"); len(got) != 1 {
+		t.Fatalf("YouTube must bypass the media filter, got %+v", got)
 	}
-	if shouldFilterMedia(&config.Config{MediaOnly: true}, "youtube") {
-		t.Fatal("YouTube must always bypass the media filter")
+	file := newFilterScraper(&mockScraper{name: "bunker", items: items}, &config.Config{MediaOnly: true}, 0, false)
+	if got, _ := file.Parse(context.Background(), "u"); len(got) != 0 {
+		t.Fatalf("file hosts must apply the media filter, got %+v", got)
 	}
-	if shouldFilterMedia(&config.Config{MediaOnly: false}, "bunker") {
-		t.Fatal("--media-only=false must disable filtering")
+}
+
+func TestRunWithScraperAndConfigAppliesIncludeFilter(t *testing.T) {
+	scraper := &mockScraper{items: []model.MediaItem{
+		{URL: "https://x/a.mp4", Title: "a.mp4"},
+		{URL: "https://x/b.jpg", Title: "b.jpg"},
+	}}
+	cfg := &config.Config{OutputDir: t.TempDir(), Include: []string{"*.mp4"}}
+
+	var err error
+	out := captureStdout(func() {
+		err = runWithScraperAndConfig(cfg, scraper, "https://x/a/album", "test", globalOptions{printURLs: true})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "b.jpg") || !strings.Contains(out, "a.mp4") {
+		t.Fatalf("--include '*.mp4' must keep only a.mp4, got %q", out)
+	}
+}
+
+func TestRunWithScraperAndConfigAppliesAlbumItemCap(t *testing.T) {
+	scraper := &mockScraper{items: []model.MediaItem{
+		{URL: "https://x/a.mp4", Title: "a.mp4"},
+		{URL: "https://x/b.mp4", Title: "b.mp4"},
+	}}
+	cfg := &config.Config{OutputDir: t.TempDir(), MaxAlbumItems: 1}
+
+	var err error
+	out := captureStdout(func() {
+		err = runWithScraperAndConfig(cfg, scraper, "https://x/a/album", "test", globalOptions{printURLs: true})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "b.mp4") {
+		t.Fatalf("max_album_items=1 must keep only the first item, got %q", out)
 	}
 }
 

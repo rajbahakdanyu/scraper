@@ -777,31 +777,9 @@ func runWithScraperAndConfig(cfg *config.Config, scraper model.Scraper, targetUR
 	}
 
 	// The scraper function runs in a background goroutine.
+	filtered := newFilterScraper(scraper, cfg, 0, cfg.DiskCheck)
 	scraperFn := func(ctx context.Context) ([]model.MediaItem, error) {
-		items, err := scraper.Parse(ctx, targetURL)
-		if err != nil {
-			return nil, err
-		}
-		if len(items) == 0 {
-			// The scrape itself found nothing: a dead URL or a changed
-			// page must not look like a successful run.
-			return nil, ErrNoItems
-		}
-		items = applyAlbumItemCap(items, cfg.MaxAlbumItems)
-		if shouldFilterMedia(cfg, siteName) {
-			items = applyMediaFilter(items, cfg.MediaExtensions)
-		}
-		if cfg.HasFilters() {
-			items, summary := model.FilterItems(items, cfg.Include, cfg.Exclude, cfg.MinSizeBytes(), cfg.MaxSizeBytes())
-			fmt.Fprintf(os.Stderr, "filters: %s\n", summary)
-			if len(items) == 0 {
-				fmt.Fprintln(os.Stderr, "No items matched filters.")
-			}
-		}
-
-		runDiskCheck(items, cfg.OutputDir, cfg.DiskCheck)
-
-		return items, nil
+		return filtered.Parse(ctx, targetURL)
 	}
 
 	if opts.dryRun {
@@ -1200,22 +1178,8 @@ func runBatchGroup(cfg *config.Config, opts globalOptions, reg map[string]model.
 		}
 	}
 
-	if cfg.HasFilters() || cfg.DiskCheck || cfg.MediaOnly {
-		for i := range dashAlbums {
-			dashAlbums[i].Scraper = &filterScraper{
-				inner:           dashAlbums[i].Scraper,
-				include:         cfg.Include,
-				exclude:         cfg.Exclude,
-				minSize:         cfg.MinSizeBytes(),
-				maxSize:         cfg.MaxSizeBytes(),
-				mediaOnly:       cfg.MediaOnly,
-				mediaExtensions: cfg.MediaExtensions,
-				maxItems:        cfg.MaxAlbumItems,
-				scrapeDelay:     cfg.ScrapeDelay,
-				diskCheck:       cfg.DiskCheck,
-				outputDir:       cfg.OutputDir,
-			}
-		}
+	for i := range dashAlbums {
+		dashAlbums[i].Scraper = newFilterScraper(dashAlbums[i].Scraper, cfg, cfg.ScrapeDelay, cfg.DiskCheck)
 	}
 
 	return finishRun(cfg, opts,
@@ -1319,6 +1283,25 @@ type filterScraper struct {
 	diskChecked      bool
 }
 
+// newFilterScraper wraps inner with every configured per-album filter: the
+// item cap, the media allowlist, include/exclude globs, size bounds, and an
+// optional one-time disk-space check.
+func newFilterScraper(inner model.Scraper, cfg *config.Config, scrapeDelay time.Duration, diskCheck bool) *filterScraper {
+	return &filterScraper{
+		inner:           inner,
+		include:         cfg.Include,
+		exclude:         cfg.Exclude,
+		minSize:         cfg.MinSizeBytes(),
+		maxSize:         cfg.MaxSizeBytes(),
+		mediaOnly:       cfg.MediaOnly,
+		mediaExtensions: cfg.MediaExtensions,
+		maxItems:        cfg.MaxAlbumItems,
+		scrapeDelay:     scrapeDelay,
+		diskCheck:       diskCheck,
+		outputDir:       cfg.OutputDir,
+	}
+}
+
 // scrapeDelaySleeper is the test seam for the configured inter-scrape delay.
 var scrapeDelaySleeper netutil.Sleeper = netutil.RealSleeper{}
 
@@ -1363,13 +1346,6 @@ func (f *filterScraper) Parse(ctx context.Context, url string) ([]model.MediaIte
 		runDiskCheck(filtered, f.outputDir, true)
 	}
 	return filtered, err
-}
-
-// shouldFilterMedia reports whether the media allowlist applies to a run:
-// only when enabled and only for file hosts (YouTube items have no
-// extensions and its downloader always produces media).
-func shouldFilterMedia(cfg *config.Config, siteName string) bool {
-	return cfg.MediaOnly && siteName != "youtube"
 }
 
 // printItemURLs writes one item URL per line to w, skipping items without
@@ -1451,21 +1427,7 @@ func diskWarning(total, free int64, unknown int) string {
 // Disk check stays with the dry-run functions themselves to avoid printing
 // the warning twice.
 func applyDryRunFilters(scraper model.Scraper, cfg *config.Config) model.Scraper {
-	if !cfg.HasFilters() && !cfg.MediaOnly {
-		return scraper
-	}
-	return &filterScraper{
-		inner:           scraper,
-		include:         cfg.Include,
-		exclude:         cfg.Exclude,
-		minSize:         cfg.MinSizeBytes(),
-		maxSize:         cfg.MaxSizeBytes(),
-		mediaOnly:       cfg.MediaOnly,
-		mediaExtensions: cfg.MediaExtensions,
-		maxItems:        cfg.MaxAlbumItems,
-		scrapeDelay:     cfg.ScrapeDelay,
-		diskCheck:       false,
-	}
+	return newFilterScraper(scraper, cfg, cfg.ScrapeDelay, false)
 }
 
 // notifySend is a test seam; production always sends through notify.Send.
