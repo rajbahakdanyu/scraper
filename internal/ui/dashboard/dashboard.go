@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -530,22 +529,9 @@ func (d *Dashboard) handleScrapeResult(msg scrapeResultMsg) (tea.Model, tea.Cmd)
 			d.phase = phaseDone
 			return d, nil
 		}
-		if err := os.MkdirAll(albumDest, 0750); err != nil {
-			d.states = nil
-			d.loadingErr = fmt.Sprintf("create album directory: %v", err)
-			d.phase = phaseDone
-			return d, nil
-		}
-		fi, err := os.Lstat(albumDest)
-		if err != nil {
+		if err := fileutil.EnsureDir(albumDest); err != nil {
 			d.states = nil
 			d.loadingErr = err.Error()
-			d.phase = phaseDone
-			return d, nil
-		}
-		if fi.Mode()&os.ModeSymlink != 0 {
-			d.states = nil
-			d.loadingErr = fmt.Sprintf("refusing to use symlinked output directory: %s", albumDest)
 			d.phase = phaseDone
 			return d, nil
 		}
@@ -648,22 +634,9 @@ func (d *Dashboard) handleBatchScrape(msg batchScrapeMsg) (tea.Model, tea.Cmd) {
 
 	wasFirstAlbum := d.phase == phaseLoading
 
-	if err := os.MkdirAll(msg.album.Dest, 0750); err != nil {
-		d.loadingErr = fmt.Sprintf("create album directory: %v", err)
-		d.scrapeErrs = append(d.scrapeErrs, errors.New(d.loadingErr))
-		d.phase = phaseDone
-		return d, nil
-	}
-	fi, err := os.Lstat(msg.album.Dest)
-	if err != nil {
+	if err := fileutil.EnsureDir(msg.album.Dest); err != nil {
 		d.loadingErr = err.Error()
 		d.scrapeErrs = append(d.scrapeErrs, err)
-		d.phase = phaseDone
-		return d, nil
-	}
-	if fi.Mode()&os.ModeSymlink != 0 {
-		d.loadingErr = fmt.Sprintf("refusing to use symlinked output directory: %s", msg.album.Dest)
-		d.scrapeErrs = append(d.scrapeErrs, errors.New(d.loadingErr))
 		d.phase = phaseDone
 		return d, nil
 	}

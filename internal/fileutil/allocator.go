@@ -2,6 +2,7 @@ package fileutil
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -29,6 +30,22 @@ func SafeJoin(root, component string) (string, error) {
 		return "", fmt.Errorf("path %q escapes output directory", component)
 	}
 	return targetAbs, nil
+}
+
+// EnsureDir creates dir (and parents) and refuses a symlink in its place,
+// so a planted link cannot redirect an album's downloads elsewhere.
+func EnsureDir(dir string) error {
+	if err := os.MkdirAll(dir, 0750); err != nil {
+		return fmt.Errorf("create album directory: %w", err)
+	}
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return fmt.Errorf("stat album directory: %w", err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing to use symlinked output directory: %s", dir)
+	}
+	return nil
 }
 
 // PathAllocator assigns collision-free paths within one download run.

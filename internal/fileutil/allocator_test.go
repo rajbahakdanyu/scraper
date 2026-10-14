@@ -1,9 +1,25 @@
 package fileutil
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestEnsureDirCreatesNestedAndRefusesSymlink(t *testing.T) {
+	root := t.TempDir()
+	if err := EnsureDir(filepath.Join(root, "a", "b")); err != nil {
+		t.Fatalf("EnsureDir nested: %v", err)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(filepath.Join(root, "a"), link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := EnsureDir(link); err == nil || !strings.Contains(err.Error(), "symlinked") {
+		t.Fatalf("EnsureDir on a symlink = %v, want refusal", err)
+	}
+}
 
 func TestPathAllocatorAddsSuffixForCollisions(t *testing.T) {
 	allocator := NewPathAllocator()

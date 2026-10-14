@@ -236,15 +236,8 @@ func runPlain(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error
 		if err != nil {
 			return err
 		}
-		if err := os.MkdirAll(albumDest, 0750); err != nil {
-			return fmt.Errorf("create album directory: %w", err)
-		}
-		fi, err := os.Lstat(albumDest)
-		if err != nil {
+		if err := fileutil.EnsureDir(albumDest); err != nil {
 			return err
-		}
-		if fi.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("refusing to use symlinked output directory: %s", albumDest)
 		}
 		dest = albumDest
 	}
@@ -359,6 +352,12 @@ func runBatchPlain(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, des
 	var allErrs []error
 	var failures []failedItem
 	var scrapeCh <-chan batchScrapeResult
+	// scrapeNext starts the one-album lookahead scrape after albums[idx].
+	scrapeNext := func(idx int) {
+		if idx+1 < len(albums) {
+			scrapeCh = startBatchScrape(ctx, abort, albums[idx+1])
+		}
+	}
 batchLoop:
 	for albumIdx, a := range albums {
 		select {
@@ -389,9 +388,7 @@ batchLoop:
 				printCh <- fmt.Sprintf("failed: %v\n", err)
 			}
 			allErrs = append(allErrs, err)
-			if albumIdx+1 < len(albums) {
-				scrapeCh = startBatchScrape(ctx, abort, albums[albumIdx+1])
-			}
+			scrapeNext(albumIdx)
 			continue
 		}
 		if err != nil {
@@ -399,9 +396,7 @@ batchLoop:
 		}
 		if len(items) == 0 {
 			printCh <- "No items found.\n"
-			if albumIdx+1 < len(albums) {
-				scrapeCh = startBatchScrape(ctx, abort, albums[albumIdx+1])
-			}
+			scrapeNext(albumIdx)
 			continue
 		}
 
@@ -409,30 +404,10 @@ batchLoop:
 
 		assignIDs(items, fmt.Sprintf("%d:", albumIdx))
 
-		if err := os.MkdirAll(a.Dest, 0750); err != nil {
-			printCh <- fmt.Sprintf("failed: create album directory: %v\n", err)
+		if err := fileutil.EnsureDir(a.Dest); err != nil {
+			printCh <- fmt.Sprintf("failed: %v\n", err)
 			allErrs = append(allErrs, err)
-			if albumIdx+1 < len(albums) {
-				scrapeCh = startBatchScrape(ctx, abort, albums[albumIdx+1])
-			}
-			continue
-		}
-		fi, err := os.Lstat(a.Dest)
-		if err != nil {
-			printCh <- fmt.Sprintf("failed: create album directory: %v\n", err)
-			allErrs = append(allErrs, err)
-			if albumIdx+1 < len(albums) {
-				scrapeCh = startBatchScrape(ctx, abort, albums[albumIdx+1])
-			}
-			continue
-		}
-		if fi.Mode()&os.ModeSymlink != 0 {
-			err := fmt.Errorf("refusing to use symlinked output directory: %s", a.Dest)
-			printCh <- fmt.Sprintf("failed: create album directory: %v\n", err)
-			allErrs = append(allErrs, err)
-			if albumIdx+1 < len(albums) {
-				scrapeCh = startBatchScrape(ctx, abort, albums[albumIdx+1])
-			}
+			scrapeNext(albumIdx)
 			continue
 		}
 
@@ -442,9 +417,7 @@ batchLoop:
 			errs = downloadAll(dl, items, a.Dest)
 			close(downloadsDone)
 		}()
-		if albumIdx+1 < len(albums) {
-			scrapeCh = startBatchScrape(ctx, abort, albums[albumIdx+1])
-		}
+		scrapeNext(albumIdx)
 
 		<-downloadsDone
 
@@ -519,16 +492,7 @@ func runJSON(dl dashboard.Downloader, scrapeFn func() ([]model.MediaItem, error)
 			writeJSONLine(out, model.JSONEvent{Event: "error", URL: targetURL, Error: dErr.Error()})
 			return dErr
 		}
-		if dErr := os.MkdirAll(albumDest, 0750); dErr != nil {
-			writeJSONLine(out, model.JSONEvent{Event: "error", URL: targetURL, Error: fmt.Sprintf("create album directory: %v", dErr)})
-			return dErr
-		}
-		if fi, lerr := os.Lstat(albumDest); lerr != nil {
-			dErr := fmt.Errorf("stat album directory: %w", lerr)
-			writeJSONLine(out, model.JSONEvent{Event: "error", URL: targetURL, Error: dErr.Error()})
-			return dErr
-		} else if fi.Mode()&os.ModeSymlink != 0 {
-			dErr := fmt.Errorf("refusing to use symlinked output directory: %s", albumDest)
+		if dErr := fileutil.EnsureDir(albumDest); dErr != nil {
 			writeJSONLine(out, model.JSONEvent{Event: "error", URL: targetURL, Error: dErr.Error()})
 			return dErr
 		}
@@ -613,6 +577,12 @@ func runBatchJSON(dl dashboard.Downloader, albums []dashboard.DashAlbumURL, dest
 	var grandTotalItems int
 	var failures []failedItem
 	var scrapeCh <-chan batchScrapeResult
+	// scrapeNext starts the one-album lookahead scrape after albums[idx].
+	scrapeNext := func(idx int) {
+		if idx+1 < len(albums) {
+			scrapeCh = startBatchScrape(ctx, abort, albums[idx+1])
+		}
+	}
 batchLoop:
 	for albumIdx, a := range albums {
 		select {
@@ -633,9 +603,7 @@ batchLoop:
 		if err != nil && len(items) == 0 {
 			writeJSONLine(out, model.JSONEvent{Event: "album_error", Site: a.Site, URL: a.URL, Slug: a.Slug, Error: err.Error()})
 			allErrs = append(allErrs, err)
-			if albumIdx+1 < len(albums) {
-				scrapeCh = startBatchScrape(ctx, abort, albums[albumIdx+1])
-			}
+			scrapeNext(albumIdx)
 			continue
 		}
 		if err != nil {
@@ -643,40 +611,16 @@ batchLoop:
 		}
 		if len(items) == 0 {
 			writeJSONLine(out, model.JSONEvent{Event: "album_error", Site: a.Site, URL: a.URL, Slug: a.Slug, Error: "no media items found"})
-			if albumIdx+1 < len(albums) {
-				scrapeCh = startBatchScrape(ctx, abort, albums[albumIdx+1])
-			}
+			scrapeNext(albumIdx)
 			continue
 		}
 
 		assignIDs(items, fmt.Sprintf("%d:", albumIdx))
 
-		if err := os.MkdirAll(a.Dest, 0750); err != nil {
-			writeJSONLine(out, model.JSONEvent{Event: "album_error", Site: a.Site, URL: a.URL, Slug: a.Slug, Error: fmt.Sprintf("create album directory: %v", err)})
+		if err := fileutil.EnsureDir(a.Dest); err != nil {
+			writeJSONLine(out, model.JSONEvent{Event: "album_error", Site: a.Site, URL: a.URL, Slug: a.Slug, Error: err.Error()})
 			allErrs = append(allErrs, err)
-			if albumIdx+1 < len(albums) {
-				scrapeCh = startBatchScrape(ctx, abort, albums[albumIdx+1])
-			}
-			continue
-		}
-
-		fi, lerr := os.Lstat(a.Dest)
-		if lerr != nil {
-			aErr := fmt.Errorf("stat album directory: %w", lerr)
-			writeJSONLine(out, model.JSONEvent{Event: "album_error", Site: a.Site, URL: a.URL, Slug: a.Slug, Error: aErr.Error()})
-			allErrs = append(allErrs, aErr)
-			if albumIdx+1 < len(albums) {
-				scrapeCh = startBatchScrape(ctx, abort, albums[albumIdx+1])
-			}
-			continue
-		}
-		if fi.Mode()&os.ModeSymlink != 0 {
-			aErr := fmt.Errorf("refusing to use symlinked output directory: %s", a.Dest)
-			writeJSONLine(out, model.JSONEvent{Event: "album_error", Site: a.Site, URL: a.URL, Slug: a.Slug, Error: aErr.Error()})
-			allErrs = append(allErrs, aErr)
-			if albumIdx+1 < len(albums) {
-				scrapeCh = startBatchScrape(ctx, abort, albums[albumIdx+1])
-			}
+			scrapeNext(albumIdx)
 			continue
 		}
 
@@ -689,9 +633,7 @@ batchLoop:
 			errs, paths = downloadAllWithPaths(dl, items, a.Dest)
 			close(downloadsDone)
 		}()
-		if albumIdx+1 < len(albums) {
-			scrapeCh = startBatchScrape(ctx, abort, albums[albumIdx+1])
-		}
+		scrapeNext(albumIdx)
 
 		<-downloadsDone
 
