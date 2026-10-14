@@ -1,4 +1,4 @@
-package cmd
+package cookies
 
 import (
 	"os"
@@ -7,8 +7,19 @@ import (
 	"testing"
 )
 
+var testDomains = []string{"bunkr.cr"}
+
+func TestReadFirefoxCookiesRejectsUnsafeDomain(t *testing.T) {
+	if _, err := exec.LookPath("sqlite3"); err != nil {
+		t.Skip("sqlite3 CLI not available")
+	}
+	if _, err := readFirefoxCookies(filepath.Join(t.TempDir(), "missing"), []string{"x' OR 1=1 --"}); err == nil {
+		t.Fatal("expected a domain with SQL metacharacters to be rejected")
+	}
+}
+
 func TestImportBrowserCookiesRejectsUnsupportedBrowser(t *testing.T) {
-	if _, err := importBrowserCookies("chrome"); err == nil {
+	if _, err := Import("chrome", nil); err == nil {
 		t.Fatal("expected chrome to be rejected")
 	}
 }
@@ -47,7 +58,7 @@ func TestReadFirefoxCookiesFiltersToSupportedSites(t *testing.T) {
 		t.Fatalf("create cookies db: %v: %s", err, out)
 	}
 
-	cookies, err := readFirefoxCookies(db)
+	cookies, err := readFirefoxCookies(db, testDomains)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +91,7 @@ func TestReadFirefoxCookiesSkipsExpiredAndHandlesMilliseconds(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cookies, err := readFirefoxCookies(db)
+	cookies, err := readFirefoxCookies(db, testDomains)
 	if err != nil {
 		t.Fatal(err)
 	}

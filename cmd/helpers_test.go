@@ -8,12 +8,12 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
-	"time"
 
+	"github.com/rajbahakdanyu/scraper/internal/app"
 	"github.com/rajbahakdanyu/scraper/internal/model"
 )
 
-func runBatch(opts globalOptions, entries []batchEntry) error {
+func runBatch(opts globalOptions, entries []app.Entry) error {
 	cfg, err := configLoader(opts)
 	if err != nil {
 		return err
@@ -78,15 +78,6 @@ func emptyTestConfig(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return path
-}
-
-type recordingDelaySleeper struct{ delays []time.Duration }
-
-func (s *recordingDelaySleeper) Sleep(time.Duration) {}
-
-func (s *recordingDelaySleeper) SleepCtx(_ context.Context, d time.Duration) error {
-	s.delays = append(s.delays, d)
-	return nil
 }
 
 func restoreBatchFactories(t *testing.T) {

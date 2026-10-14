@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/rajbahakdanyu/scraper/internal/app"
 	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 	"github.com/rajbahakdanyu/scraper/internal/model"
 )
@@ -122,7 +123,7 @@ func runJSON(dl model.Downloader, scrapeFn func() ([]model.MediaItem, error), de
 
 	completed, failed, cancelled, realItems, totalBytes := writeItemResult(out, items, errs, paths, slug, quality, audioOnly)
 
-	retryPath, summary, rErr := retryReport(reportDir, collectFailures(items, errs, targetURL), time.Now())
+	retryPath, summary, rErr := retryReport(reportDir, app.CollectFailures(items, errs, targetURL), time.Now())
 	if rErr != nil {
 		fmt.Fprintf(os.Stderr, "retry list: %v\n", rErr)
 	} else if summary != "" {
@@ -230,7 +231,7 @@ batchLoop:
 
 		<-downloadsDone
 
-		failures = append(failures, collectFailures(items, errs, a.URL)...)
+		failures = append(failures, app.CollectFailures(items, errs, a.URL)...)
 
 		completed, failed, cancelled, albumReal, _ := writeItemResult(out, items, errs, paths, a.Slug, quality, audioOnly)
 
@@ -274,7 +275,7 @@ batchLoop:
 func runDryRunJSONWithDiskCheck(scraper model.Scraper, targetURL, siteName, slugOverride string, out io.Writer, outputDir string, diskCheck bool) error {
 	items, err := scraper.Parse(context.Background(), targetURL)
 	if err != nil && len(items) == 0 {
-		if errors.Is(err, ErrNoItems) {
+		if errors.Is(err, app.ErrNoItems) {
 			// Dry-run is informational: a URL that yields nothing
 			// emits an empty summary and exits 0.
 			data, _ := json.Marshal(map[string]interface{}{
@@ -316,7 +317,7 @@ func runDryRunJSONWithDiskCheck(scraper model.Scraper, targetURL, siteName, slug
 
 	slug := slugOverride
 	if slug == "" {
-		slug = albumSlugFor(siteName, targetURL)
+		slug = app.AlbumSlug(siteName, targetURL)
 	}
 	album := model.JSONAlbum{
 		Site:  siteName,

@@ -2,12 +2,10 @@ package cmd
 
 import (
 	"fmt"
-	"path/filepath"
 	"time"
 
+	"github.com/rajbahakdanyu/scraper/internal/app"
 	"github.com/rajbahakdanyu/scraper/internal/config"
-	"github.com/rajbahakdanyu/scraper/internal/netutil"
-	"github.com/rajbahakdanyu/scraper/internal/parser/youtube"
 	"github.com/spf13/cobra"
 )
 
@@ -77,9 +75,6 @@ func loadGlobalConfig(opts globalOptions) (*config.Config, error) {
 	if opts.concurrencySet {
 		cfg.ConcurrentDownloads = opts.concurrency
 	}
-	if cfg.ConcurrentDownloads < 1 || cfg.ConcurrentDownloads > 256 {
-		return nil, fmt.Errorf("invalid --concurrent %d (must be between 1 and 256)", cfg.ConcurrentDownloads)
-	}
 	if opts.rateLimitSet {
 		cfg.RateLimit = opts.rateLimit
 	}
@@ -101,19 +96,6 @@ func loadGlobalConfig(opts globalOptions) (*config.Config, error) {
 	if opts.audioOnlySet && cfg.AudioOnly == "" {
 		cfg.AudioOnly = "m4a"
 	}
-	if cfg.Quality != "" && cfg.AudioOnly != "" {
-		return nil, fmt.Errorf("cannot use --quality and --audio-only together")
-	}
-	if cfg.Quality != "" {
-		if _, ok := youtube.ValidQuality(cfg.Quality); !ok {
-			return nil, fmt.Errorf("invalid --quality value %q (valid: 2160p, 1440p, 1080p, 720p, 480p, 360p, 240p)", cfg.Quality)
-		}
-	}
-	if cfg.AudioOnly != "" {
-		if cfg.AudioOnly != "m4a" && cfg.AudioOnly != "mp3" {
-			return nil, fmt.Errorf("invalid --audio-only value %q (valid: m4a, mp3)", cfg.AudioOnly)
-		}
-	}
 	if opts.includeSet {
 		cfg.Include = opts.include
 	}
@@ -132,11 +114,6 @@ func loadGlobalConfig(opts globalOptions) (*config.Config, error) {
 	if opts.logFileSet {
 		cfg.LogFile = opts.logFile
 	}
-	if cfg.LogFile != "" {
-		if err := openLogFile(cfg.LogFile); err != nil {
-			return nil, err
-		}
-	}
 	if opts.minSizeSet {
 		cfg.MinSize = opts.minSize
 	}
@@ -152,64 +129,18 @@ func loadGlobalConfig(opts globalOptions) (*config.Config, error) {
 	if opts.notifySet {
 		cfg.Notify = opts.notify
 	}
-
-	for i, p := range cfg.Include {
-		if _, err := filepath.Match(p, "test"); err != nil {
-			return nil, fmt.Errorf("invalid --include pattern %q (position %d): %w", p, i+1, err)
-		}
-	}
-	for i, p := range cfg.Exclude {
-		if _, err := filepath.Match(p, "test"); err != nil {
-			return nil, fmt.Errorf("invalid --exclude pattern %q (position %d): %w", p, i+1, err)
-		}
-	}
-
-	if cfg.MinSize != "" {
-		n, err := config.ParseSize(cfg.MinSize)
-		if err != nil {
-			return nil, fmt.Errorf("invalid --min-size: %w", err)
-		}
-		cfg.SetMinSizeBytes(n)
-	}
-	if cfg.MaxSize != "" {
-		n, err := config.ParseSize(cfg.MaxSize)
-		if err != nil {
-			return nil, fmt.Errorf("invalid --max-size: %w", err)
-		}
-		cfg.SetMaxSizeBytes(n)
-	}
-	if cfg.Cookies != "" {
-		expandedCookies, err := config.ExpandHomePath(cfg.Cookies)
-		if err != nil {
-			return nil, err
-		}
-		cfg.Cookies = expandedCookies
-		parsed, err := netutil.ParseNetscapeCookies(cfg.Cookies)
-		if err != nil {
-			return nil, fmt.Errorf("cookies: %w", err)
-		}
-		cfg.SetParsedCookies(parsed)
-	}
 	if opts.cookiesFromBrowserSet {
 		cfg.CookiesFromBrowser = opts.cookiesFromBrowser
 	}
-	if cfg.CookiesFromBrowser != "" {
-		imported, err := importBrowserCookies(cfg.CookiesFromBrowser)
-		if err != nil {
-			return nil, err
-		}
-		cfg.SetParsedCookies(append(cfg.ParsedCookies(), imported...))
-	}
 
-	// Single choke point covering both the --output flag and the config
-	// file's output_dir: the flag override above bypasses config.Load's own
-	// expansion, and the shell never expands a quoted `-o "~"` value.
-	outputDir, err := config.ExpandHomePath(cfg.OutputDir)
-	if err != nil {
+	if err := app.FinalizeConfig(cfg); err != nil {
 		return nil, err
 	}
-	cfg.OutputDir = outputDir
-
+	if cfg.LogFile != "" {
+		if err := openLogFile(cfg.LogFile); err != nil {
+			return nil, err
+		}
+	}
 	return cfg, nil
 }
 

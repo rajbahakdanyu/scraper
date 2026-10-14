@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rajbahakdanyu/scraper/internal/app"
 	"github.com/rajbahakdanyu/scraper/internal/model"
 )
 
@@ -33,7 +34,7 @@ func TestWithBufferedNoticesHoldsWarningsUntilTheTUIExits(t *testing.T) {
 	after := captureStderr(func() {
 		_ = withBufferedNotices(func() error {
 			during = captureStderr(func() {
-				applyAlbumItemCap(make([]model.MediaItem, 3), 1)
+				app.ApplyAlbumItemCap(make([]model.MediaItem, 3), 1, cliHooks)
 			})
 			return nil
 		})

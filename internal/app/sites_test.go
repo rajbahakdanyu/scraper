@@ -1,4 +1,4 @@
-package cmd
+package app
 
 import (
 	"net/http"
@@ -32,13 +32,13 @@ func TestDetectSite(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got, err := detectSite(tt.url)
+		got, err := DetectSite(tt.url)
 		if err != nil {
-			t.Errorf("detectSite(%s) returned error: %v", tt.url, err)
+			t.Errorf("DetectSite(%s) returned error: %v", tt.url, err)
 			continue
 		}
 		if got != tt.want {
-			t.Errorf("detectSite(%s) = %s, want %s", tt.url, got, tt.want)
+			t.Errorf("DetectSite(%s) = %s, want %s", tt.url, got, tt.want)
 		}
 	}
 }
@@ -54,23 +54,23 @@ func TestDetectSiteRejectsLookalikeDomains(t *testing.T) {
 		"https://filester.sh.evil.com/f/abc",
 	}
 	for _, u := range lookalikes {
-		if got, err := detectSite(u); err == nil {
-			t.Errorf("detectSite(%s) = %s, want an error for a lookalike domain", u, got)
+		if got, err := DetectSite(u); err == nil {
+			t.Errorf("DetectSite(%s) = %s, want an error for a lookalike domain", u, got)
 		}
 	}
 }
 
 func TestDetectSiteUnknown(t *testing.T) {
-	if _, err := detectSite("https://example.com/whatever"); err == nil {
+	if _, err := DetectSite("https://example.com/whatever"); err == nil {
 		t.Error("expected error for an unrecognized domain")
 	}
-	if _, err := detectSite("not a url"); err == nil {
+	if _, err := DetectSite("not a url"); err == nil {
 		t.Error("expected error for an unparseable URL")
 	}
 }
 
 func TestScraperRegistry(t *testing.T) {
-	reg, err := scraperRegistry("", nil)
+	reg, err := Registry("", nil)
 	if err != nil {
 		t.Fatalf("scraperRegistry failed: %v", err)
 	}
@@ -109,27 +109,27 @@ func TestAlbumSlugForYouTubePlaylistUsesPlaylistID(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := albumSlugFor(tt.siteName, tt.url); got != tt.want {
-				t.Errorf("albumSlugFor(%q, %q) = %q, want %q", tt.siteName, tt.url, got, tt.want)
+			if got := AlbumSlug(tt.siteName, tt.url); got != tt.want {
+				t.Errorf("AlbumSlug(%q, %q) = %q, want %q", tt.siteName, tt.url, got, tt.want)
 			}
 		})
 	}
 
 	// The bug this guards against: two different playlists must not
 	// collide into the same subfolder.
-	slugA := albumSlugFor("youtube", "https://www.youtube.com/playlist?list=PLaaa")
-	slugB := albumSlugFor("youtube", "https://www.youtube.com/playlist?list=PLbbb")
+	slugA := AlbumSlug("youtube", "https://www.youtube.com/playlist?list=PLaaa")
+	slugB := AlbumSlug("youtube", "https://www.youtube.com/playlist?list=PLbbb")
 	if slugA == slugB {
 		t.Errorf("expected different playlists to get different slugs, both got %q", slugA)
 	}
 }
 
 func TestBrowserExtensionDomainsMatchSiteDomains(t *testing.T) {
-	src, err := os.ReadFile(filepath.Join("..", "browser-extension", "collect.mjs"))
+	src, err := os.ReadFile(filepath.Join("..", "..", "browser-extension", "collect.mjs"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for site, domains := range siteDomains {
+	for site, domains := range SiteDomains {
 		for _, domain := range domains {
 			if !strings.Contains(string(src), `"`+domain+`"`) {
 				t.Errorf("browser-extension/collect.mjs is missing %s domain %q", site, domain)
@@ -140,7 +140,7 @@ func TestBrowserExtensionDomainsMatchSiteDomains(t *testing.T) {
 
 func TestScraperRegistryWithCookies(t *testing.T) {
 	cookies := []*http.Cookie{{Name: "auth", Value: "secret"}}
-	reg, err := scraperRegistry("", cookies)
+	reg, err := Registry("", cookies)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestScraperRegistryWithCookies(t *testing.T) {
 
 func TestScraperRegistryWithProxyAndCookies(t *testing.T) {
 	cookies := []*http.Cookie{{Name: "auth", Value: "secret"}}
-	reg, err := scraperRegistry("http://proxy:8080", cookies)
+	reg, err := Registry("http://proxy:8080", cookies)
 	if err != nil {
 		if strings.Contains(err.Error(), "invalid proxy URL") {
 			return

@@ -10,9 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/rajbahakdanyu/scraper/internal/config"
-	"github.com/rajbahakdanyu/scraper/internal/fileutil"
-	"github.com/rajbahakdanyu/scraper/internal/notify"
+	"github.com/rajbahakdanyu/scraper/internal/app"
 )
 
 // logFile is the optional --log-file sink; nil when unset.
@@ -57,13 +55,9 @@ func withBufferedNotices(fn func() error) error {
 // openLogFile opens (appending) the optional run log. A failure is fatal so
 // a typo'd path is caught before any downloads start.
 func openLogFile(path string) error {
-	expanded, err := config.ExpandHomePath(path)
+	f, err := app.OpenLogFile(path)
 	if err != nil {
 		return err
-	}
-	f, err := fileutil.OpenFileNoFollow(expanded, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("open log file: %w", err)
 	}
 	if previous, ok := logFile.(io.Closer); ok {
 		_ = previous.Close()
@@ -98,19 +92,11 @@ func logLine(format string, args ...interface{}) {
 	if logFile == nil {
 		return
 	}
-	fmt.Fprintf(logFile, "%s %s\n", time.Now().Format(time.RFC3339), fmt.Sprintf(format, args...))
+	app.WriteLogLine(logFile, time.Now(), fmt.Sprintf(format, args...))
 }
 
-// notificationSummary maps a run's terminal error to the notification text.
-func notificationSummary(err error) string {
-	if err != nil {
-		return "Download failed"
-	}
-	return "Download complete"
-}
-
-// notifySend is a test seam; production always sends through notify.Send.
-var notifySend = notify.Send
+// notifySend is a test seam; production always sends through app.Notify.
+var notifySend = app.Notify
 
 func tryNotify(summary string) {
 	if err := notifySend(summary); err != nil {

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rajbahakdanyu/scraper/internal/app"
 	"github.com/rajbahakdanyu/scraper/internal/config"
 	"github.com/rajbahakdanyu/scraper/internal/model"
 )
@@ -52,7 +53,7 @@ func TestRunDryRunJSONEmptyScrapeIsInformational(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scraper := applyDryRunFilters(&fakeDryRunScraper{}, cfg)
+	scraper := app.PreviewFilters(&fakeDryRunScraper{}, cfg, cliHooks)
 
 	var buf bytes.Buffer
 	if err := runDryRunJSONWithDiskCheck(scraper, "https://cyberdrop.cr/a/empty", "cyberdrop", "", &buf, t.TempDir(), false); err != nil {

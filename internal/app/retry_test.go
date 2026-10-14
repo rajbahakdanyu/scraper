@@ -1,4 +1,4 @@
-package cmd
+package app
 
 import (
 	"errors"
@@ -27,8 +27,8 @@ func TestFailureReason(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := failureReason(tt.err); got != tt.want {
-				t.Fatalf("failureReason() = %q, want %q", got, tt.want)
+			if got := FailureReason(tt.err); got != tt.want {
+				t.Fatalf("FailureReason() = %q, want %q", got, tt.want)
 			}
 		})
 	}
@@ -111,9 +111,9 @@ func TestCollectFailuresSkipsCancelledAndNil(t *testing.T) {
 		{URL: "https://x/3"},
 	}
 	errs := []error{nil, &model.CancelledError{URL: "https://x/2"}, errors.New("boom")}
-	got := collectFailures(items, errs, "https://bunkr.cr/a/rBSKhzaL")
+	got := CollectFailures(items, errs, "https://bunkr.cr/a/rBSKhzaL")
 	if len(got) != 1 || got[0].Item.URL != "https://x/3" || got[0].AlbumURL != "https://bunkr.cr/a/rBSKhzaL" {
-		t.Fatalf("collectFailures() = %+v, want the failed item with its album URL", got)
+		t.Fatalf("CollectFailures() = %+v, want the failed item with its album URL", got)
 	}
 }
 
@@ -249,4 +249,9 @@ func TestRetryReportErrorsOnUnwritableDir(t *testing.T) {
 	if path != "" || summary != "" {
 		t.Fatalf("retryReport() = (%q, %q), want empty results on error", path, summary)
 	}
+}
+
+func retryReport(dir string, failures []model.FailedItem, now time.Time) (string, string, error) {
+	r, err := WriteRetryReport(dir, failures, now)
+	return r.Path, r.Summary, err
 }

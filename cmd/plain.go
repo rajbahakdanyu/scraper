@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rajbahakdanyu/scraper/internal/app"
 	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 	"github.com/rajbahakdanyu/scraper/internal/model"
 )
@@ -49,12 +50,6 @@ func newPlainPrinter(w io.Writer) *plainPrinter {
 	return &plainPrinter{w: w, last: map[string]string{}}
 }
 
-// ErrNoItems marks a scrape that returned zero items (a dead URL, a DOM
-// change) as distinct from "everything was filtered out": the first is a
-// failure and must exit non-zero, the second is the user's filter doing
-// its job.
-var ErrNoItems = errors.New("no media items found")
-
 func (p *plainPrinter) event(evt model.ProgressEvent) {
 	line := progressLine(evt)
 	if line == "" {
@@ -76,7 +71,7 @@ func runPlain(dl model.Downloader, scrapeFn func() ([]model.MediaItem, error), d
 	reportDir := dest
 	items, err := scrapeFn()
 	if err != nil && len(items) == 0 {
-		if errors.Is(err, ErrNoItems) {
+		if errors.Is(err, app.ErrNoItems) {
 			fmt.Fprintln(out, "No items found.")
 		}
 		return err
@@ -164,7 +159,7 @@ drain:
 		fmt.Fprintf(out, "failed %s: %v\n", title, errs[i])
 		realErrs = append(realErrs, errs[i])
 	}
-	if _, summary, rErr := retryReport(reportDir, collectFailures(items, errs, sourceURL), time.Now()); rErr != nil {
+	if _, summary, rErr := retryReport(reportDir, app.CollectFailures(items, errs, sourceURL), time.Now()); rErr != nil {
 		fmt.Fprintf(out, "retry list: %v\n", rErr)
 	} else if summary != "" {
 		fmt.Fprintln(out, summary)
@@ -244,7 +239,7 @@ batchLoop:
 			break batchLoop
 		}
 		if err != nil && len(items) == 0 {
-			if errors.Is(err, ErrNoItems) {
+			if errors.Is(err, app.ErrNoItems) {
 				printCh <- "No items found.\n"
 			} else {
 				printCh <- fmt.Sprintf("failed: %v\n", err)
@@ -283,7 +278,7 @@ batchLoop:
 
 		<-downloadsDone
 
-		failures = append(failures, collectFailures(items, errs, a.URL)...)
+		failures = append(failures, app.CollectFailures(items, errs, a.URL)...)
 
 		for i, item := range items {
 			if errs[i] == nil {

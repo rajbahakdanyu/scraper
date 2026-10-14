@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rajbahakdanyu/scraper/internal/app"
 	"github.com/rajbahakdanyu/scraper/internal/config"
 	"github.com/rajbahakdanyu/scraper/internal/model"
 )
@@ -16,7 +17,7 @@ func TestRunBatchPrintURLsRejectsJSON(t *testing.T) {
 	restoreBatchFactories(t)
 	err := runBatch(
 		globalOptions{configPath: emptyTestConfig(t), printURLs: true, json: true},
-		[]batchEntry{{URL: "https://cyberdrop.cr/a/one"}},
+		[]app.Entry{{URL: "https://cyberdrop.cr/a/one"}},
 	)
 	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
 		t.Fatalf("expected a mutual-exclusion error, got %v", err)
@@ -64,7 +65,7 @@ func TestCollectBatchURLsTrimsWhitespace(t *testing.T) {
 }
 
 func TestReadURLsFromFileNotFound(t *testing.T) {
-	_, err := readURLsFromFile(filepath.Join(t.TempDir(), "missing.txt"))
+	_, err := app.ReadURLFile(filepath.Join(t.TempDir(), "missing.txt"))
 	if err == nil {
 		t.Fatal("expected error for missing file")
 	}
@@ -75,7 +76,7 @@ func TestReadURLsFromReaderParsesItemAlbumPairs(t *testing.T) {
 		"https://bunkr.cr/a/solo\n" +
 		"https://bunkr.cr/f/item1\thttps://bunkr.cr/a/album1\n" +
 		"https://bunkr.cr/f/item2\thttps://bunkr.cr/a/album1\textra-ignored\n"
-	entries, err := readURLsFromReader(strings.NewReader(input))
+	entries, err := app.ParseURLList(strings.NewReader(input))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,13 +95,13 @@ func TestReadURLsFromReaderParsesItemAlbumPairs(t *testing.T) {
 }
 
 func TestBatchDestSlugPrefersAlbumURL(t *testing.T) {
-	paired := batchEntry{URL: "https://bunkr.cr/f/item1", AlbumURL: "https://bunkr.cr/a/rBSKhzaL"}
-	if got := batchDestSlug("bunker", paired); got != "rBSKhzaL" {
-		t.Fatalf("batchDestSlug(paired) = %q, want rBSKhzaL", got)
+	paired := app.Entry{URL: "https://bunkr.cr/f/item1", AlbumURL: "https://bunkr.cr/a/rBSKhzaL"}
+	if got := app.DestSlug("bunker", paired); got != "rBSKhzaL" {
+		t.Fatalf("app.DestSlug(paired) = %q, want rBSKhzaL", got)
 	}
-	single := batchEntry{URL: "https://bunkr.cr/a/7OqKQz9N"}
-	if got := batchDestSlug("bunker", single); got != "7OqKQz9N" {
-		t.Fatalf("batchDestSlug(single) = %q, want 7OqKQz9N", got)
+	single := app.Entry{URL: "https://bunkr.cr/a/7OqKQz9N"}
+	if got := app.DestSlug("bunker", single); got != "7OqKQz9N" {
+		t.Fatalf("app.DestSlug(single) = %q, want 7OqKQz9N", got)
 	}
 }
 
@@ -115,16 +116,16 @@ func TestRunBatchRunsMixedSitesSequentially(t *testing.T) {
 
 	var genericCalls, youtubeCalls int
 	batchYouTubeScraper = func() model.Scraper { return &fakeDryRunScraper{} }
-	batchYouTubeDownloader = func(model.Scraper, *config.Config, int64) (model.Downloader, error) {
+	batchYouTubeDownloader = func(model.Scraper, *config.Config) (model.Downloader, error) {
 		youtubeCalls++
 		return newFakePlainDownloader(), nil
 	}
-	batchGenericDownloader = func(*config.Config, int64) (model.Downloader, error) {
+	batchGenericDownloader = func(*config.Config) (model.Downloader, error) {
 		genericCalls++
 		return newFakePlainDownloader(), nil
 	}
 
-	err := runBatch(globalOptions{configPath: emptyTestConfig(t), noTui: true}, []batchEntry{
+	err := runBatch(globalOptions{configPath: emptyTestConfig(t), noTui: true}, []app.Entry{
 		{URL: "https://youtube.com/watch?v=abc"},
 		{URL: "https://cyberdrop.cr/a/album"},
 	})
@@ -147,7 +148,7 @@ func TestRunBatchPlainTreatsEmptyScrapeAsFailure(t *testing.T) {
 		return map[string]model.Scraper{"cyberdrop": &fakeDryRunScraper{}}, nil
 	}
 
-	err := runBatch(globalOptions{configPath: emptyTestConfig(t), noTui: true}, []batchEntry{
+	err := runBatch(globalOptions{configPath: emptyTestConfig(t), noTui: true}, []app.Entry{
 		{URL: "https://cyberdrop.cr/a/empty"},
 	})
 	if err == nil || !strings.Contains(err.Error(), "no media items found") {
@@ -162,15 +163,15 @@ func TestRunBatchContinuesAfterGroupFailure(t *testing.T) {
 		return map[string]model.Scraper{"cyberdrop": &fakeDryRunScraper{}}, nil
 	}
 	batchYouTubeScraper = func() model.Scraper { return &fakeDryRunScraper{} }
-	batchYouTubeDownloader = func(model.Scraper, *config.Config, int64) (model.Downloader, error) {
+	batchYouTubeDownloader = func(model.Scraper, *config.Config) (model.Downloader, error) {
 		return nil, errors.New("youtube downloader exploded")
 	}
-	batchGenericDownloader = func(*config.Config, int64) (model.Downloader, error) {
+	batchGenericDownloader = func(*config.Config) (model.Downloader, error) {
 		genericCalls++
 		return newFakePlainDownloader(), nil
 	}
 
-	err := runBatch(globalOptions{configPath: emptyTestConfig(t), noTui: true}, []batchEntry{
+	err := runBatch(globalOptions{configPath: emptyTestConfig(t), noTui: true}, []app.Entry{
 		{URL: "https://youtube.com/watch?v=abc"},
 		{URL: "https://cyberdrop.cr/a/album"},
 	})
@@ -195,7 +196,7 @@ func TestRunBatchDryRunJSONLoopsOverURLs(t *testing.T) {
 			configPath: emptyTestConfig(t),
 			dryRun:     true,
 			json:       true,
-		}, []batchEntry{
+		}, []app.Entry{
 			{URL: "https://cyberdrop.cr/a/one"},
 			{URL: "https://cyberdrop.cr/a/two"},
 		})
@@ -221,20 +222,20 @@ func TestRunBatchSelectsDownloaderBySiteAndWiresDestinations(t *testing.T) {
 
 	var genericCalls, youtubeCalls int
 	var genericDL, youtubeDL *fakePlainDownloader
-	batchGenericDownloader = func(*config.Config, int64) (model.Downloader, error) {
+	batchGenericDownloader = func(*config.Config) (model.Downloader, error) {
 		genericCalls++
 		genericDL = newFakePlainDownloader()
 		return genericDL, nil
 	}
 	batchYouTubeScraper = func() model.Scraper { return youtubeScraper }
-	batchYouTubeDownloader = func(model.Scraper, *config.Config, int64) (model.Downloader, error) {
+	batchYouTubeDownloader = func(model.Scraper, *config.Config) (model.Downloader, error) {
 		youtubeCalls++
 		youtubeDL = newFakePlainDownloader()
 		return youtubeDL, nil
 	}
 
 	base := t.TempDir()
-	if err := runBatch(globalOptions{configPath: emptyTestConfig(t), noTui: true, output: base, outputSet: true}, []batchEntry{{URL: "https://cyberdrop.cr/a/album"}}); err != nil {
+	if err := runBatch(globalOptions{configPath: emptyTestConfig(t), noTui: true, output: base, outputSet: true}, []app.Entry{{URL: "https://cyberdrop.cr/a/album"}}); err != nil {
 		t.Fatalf("generic batch failed: %v", err)
 	}
 	if genericCalls != 1 || youtubeCalls != 0 {
@@ -247,7 +248,7 @@ func TestRunBatchSelectsDownloaderBySiteAndWiresDestinations(t *testing.T) {
 	batchScraperRegistry = func(string, []*http.Cookie) (map[string]model.Scraper, error) {
 		return map[string]model.Scraper{"youtube": youtubeScraper}, nil
 	}
-	if err := runBatch(globalOptions{configPath: emptyTestConfig(t), noTui: true, output: base, outputSet: true}, []batchEntry{{URL: "https://youtube.com/watch?v=abc"}}); err != nil {
+	if err := runBatch(globalOptions{configPath: emptyTestConfig(t), noTui: true, output: base, outputSet: true}, []app.Entry{{URL: "https://youtube.com/watch?v=abc"}}); err != nil {
 		t.Fatalf("youtube batch failed: %v", err)
 	}
 	if youtubeCalls != 1 || genericCalls != 1 {
@@ -267,7 +268,7 @@ func TestBatchDryRunPrintsPerURLErrors(t *testing.T) {
 
 	var runErr error
 	stderr := captureStderr(func() {
-		runErr = runBatch(globalOptions{configPath: emptyTestConfig(t), dryRun: true, noTui: true}, []batchEntry{{URL: "https://bunkr.cr/a/one"}})
+		runErr = runBatch(globalOptions{configPath: emptyTestConfig(t), dryRun: true, noTui: true}, []app.Entry{{URL: "https://bunkr.cr/a/one"}})
 	})
 	if runErr == nil {
 		t.Fatal("expected the batch dry-run to report the failure")

@@ -7,10 +7,9 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/rajbahakdanyu/scraper/internal/app"
 	"github.com/rajbahakdanyu/scraper/internal/config"
-	"github.com/rajbahakdanyu/scraper/internal/downloader"
 	"github.com/rajbahakdanyu/scraper/internal/model"
-	"github.com/rajbahakdanyu/scraper/internal/parser/youtube"
 	"github.com/rajbahakdanyu/scraper/internal/ui/dashboard"
 	"golang.org/x/term"
 )
@@ -18,7 +17,7 @@ import (
 // newRunOnce returns the root command's run step. The config (log file,
 // browser cookies, ...) is loaded once and reused by every --watch
 // iteration.
-func newRunOnce(opts globalOptions, entries []batchEntry) func() error {
+func newRunOnce(opts globalOptions, entries []app.Entry) func() error {
 	var cfg *config.Config
 	return func() error {
 		if cfg == nil {
@@ -30,7 +29,7 @@ func newRunOnce(opts globalOptions, entries []batchEntry) func() error {
 		}
 		if len(entries) == 1 && !opts.inputFileSet {
 			targetURL := entries[0].URL
-			site, err := detectSite(targetURL)
+			site, err := app.DetectSite(targetURL)
 			if err != nil {
 				return err
 			}
@@ -51,7 +50,7 @@ func runSingle(opts globalOptions, site, targetURL string) error {
 }
 
 func runSingleWithConfig(cfg *config.Config, opts globalOptions, site, targetURL string) error {
-	scraper, err := newSiteScraper(site, cfg.Proxy, cfg.ParsedCookies())
+	scraper, err := app.NewScraper(site, cfg.Proxy, cfg.ParsedCookies())
 	if err != nil {
 		return err
 	}
@@ -64,13 +63,13 @@ func runSingleWithConfig(cfg *config.Config, opts globalOptions, site, targetURL
 // a loading spinner until results arrive.
 func runWithScraperAndConfig(cfg *config.Config, scraper model.Scraper, targetURL, siteName string, opts globalOptions) error {
 	// The scraper function runs in a background goroutine.
-	filtered := newFilterScraper(scraper, cfg, 0, cfg.DiskCheck)
+	filtered := app.NewFilterScraper(scraper, cfg, 0, cfg.DiskCheck, cliHooks)
 	scraperFn := func(ctx context.Context) ([]model.MediaItem, error) {
 		return filtered.Parse(ctx, targetURL)
 	}
 
 	if opts.dryRun {
-		filtered := applyDryRunFilters(scraper, cfg)
+		filtered := app.PreviewFilters(scraper, cfg, cliHooks)
 		if opts.json {
 			return runDryRunJSONWithDiskCheck(filtered, targetURL, siteName, "", os.Stdout, cfg.OutputDir, cfg.DiskCheck)
 		}
@@ -91,18 +90,13 @@ func runWithScraperAndConfig(cfg *config.Config, scraper model.Scraper, targetUR
 		printItemURLs(os.Stdout, items)
 		return nil
 	}
-	rateLimitBytesPerSec, err := config.ParseRateLimit(cfg.RateLimit)
-	if err != nil {
-		return err
-	}
-
-	dl, err := buildDownloader(scraper, siteName, cfg, rateLimitBytesPerSec)
+	dl, err := app.BuildDownloader(scraper, siteName, cfg, cliHooks)
 	if err != nil {
 		return err
 	}
 	defer dl.Shutdown()
 
-	slug := albumSlugFor(siteName, targetURL)
+	slug := app.AlbumSlug(siteName, targetURL)
 
 	// When stdout is not a terminal (piped, redirected, cron), the
 	// bubbletea TUI would emit escape-code garbage — fall back to plain
@@ -154,45 +148,6 @@ func tuiResult(final tea.Model, outputDir string) error {
 	return dash.Result()
 }
 
-func buildDownloader(scraper model.Scraper, siteName string, cfg *config.Config, rateLimitBytesPerSec int64) (model.Downloader, error) {
-	if siteName == "youtube" {
-		ytScraper, ok := scraper.(*youtube.Scraper)
-		if !ok {
-			return nil, fmt.Errorf("youtube: unexpected scraper type %T", scraper)
-		}
-		dl, err := youtube.NewDownloaderWithConfig(ytScraper, youtube.DownloaderConfig{
-			Concurrency:  cfg.ConcurrentDownloads,
-			Timeout:      cfg.Timeout,
-			UserAgent:    cfg.UserAgent,
-			RateLimit:    rateLimitBytesPerSec,
-			SkipChecksum: !cfg.Checksums,
-			ProxyURL:     cfg.Proxy,
-			Cookies:      cfg.ParsedCookies(),
-			Quality:      cfg.Quality,
-			AudioOnly:    cfg.AudioOnly,
-			Warn:         func(msg string) { notice("%s\n", msg) },
-		})
-		if err != nil {
-			return nil, fmt.Errorf("youtube downloader: %w", err)
-		}
-		return dl, nil
-	}
-
-	dl, err := downloader.NewDownloaderWithConfig(
-		cfg.ConcurrentDownloads,
-		cfg.Timeout,
-		cfg.UserAgent,
-		cfg.Proxy,
-		cfg.ParsedCookies(),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("downloader: %w", err)
-	}
-	dl.SetRateLimit(rateLimitBytesPerSec)
-	dl.SetSkipChecksums(!cfg.Checksums)
-	return dl, nil
-}
-
 func finishRun(cfg *config.Config, opts globalOptions, jsonRun, plainRun, tuiRun func() error) error {
 	var err error
 	if opts.json {
@@ -203,7 +158,7 @@ func finishRun(cfg *config.Config, opts globalOptions, jsonRun, plainRun, tuiRun
 		err = withBufferedNotices(tuiRun)
 	}
 	if cfg.Notify {
-		tryNotify(notificationSummary(err))
+		tryNotify(app.NotificationSummary(err))
 	}
 	return err
 }

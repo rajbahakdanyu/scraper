@@ -7,10 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
+	"github.com/rajbahakdanyu/scraper/internal/app"
 	"github.com/rajbahakdanyu/scraper/internal/config"
-	"github.com/rajbahakdanyu/scraper/internal/downloader"
 	"github.com/rajbahakdanyu/scraper/internal/model"
 )
 
@@ -39,10 +38,10 @@ func TestRunWithScraperAndConfigPrintURLs(t *testing.T) {
 func TestRunPlainNoItemsIsAnError(t *testing.T) {
 	var buf bytes.Buffer
 	err := runPlain(newFakePlainDownloader(), func() ([]model.MediaItem, error) {
-		return nil, ErrNoItems
+		return nil, app.ErrNoItems
 	}, t.TempDir(), "", "", &buf)
-	if !errors.Is(err, ErrNoItems) {
-		t.Fatalf("runPlain should surface ErrNoItems, got %v", err)
+	if !errors.Is(err, app.ErrNoItems) {
+		t.Fatalf("runPlain should surface app.ErrNoItems, got %v", err)
 	}
 	if !strings.Contains(buf.String(), "No items found") {
 		t.Fatalf("output should still say no items were found: %q", buf.String())
@@ -79,7 +78,7 @@ func TestRunOnceLoadsConfigOnceAcrossWatchIterations(t *testing.T) {
 	}
 	t.Cleanup(func() { configLoader = orig })
 
-	runOnce := newRunOnce(globalOptions{}, []batchEntry{{URL: "https://unsupported.example/x"}})
+	runOnce := newRunOnce(globalOptions{}, []app.Entry{{URL: "https://unsupported.example/x"}})
 	for range 3 {
 		if err := runOnce(); err == nil {
 			t.Fatal("expected an unsupported-site error")
@@ -161,40 +160,5 @@ func TestFinishRunNotifiesFailureAndSuccess(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Fatalf("notifications = %v, want none when Notify is disabled", got)
-	}
-}
-
-// buildDownloader must map the config's checksums setting to the
-// downloader's skip flag: off by default, skipped unless enabled.
-func TestBuildDownloaderChecksumsWiring(t *testing.T) {
-	tests := []struct {
-		name           string
-		checksums      bool
-		wantSkipChecks bool
-	}{
-		{"default off", false, true},
-		{"enabled", true, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &config.Config{
-				Checksums:           tt.checksums,
-				ConcurrentDownloads: 1,
-				Timeout:             30 * time.Second,
-			}
-			dl, err := buildDownloader(nil, "generic", cfg, 0)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer dl.Shutdown()
-
-			concrete, ok := dl.(*downloader.Downloader)
-			if !ok {
-				t.Fatalf("buildDownloader returned %T, want *downloader.Downloader", dl)
-			}
-			if got := concrete.SkipChecksums(); got != tt.wantSkipChecks {
-				t.Fatalf("SkipChecksums() = %v, want %v", got, tt.wantSkipChecks)
-			}
-		})
 	}
 }

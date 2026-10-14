@@ -13,13 +13,14 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/rajbahakdanyu/scraper/internal/app"
 	"github.com/rajbahakdanyu/scraper/internal/model"
 )
 
 func TestNewRootCmdRegistersSubcommands(t *testing.T) {
 	root := NewRootCmd()
 
-	for site := range siteDomains {
+	for site := range app.SiteDomains {
 		var cmd *cobra.Command
 		for _, c := range root.Commands() {
 			if c.Name() == site {

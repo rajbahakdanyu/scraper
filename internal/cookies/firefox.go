@@ -1,4 +1,4 @@
-package cmd
+package cookies
 
 import (
 	"errors"
@@ -53,12 +53,12 @@ var firefoxRoot = func() (string, error) {
 	return candidates[0], nil
 }
 
-// importBrowserCookies loads cookies for the supported sites from a local
-// browser profile. Only Firefox is supported; Chrome on macOS encrypts its
-// cookie store behind the Keychain (a separate decision). Cookies are
-// filtered to the supported site domains, and the client's cookie jar is
-// host-scoped, so unrelated cookies are never sent anywhere.
-func importBrowserCookies(browser string) ([]*http.Cookie, error) {
+// Import loads cookies for domains from a local browser profile. Only
+// Firefox is supported; Chrome on macOS encrypts its cookie store behind the
+// Keychain (a separate decision). Cookies are filtered to domains, and the
+// client's cookie jar is host-scoped, so unrelated cookies are never sent
+// anywhere.
+func Import(browser string, domains []string) ([]*http.Cookie, error) {
 	if browser != "firefox" {
 		return nil, fmt.Errorf("unsupported browser %q (only firefox is supported)", browser)
 	}
@@ -66,7 +66,7 @@ func importBrowserCookies(browser string) ([]*http.Cookie, error) {
 	if err != nil {
 		return nil, err
 	}
-	return readFirefoxCookies(filepath.Join(profile, "cookies.sqlite"))
+	return readFirefoxCookies(filepath.Join(profile, "cookies.sqlite"), domains)
 }
 
 // firefoxProfileDir finds the default profile directory from profiles.ini,
@@ -144,26 +144,27 @@ func profileDir(root string, path, relative string) string {
 	return filepath.Join(root, filepath.FromSlash(path))
 }
 
-// readFirefoxCookies reads cookies for the supported site domains out of a
-// Firefox cookies.sqlite using the sqlite3 CLI, avoiding a database driver
+// readFirefoxCookies reads cookies for domains out of a Firefox
+// cookies.sqlite using the sqlite3 CLI, avoiding a database driver
 // dependency.
-func readFirefoxCookies(dbPath string) ([]*http.Cookie, error) {
+func readFirefoxCookies(dbPath string, domains []string) ([]*http.Cookie, error) {
 	if _, err := exec.LookPath("sqlite3"); err != nil {
 		return nil, fmt.Errorf("reading Firefox cookies needs the sqlite3 CLI: %w", err)
 	}
 	var clauses []string
-	for _, domains := range siteDomains {
-		for _, domain := range domains {
-			// Exact host, dot-prefixed host, or a subdomain. A
-			// left-unanchored LIKE ('%bunkr.cr') would also match lookalike
-			// hosts like evilbunkr.cr. Domains come from the static
-			// siteDomains map, never user input.
-			clauses = append(clauses,
-				fmt.Sprintf("host = '%s'", domain),
-				fmt.Sprintf("host = '.%s'", domain),
-				fmt.Sprintf("host LIKE '%%.%s'", domain),
-			)
+	for _, domain := range domains {
+		// Domains are interpolated into SQL, so only plain hostnames pass.
+		if !validDomain(domain) {
+			return nil, fmt.Errorf("invalid cookie domain %q", domain)
 		}
+		// Exact host, dot-prefixed host, or a subdomain. A
+		// left-unanchored LIKE ('%bunkr.cr') would also match lookalike
+		// hosts like evilbunkr.cr.
+		clauses = append(clauses,
+			fmt.Sprintf("host = '%s'", domain),
+			fmt.Sprintf("host = '.%s'", domain),
+			fmt.Sprintf("host LIKE '%%.%s'", domain),
+		)
 	}
 	if len(clauses) == 0 {
 		return nil, fmt.Errorf("no supported site domains to filter cookies by")
@@ -242,4 +243,16 @@ func copyFile(src, dst string) error {
 		return errors.Join(err, out.Close())
 	}
 	return out.Close()
+}
+
+func validDomain(domain string) bool {
+	if domain == "" {
+		return false
+	}
+	for _, r := range domain {
+		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '.' || r == '-') {
+			return false
+		}
+	}
+	return true
 }
