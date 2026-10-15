@@ -20,8 +20,11 @@ const (
 // session bus. Without a desktop session (SSH, headless) there is nobody to
 // notify, so that is not an error.
 func send(summary string) error {
+	// godbus's Hello has no timeout; cancelling the conn's context closes it.
+	ctx, cancel := context.WithTimeout(context.Background(), notifyCallDeadline)
+	defer cancel()
 	// NoAutoStartup: never spawn a dbus-daemon just to show a notification.
-	conn, err := dbus.SessionBusPrivateNoAutoStartup()
+	conn, err := dbus.SessionBusPrivateNoAutoStartup(dbus.WithContext(ctx))
 	if err != nil {
 		return nil
 	}
@@ -33,8 +36,6 @@ func send(summary string) error {
 		return fmt.Errorf("notification: d-bus hello: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), notifyCallDeadline)
-	defer cancel()
 	err = conn.Object(notificationsName, notificationsPath).CallWithContext(ctx, notificationsCall, 0,
 		"scraper",                 // app_name
 		uint32(0),                 // replaces_id

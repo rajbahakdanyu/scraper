@@ -5,6 +5,7 @@ package dbustest
 
 import (
 	"bufio"
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,7 +22,12 @@ func Start(t testing.TB) string {
 	if _, err := exec.LookPath("dbus-daemon"); err != nil {
 		t.Skip("dbus-daemon not installed")
 	}
-	dir := t.TempDir()
+	// Not t.TempDir(): it embeds the test name, and socket paths max out near 108 bytes.
+	dir, err := os.MkdirTemp("", "dbus")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	address := "unix:path=" + filepath.Join(dir, "bus")
 	config := `<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
  "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
@@ -31,6 +37,7 @@ func Start(t testing.TB) string {
   <auth>EXTERNAL</auth>
   <policy context="default">
     <allow send_destination="*"/>
+    <allow receive_sender="*"/>
     <allow own="*"/>
   </policy>
 </busconfig>
@@ -40,6 +47,8 @@ func Start(t testing.TB) string {
 	}
 	daemon := exec.Command("dbus-daemon", "--config-file=bus.conf", "--nofork", "--print-address")
 	daemon.Dir = dir
+	var stderr bytes.Buffer
+	daemon.Stderr = &stderr
 	stdout, err := daemon.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -53,7 +62,8 @@ func Start(t testing.TB) string {
 	})
 	// The daemon prints its address once it is listening.
 	if _, err := bufio.NewReader(stdout).ReadString('\n'); err != nil {
-		t.Fatalf("dbus-daemon did not start: %v", err)
+		_ = daemon.Wait() // flushes stderr
+		t.Fatalf("dbus-daemon did not start: %v: %s", err, stderr.String())
 	}
 	t.Setenv("DBUS_SESSION_BUS_ADDRESS", address)
 	return address

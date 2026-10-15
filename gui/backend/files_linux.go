@@ -25,7 +25,10 @@ const (
 // the org.freedesktop.FileManager1 service that Nautilus, Dolphin, Nemo,
 // Caja and others implement, or, without one, the XDG desktop portal.
 func platformOpen(abs string, reveal bool) error {
-	conn, err := dbus.SessionBusPrivateNoAutoStartup()
+	// godbus's Hello has no timeout; cancelling the conn's context closes it.
+	ctx, cancel := context.WithTimeout(context.Background(), busCallDeadline)
+	defer cancel()
+	conn, err := dbus.SessionBusPrivateNoAutoStartup(dbus.WithContext(ctx))
 	if err != nil {
 		return fmt.Errorf("no desktop session bus: %w", err)
 	}
@@ -36,8 +39,6 @@ func platformOpen(abs string, reveal bool) error {
 	if err := conn.Hello(); err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), busCallDeadline)
-	defer cancel()
 
 	method := fileManagerName + ".ShowFolders"
 	if reveal {
