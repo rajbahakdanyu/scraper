@@ -57,7 +57,7 @@ func WriteChecksumDigest(path, sum string) error {
 // reported as absent (present=false) rather than as errors, so callers
 // never permanently fail a file because of a bad sidecar.
 func VerifyChecksum(path string) (present, matches bool, err error) {
-	data, err := os.ReadFile(ChecksumPath(path))
+	data, err := ReadFile(ChecksumPath(path))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return false, false, nil
@@ -106,8 +106,7 @@ func VerifyChecksum(path string) (present, matches bool, err error) {
 }
 
 func sha256File(path string) (string, error) {
-	// #nosec G304 -- callers pass internally allocated download paths for local integrity checks.
-	file, err := os.Open(path)
+	file, err := Open(path)
 	if err != nil {
 		return "", err
 	}

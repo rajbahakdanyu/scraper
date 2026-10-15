@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 	"github.com/rajbahakdanyu/scraper/internal/netutil"
 )
 
@@ -78,8 +79,7 @@ func firefoxProfileDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// #nosec G304 -- Firefox's own profile index under the user's home directory.
-	data, err := os.ReadFile(filepath.Join(root, "profiles.ini"))
+	data, err := fileutil.ReadUserFile(filepath.Join(root, "profiles.ini"))
 	if err != nil {
 		return "", fmt.Errorf("find Firefox profile: %w", err)
 	}
@@ -223,14 +223,12 @@ func readFirefoxCookies(dbPath string, domains []string) ([]*http.Cookie, error)
 }
 
 func copyFile(src, dst string) error {
-	// #nosec G304 -- the Firefox cookie database located via profiles.ini.
-	in, err := os.Open(src)
+	in, err := fileutil.OpenUserFile(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
-	// #nosec G304 -- dst is inside a fresh private MkdirTemp directory.
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	out, err := fileutil.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
 		return err
 	}

@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 )
 
 func parseContentRange(headerVal string) (start, end, total int64, err error) {
@@ -74,7 +76,7 @@ func resumeMetadataPath(tempPath string) string {
 }
 
 func readResumeMetadata(tempPath string) (resumeMetadata, error) {
-	data, err := os.ReadFile(resumeMetadataPath(tempPath))
+	data, err := fileutil.ReadFile(resumeMetadataPath(tempPath))
 	if err != nil {
 		return resumeMetadata{}, err
 	}

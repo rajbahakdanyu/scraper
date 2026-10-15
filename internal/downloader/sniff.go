@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 
+	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 	"github.com/rajbahakdanyu/scraper/internal/model"
 )
 
@@ -64,7 +64,7 @@ func refuseSuspiciousContent(tempPath string, item model.MediaItem, rawURL strin
 	if !model.IsAllowedMediaItem(item) {
 		return nil
 	}
-	f, err := os.Open(tempPath) // #nosec G304 -- path allocated by the downloader
+	f, err := fileutil.Open(tempPath)
 	if err != nil {
 		return err
 	}

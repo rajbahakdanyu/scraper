@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 	"gopkg.in/yaml.v3"
 )
 
@@ -34,8 +35,7 @@ func Save(path string, cfg *Config) error {
 	}
 
 	var doc yaml.Node
-	// #nosec G304 -- the user's own config file.
-	data, err := os.ReadFile(path)
+	data, err := fileutil.ReadUserFile(path)
 	switch {
 	case err == nil:
 		if len(bytes.TrimSpace(data)) > 0 {

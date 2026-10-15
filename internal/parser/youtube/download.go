@@ -273,8 +273,7 @@ func (s *Scraper) downloadStreamToFileProgress(ctx context.Context, video *ytdl.
 // that ends early (io.EOF before size bytes) is rejected as truncated so a
 // partial file can never be committed and blessed with a checksum sidecar.
 func copyStreamToFile(ctx context.Context, stream io.Reader, size int64, path string, limiter *rate.Limiter, onProgress func(int64, int64)) (string, error) {
-	// #nosec G304 -- path is internally allocated under the configured output or private temp directory.
-	f, err := fileutil.OpenFileNoFollow(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	f, err := fileutil.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		// Local filesystem failures are permanent — a retry can't make
 		// the destination writable.

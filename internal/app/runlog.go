@@ -17,7 +17,7 @@ func OpenLogFile(path string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	f, err := fileutil.OpenFileNoFollow(expanded, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	f, err := fileutil.OpenFile(expanded, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("open log file: %w", err)
 	}

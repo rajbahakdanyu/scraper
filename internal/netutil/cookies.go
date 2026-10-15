@@ -10,14 +10,15 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 )
 
 func ParseNetscapeCookies(path string) ([]*http.Cookie, error) {
 	if fi, err := os.Stat(path); err == nil && fi.Mode().Perm()&0077 != 0 {
 		fmt.Fprintf(os.Stderr, "warning: cookies file %q has group or other permissions (%04o)\n", path, fi.Mode().Perm())
 	}
-	// #nosec G304 -- reading an explicitly user-selected local cookies file is intended behavior.
-	f, err := os.Open(path)
+	f, err := fileutil.OpenUserFile(path)
 	if err != nil {
 		return nil, err
 	}

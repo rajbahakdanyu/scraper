@@ -4,9 +4,9 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
+
+	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 )
 
 // Entry is one input line: a URL to scrape and, optionally, the album URL
@@ -19,7 +19,7 @@ type Entry struct {
 
 // ReadURLFile parses a URL list file (see ParseURLList).
 func ReadURLFile(path string) ([]Entry, error) {
-	f, err := os.Open(filepath.Clean(path))
+	f, err := fileutil.OpenUserFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("open input file %q: %w", path, err)
 	}

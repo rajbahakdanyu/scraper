@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 	"gopkg.in/yaml.v3"
 )
 
@@ -110,8 +111,7 @@ func Load(path string) (*Config, error) {
 		fmt.Fprintf(os.Stderr, "warning: config file %q has group or other permissions (%04o)\n", path, fi.Mode().Perm())
 	}
 
-	// #nosec G304 -- reading an explicitly user-selected local config path is intended behavior.
-	data, err := os.ReadFile(path)
+	data, err := fileutil.ReadUserFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			if explicit {

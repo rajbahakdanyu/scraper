@@ -172,7 +172,7 @@ func WriteRetryReport(dir string, failures []model.FailedItem, now time.Time) (R
 		list.WriteString(line + "\n")
 	}
 
-	file, err := fileutil.OpenFileNoFollow(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	file, err := fileutil.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return RetryReport{}, fmt.Errorf("write retry list: %w", err)
 	}

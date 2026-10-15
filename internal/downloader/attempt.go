@@ -130,8 +130,7 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, res
 	} else {
 		flags |= os.O_TRUNC
 	}
-	// #nosec G304 -- tempPath is allocated beneath the configured output directory from a sanitized title.
-	out, err := fileutil.OpenFileNoFollow(tempPath, flags, 0644)
+	out, err := fileutil.OpenFile(tempPath, flags, 0644)
 	if err != nil {
 		// A local filesystem failure won't be fixed by re-fetching.
 		return "", model.NewNonRetryable(err)
@@ -250,8 +249,7 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, res
 }
 
 func seedHasher(path string, hasher io.Writer) error {
-	// #nosec G304 -- tempPath is allocated beneath the configured output directory.
-	file, err := os.Open(path)
+	file, err := fileutil.Open(path)
 	if err != nil {
 		return err
 	}
