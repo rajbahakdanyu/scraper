@@ -202,6 +202,21 @@ func TestParseNetscapeCookiesSecureFlag(t *testing.T) {
 	}
 }
 
+func TestParseNetscapeCookiesAlwaysSecure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "insecure.txt")
+	content := ".example.com\tTRUE\t/\tFALSE\t9999999999\tsid\tsecret\n"
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cookies, err := ParseNetscapeCookies(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cookies) != 1 || !cookies[0].Secure || !cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteLaxMode {
+		t.Fatalf("cookie = %+v, want Secure, HttpOnly and SameSite=Lax", cookies)
+	}
+}
+
 func TestParseNetscapeCookiesSubdomainFlagHandling(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "subdomain.txt")
 	content := ".example.com\tTRUE\t/\tFALSE\t9999999999\tdotprefix\tval\n"
@@ -287,22 +302,25 @@ func TestWithCookiesSetsJar(t *testing.T) {
 	if client.Jar == nil {
 		t.Fatal("expected client.Jar to be set")
 	}
-	u, _ := url.Parse("http://example.com/")
+	u, _ := url.Parse("https://example.com/")
 	jarCookies := client.Jar.Cookies(u)
 	if len(jarCookies) == 0 {
 		t.Fatal("expected cookies in jar, got none")
 	}
 }
 
-// TestWithCookiesSendsCookiesOverPlainHTTP guards against the review claim
-// that WithCookies only sets cookies for https:// targets. Go's cookiejar
-// stores cookies by domain, not scheme: a non-secure cookie set via an
-// https URL is returned for http targets (and the existing
-// TestWithCookiesSetsJar already asserts that). This test pins the
-// end-to-end behavior with a real HTTP round trip.
-func TestWithCookiesSendsCookiesOverPlainHTTP(t *testing.T) {
+// Imported cookies are always Secure: a plain-HTTP request to the same host
+// must not carry them, even when the source file marked them non-secure.
+func TestWithCookiesNeverSendsCookiesOverPlainHTTP(t *testing.T) {
+	client := WithCookies(&http.Client{}, []*http.Cookie{{Name: "session", Value: "abc", Domain: "example.com", Secure: false}})
+	if got := client.Jar.Cookies(&url.URL{Scheme: "http", Host: "example.com", Path: "/"}); len(got) != 0 {
+		t.Fatalf("plain-HTTP request would send %v", got)
+	}
+}
+
+func TestWithCookiesSendsCookiesOverHTTPS(t *testing.T) {
 	var got string
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if c, err := r.Cookie("session"); err == nil {
 			got = c.Value
 		}
@@ -322,7 +340,7 @@ func TestWithCookiesSendsCookiesOverPlainHTTP(t *testing.T) {
 	}
 	resp.Body.Close()
 	if got != "abc" {
-		t.Fatalf("http request saw cookie %q, want abc", got)
+		t.Fatalf("https request saw cookie %q, want abc", got)
 	}
 }
 

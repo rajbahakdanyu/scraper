@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/rajbahakdanyu/scraper/internal/netutil"
 )
 
 // firefoxRootCandidates lists where Firefox keeps profiles.ini on goos, in
@@ -169,7 +171,7 @@ func readFirefoxCookies(dbPath string, domains []string) ([]*http.Cookie, error)
 	if len(clauses) == 0 {
 		return nil, fmt.Errorf("no supported site domains to filter cookies by")
 	}
-	query := "SELECT name, value, host, path, expiry, isSecure, isHttpOnly FROM moz_cookies WHERE " +
+	query := "SELECT name, value, host, path, expiry FROM moz_cookies WHERE " +
 		strings.Join(clauses, " OR ")
 	// A running Firefox holds the live database locked, so query a copy.
 	tmp, err := os.MkdirTemp("", "scraper-cookies-")
@@ -186,7 +188,7 @@ func readFirefoxCookies(dbPath string, domains []string) ([]*http.Cookie, error)
 			return nil, fmt.Errorf("copy Firefox cookie database: %w", err)
 		}
 	}
-	// #nosec G204 -- fixed binary, no shell; the query is built from static domains only.
+	// #nosec G204 -- fixed binary, no shell; the query only holds validDomain-checked hostnames.
 	out, err := exec.Command("sqlite3", "-separator", "\t", dbCopy, query).Output()
 	if err != nil {
 		return nil, fmt.Errorf("read Firefox cookies: %w", err)
@@ -199,7 +201,7 @@ func readFirefoxCookies(dbPath string, domains []string) ([]*http.Cookie, error)
 			continue
 		}
 		fields := strings.Split(line, "\t")
-		if len(fields) != 7 {
+		if len(fields) != 5 {
 			continue
 		}
 		expiry, _ := strconv.ParseInt(fields[4], 10, 64)
@@ -211,19 +213,11 @@ func readFirefoxCookies(dbPath string, domains []string) ([]*http.Cookie, error)
 		if expiry > 0 && expiry < now {
 			continue
 		}
-		// #nosec G124 -- imported for outbound requests; Secure/HttpOnly mirror the browser's values.
-		cookie := &http.Cookie{
-			Name:     fields[0],
-			Value:    fields[1],
-			Domain:   fields[2],
-			Path:     fields[3],
-			Secure:   fields[5] == "1",
-			HttpOnly: fields[6] == "1",
-		}
+		var expires time.Time
 		if expiry > 0 {
-			cookie.Expires = time.Unix(expiry, 0)
+			expires = time.Unix(expiry, 0)
 		}
-		cookies = append(cookies, cookie)
+		cookies = append(cookies, netutil.NewCookie(fields[0], fields[1], fields[2], fields[3], expires))
 	}
 	return cookies, nil
 }

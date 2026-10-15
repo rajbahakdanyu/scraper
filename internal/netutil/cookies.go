@@ -49,7 +49,6 @@ func ParseNetscapeCookies(path string) ([]*http.Cookie, error) {
 			domain = "." + domain
 		}
 		path := parts[2]
-		secure := strings.EqualFold(parts[3], "TRUE")
 		expiryStr := parts[4]
 		name := parts[5]
 		value := parts[6]
@@ -66,25 +65,32 @@ func ParseNetscapeCookies(path string) ([]*http.Cookie, error) {
 			continue
 		}
 
-		// #nosec G124 -- cookies are parsed from a user-provided file to be
-		// sent in outbound requests; HttpOnly does not affect jar sending.
-		cookie := &http.Cookie{
-			Name:     name,
-			Value:    value,
-			Domain:   domain,
-			Path:     path,
-			Secure:   secure,
-			HttpOnly: true,
-		}
+		var expires time.Time
 		if expiry != 0 {
-			cookie.Expires = time.Unix(expiry, 0)
+			expires = time.Unix(expiry, 0)
 		}
-		cookies = append(cookies, cookie)
+		cookies = append(cookies, NewCookie(name, value, domain, path, expires))
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("read cookies file: %w", err)
 	}
 	return cookies, nil
+}
+
+// NewCookie builds a cookie for an outbound jar. Session cookies for the
+// supported sites must never travel over plain HTTP, so every cookie is
+// Secure regardless of the flag in its source.
+func NewCookie(name, value, domain, path string, expires time.Time) *http.Cookie {
+	return &http.Cookie{
+		Name:     name,
+		Value:    value,
+		Domain:   domain,
+		Path:     path,
+		Expires:  expires,
+		Secure:   true,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	}
 }
 
 func WithCookies(client *http.Client, cookies []*http.Cookie) *http.Client {
@@ -98,13 +104,11 @@ func WithCookies(client *http.Client, cookies []*http.Cookie) *http.Client {
 	}
 	for _, c := range cookies {
 		host := strings.TrimPrefix(c.Domain, ".")
-		if !strings.HasPrefix(c.Domain, ".") {
-			// #nosec G124 -- a copy of an outbound jar cookie; attributes are kept as parsed.
-			hostOnly := *c
-			hostOnly.Domain = ""
-			c = &hostOnly
+		domain := c.Domain
+		if !strings.HasPrefix(domain, ".") {
+			domain = ""
 		}
-		jar.SetCookies(&url.URL{Scheme: "https", Host: host}, []*http.Cookie{c})
+		jar.SetCookies(&url.URL{Scheme: "https", Host: host}, []*http.Cookie{NewCookie(c.Name, c.Value, domain, c.Path, c.Expires)})
 	}
 	clone := *client
 	clone.Jar = jar
