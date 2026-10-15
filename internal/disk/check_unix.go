@@ -2,31 +2,42 @@
 
 package disk
 
-import "golang.org/x/sys/unix"
+import (
+	"math"
+	"math/bits"
+
+	"golang.org/x/sys/unix"
+)
 
 func FreeSpace(path string) (int64, error) {
 	var stat unix.Statfs_t
 	if err := unix.Statfs(path, &stat); err != nil {
 		return 0, err
 	}
-	// #nosec G115 -- statfs block counts are far below MaxInt64 on every
-	// real filesystem; freeBytes clamps a negative Bavail (signed on some
-	// unix platforms) before converting back to uint64.
-	return freeBytes(int64(stat.Bavail), uint64(stat.Bsize)), nil
+	return freeBytes(nonNegative(stat.Bavail), nonNegative(stat.Bsize)), nil
 }
 
-// freeBytes converts a signed block count to bytes. Bavail is signed on
-// some unix platforms and can legitimately be negative on an odd
-// filesystem; clamping first prevents the uint64 conversion from wrapping
-// it to ~9.2 EB.
-func freeBytes(blocks int64, blockSize uint64) int64 {
-	if blocks < 0 {
-		blocks = 0
+// statfsInt covers the statfs field types, which differ between unix
+// platforms (Bavail is signed on some, Bsize is 32-bit on others).
+type statfsInt interface {
+	~int32 | ~int64 | ~uint32 | ~uint64
+}
+
+// nonNegative widens a statfs count to uint64, treating a negative value
+// (possible on an odd filesystem) as zero.
+func nonNegative[T statfsInt](v T) uint64 {
+	if v < 0 {
+		return 0
 	}
-	free := uint64(blocks) * blockSize
-	const maxInt64 = uint64(1<<63 - 1)
-	if free > maxInt64 {
-		free = maxInt64
+	return uint64(v)
+}
+
+// freeBytes multiplies blocks by block size, saturating at MaxInt64
+// instead of wrapping.
+func freeBytes(blocks, blockSize uint64) int64 {
+	hi, lo := bits.Mul64(blocks, blockSize)
+	if hi != 0 || lo > math.MaxInt64 {
+		return math.MaxInt64
 	}
-	return int64(free)
+	return int64(lo)
 }

@@ -2,8 +2,9 @@ package netutil
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
-	"math/rand"
+	"math/big"
 	"time"
 )
 
@@ -93,7 +94,9 @@ func isNonRetryable(err error) bool {
 
 func BackoffWithJitter(base time.Duration, attempt int) time.Duration {
 	d := base << uint(attempt)
-	// #nosec G404 -- retry jitter does not require cryptographic randomness.
-	jitter := time.Duration(rand.Int63n(int64(d)/3 + 1))
-	return d + jitter
+	jitter, err := rand.Int(rand.Reader, big.NewInt(int64(d)/3+1))
+	if err != nil {
+		return d
+	}
+	return d + time.Duration(jitter.Int64())
 }

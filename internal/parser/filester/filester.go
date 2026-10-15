@@ -3,10 +3,11 @@ package filester
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand"
+	"math/big"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -412,8 +413,11 @@ func (s *Scraper) resolveFileOnce(ctx context.Context, slug, knownName string) (
 		if len(s.cdnURLs) == 0 {
 			return model.MediaItem{}, model.NewNonRetryable(fmt.Errorf("filester: no CDN server available for %s", slug))
 		}
-		// #nosec G404 -- CDN load distribution is not a security decision.
-		server = s.cdnURLs[rand.Intn(len(s.cdnURLs))]
+		pick, err := rand.Int(rand.Reader, big.NewInt(int64(len(s.cdnURLs))))
+		if err != nil {
+			return model.MediaItem{}, fmt.Errorf("filester: pick CDN server: %w", err)
+		}
+		server = s.cdnURLs[pick.Int64()]
 	}
 	// The site hands out rotating CDN shards under cdn.cr (fsc1, fsc3, ...);
 	// allow the whole family so new shards don't break downloads. The
