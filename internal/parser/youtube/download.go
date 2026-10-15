@@ -101,13 +101,13 @@ func (s *Scraper) downloadAudioOnly(ctx context.Context, video *ytdl.Video, vide
 		}
 		return nil
 	}
-	tempPath := partOutputPath(finalPath)
-	defer os.Remove(tempPath)
+	workDir, err := newMuxWorkDir(dest)
+	if err != nil {
+		return model.NewNonRetryable(err)
+	}
+	defer os.RemoveAll(workDir)
 
-	streamTemp := tempPath + ".stream"
-	defer os.Remove(streamTemp)
-
-	if _, err := s.downloadStreamToFileProgress(ctx, video, srcFormat, streamTemp, limiter, func(n, total int64) {
+	if _, err := s.downloadStreamToFileProgress(ctx, video, srcFormat, filepath.Join(workDir, workSource), limiter, func(n, total int64) {
 		if onProgress != nil {
 			onProgress(n, total)
 		}
@@ -115,10 +115,11 @@ func (s *Scraper) downloadAudioOnly(ctx context.Context, video *ytdl.Video, vide
 		return err
 	}
 
-	if err := extractAudio(ctx, streamTemp, tempPath, audioFormat); err != nil {
+	extracted, err := extractAudio(ctx, workDir, audioFormat)
+	if err != nil {
 		return err
 	}
-	return commitOutput(tempPath, finalPath, skipChecksums)
+	return commitOutput(filepath.Join(workDir, extracted), finalPath, skipChecksums)
 }
 
 func (s *Scraper) downloadStreamDirect(ctx context.Context, video *ytdl.Video, format *ytdl.Format, title, dest, owner string, paths *fileutil.PathAllocator, limiter *rate.Limiter, skipChecksums bool, onProgress func(int64, int64)) error {
@@ -152,15 +153,6 @@ func (s *Scraper) downloadStreamDirect(ctx context.Context, video *ytdl.Video, f
 }
 
 func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFmt, audioFmt *ytdl.Format, title, dest, owner string, paths *fileutil.PathAllocator, limiter *rate.Limiter, skipChecksums bool, onProgress func(int64, int64)) error {
-	videoExt := "mp4"
-	if strings.Contains(videoFmt.MimeType, "webm") {
-		videoExt = "webm"
-	}
-	audioExt := "m4a"
-	if strings.Contains(audioFmt.MimeType, "webm") {
-		audioExt = "webm"
-	}
-
 	outputPath := paths.Claim(safeOutputPath(dest, title), owner)
 	skip, err := prepareOutput(outputPath, skipChecksums)
 	if err != nil {
@@ -176,11 +168,8 @@ func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFm
 	}
 	defer os.RemoveAll(tmpDir)
 
-	videoPath := filepath.Join(tmpDir, "video."+videoExt)
-	audioPath := filepath.Join(tmpDir, "audio."+audioExt)
-	ext := filepath.Ext(outputPath)
-	tempOutputPath := strings.TrimSuffix(outputPath, ext) + ".part" + ext
-	defer os.Remove(tempOutputPath)
+	videoPath := filepath.Join(tmpDir, workVideo)
+	audioPath := filepath.Join(tmpDir, workAudio)
 
 	videoSize := videoFmt.ContentLength
 	audioSize := audioFmt.ContentLength
@@ -232,10 +221,10 @@ func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFm
 	if onProgress != nil {
 		onProgress(combinedTotal-1, combinedTotal)
 	}
-	if err := muxStreams(ctx, videoPath, audioPath, tempOutputPath, audioCopyable(audioFmt)); err != nil {
+	if err := muxStreams(ctx, tmpDir, audioCopyable(audioFmt)); err != nil {
 		return err
 	}
-	if err := commitOutput(tempOutputPath, outputPath, skipChecksums); err != nil {
+	if err := commitOutput(filepath.Join(tmpDir, workMuxed), outputPath, skipChecksums); err != nil {
 		return err
 	}
 
@@ -386,9 +375,8 @@ func commitOutputWithChecksum(tempPath, finalPath string, skipChecksums bool, ch
 }
 
 // safeOutputPath joins dest and the sanitized title into an absolute .mp4
-// path. Making it absolute ensures that even if dest is relative (e.g. ".")
-// and the sanitized title happens to start with "-", ffmpeg's argument
-// parser can never misread the muxed output path as a flag.
+// path; the path is reported to frontends, and the GUI only opens absolute
+// paths.
 func safeOutputPath(dest, title string) string {
 	filename := fileutil.SanitizeFilename(title)
 	if !strings.HasSuffix(strings.ToLower(title), ".mp4") {
@@ -399,11 +387,4 @@ func safeOutputPath(dest, title string) string {
 		return abs
 	}
 	return p
-}
-
-// partOutputPath derives the temp file for ffmpeg from the final path,
-// keeping the real extension so ffmpeg can infer the output muxer. A bare
-// ".part" suffix matches no muxer and makes ffmpeg abort.
-func partOutputPath(finalPath string) string {
-	return finalPath + ".part" + filepath.Ext(finalPath)
 }

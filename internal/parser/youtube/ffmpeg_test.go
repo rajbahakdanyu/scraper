@@ -3,7 +3,6 @@ package youtube
 import (
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -34,13 +33,13 @@ func readFFmpegArgs(t *testing.T, argsFile string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return string(data)
+	return strings.TrimSpace(string(data))
 }
 
 func TestMuxStreamsSurfacesFFmpegStderr(t *testing.T) {
 	stubFFmpeg(t, `echo "Error opening input: invalid data found" >&2; exit 1`)
 
-	err := muxStreams(t.Context(), "video.mp4", "audio.m4a", "out.part.mp4", false)
+	err := muxStreams(t.Context(), t.TempDir(), false)
 	if err == nil {
 		t.Fatal("expected an error when ffmpeg fails")
 	}
@@ -54,7 +53,7 @@ func TestMuxStreamsMissingFFmpegIsPermanent(t *testing.T) {
 	// classified permanent — no amount of retrying installs ffmpeg.
 	t.Setenv("PATH", t.TempDir())
 
-	err := muxStreams(t.Context(), "video.mp4", "audio.m4a", "out.part.mp4", false)
+	err := muxStreams(t.Context(), t.TempDir(), false)
 	if err == nil {
 		t.Fatal("expected an error when ffmpeg is not installed")
 	}
@@ -70,7 +69,7 @@ func TestMuxStreamsMuxFailureStaysRetryable(t *testing.T) {
 	// a mux failure must stay retryable.
 	stubFFmpeg(t, `exit 1`)
 
-	err := muxStreams(t.Context(), "video.mp4", "audio.m4a", "out.part.mp4", false)
+	err := muxStreams(t.Context(), t.TempDir(), false)
 	if err == nil {
 		t.Fatal("expected an error when ffmpeg fails")
 	}
@@ -80,26 +79,39 @@ func TestMuxStreamsMuxFailureStaysRetryable(t *testing.T) {
 	}
 }
 
-func TestMuxStreamsSucceedsWhenFFmpegDoes(t *testing.T) {
-	stubFFmpeg(t, `exit 0`)
+func TestMuxStreamsRunsInsideTheWorkDir(t *testing.T) {
+	stubFFmpeg(t, `touch muxed.mp4`)
+	work := t.TempDir()
 
-	if err := muxStreams(t.Context(), "video.mp4", "audio.m4a", "out.part.mp4", false); err != nil {
+	if err := muxStreams(t.Context(), work, false); err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(work, workMuxed)); err != nil {
+		t.Fatalf("ffmpeg must run with the work dir as cwd so its relative output lands there: %v", err)
 	}
 }
 
 func TestMuxStreamsCopiesAudioWhenAlreadyAAC(t *testing.T) {
 	argsFile := stubFFmpeg(t, `exit 0`)
 
-	if err := muxStreams(t.Context(), "video.mp4", "audio.m4a", "out.part.mp4", true); err != nil {
+	if err := muxStreams(t.Context(), t.TempDir(), true); err != nil {
 		t.Fatal(err)
 	}
-	args := readFFmpegArgs(t, argsFile)
-	if !strings.Contains(args, "-c:a copy") {
-		t.Fatalf("AAC audio must be stream-copied (lossless, fast), got args: %s", args)
+	want := "-nostdin -hide_banner -loglevel error -y -i video -i audio -c:v copy -c:a copy -movflags +faststart muxed.mp4"
+	if got := readFFmpegArgs(t, argsFile); got != want {
+		t.Fatalf("AAC audio must be stream-copied with only fixed relative names:\n got: %s\nwant: %s", got, want)
 	}
-	if !strings.HasPrefix(args, "-nostdin -hide_banner -loglevel error -y ") {
-		t.Fatalf("ffmpeg must not read stdin or flood stderr, got args: %s", args)
+}
+
+func TestMuxStreamsTranscodesAudioWhenNotAAC(t *testing.T) {
+	argsFile := stubFFmpeg(t, `exit 0`)
+
+	if err := muxStreams(t.Context(), t.TempDir(), false); err != nil {
+		t.Fatal(err)
+	}
+	want := "-nostdin -hide_banner -loglevel error -y -i video -i audio -c:v copy -c:a aac -movflags +faststart muxed.mp4"
+	if got := readFFmpegArgs(t, argsFile); got != want {
+		t.Fatalf("non-AAC audio must be transcoded to AAC for the mp4 container:\n got: %s\nwant: %s", got, want)
 	}
 }
 
@@ -114,90 +126,30 @@ func TestMuxWorkDirIsBesideTheOutput(t *testing.T) {
 	}
 }
 
-func TestMuxStreamsTranscodesAudioWhenNotAAC(t *testing.T) {
-	argsFile := stubFFmpeg(t, `exit 0`)
+func TestExtractAudio(t *testing.T) {
+	for _, tt := range []struct {
+		format, file, args string
+	}{
+		{"m4a", workM4A, "-nostdin -hide_banner -loglevel error -y -i source -vn -acodec copy audio.m4a"},
+		{"mp3", workMP3, "-nostdin -hide_banner -loglevel error -y -i source -vn -codec:a libmp3lame -q:a 2 audio.mp3"},
+	} {
+		t.Run(tt.format, func(t *testing.T) {
+			argsFile := stubFFmpeg(t, `output=""; for arg do output="$arg"; done; printf audio > "$output"`)
+			work := t.TempDir()
 
-	if err := muxStreams(t.Context(), "video.webm", "audio.webm", "out.part.mp4", false); err != nil {
-		t.Fatal(err)
-	}
-	args := readFFmpegArgs(t, argsFile)
-	if !strings.Contains(args, "-c:a aac") {
-		t.Fatalf("non-AAC audio must be transcoded to AAC for the mp4 container, got args: %s", args)
-	}
-}
-
-func TestExtractAudioM4a(t *testing.T) {
-	// When ffmpeg is available, verify m4a extraction copies audio codec
-	// (lossless pass-through: -vn -acodec copy)
-	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		t.Skip("ffmpeg not available")
-	}
-	stubFFmpeg(t, `
-ext="$(echo "$*" | grep -o '[^ ]*\.m4a$' || true)"
-if echo "$*" | grep -q '\-acodec copy'; then
-  touch "$ext"
-  echo "copied" >&2
-fi
-exit 0
-`)
-	dir := t.TempDir()
-	src := filepath.Join(dir, "src.mp4")
-	if err := os.WriteFile(src, []byte("video+audio"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	out := filepath.Join(dir, "out.m4a")
-	if err := extractAudio(t.Context(), src, out, "m4a"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(out); err != nil {
-		t.Fatal("expected output file to exist")
-	}
-}
-
-func TestExtractAudioMp3(t *testing.T) {
-	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		t.Skip("ffmpeg not available")
-	}
-	stubFFmpeg(t, `
-ext="$(echo "$*" | grep -o '[^ ]*\.mp3$' || true)"
-if echo "$*" | grep -q 'libmp3lame'; then
-  touch "$ext"
-  echo "transcoded" >&2
-fi
-exit 0
-`)
-	dir := t.TempDir()
-	src := filepath.Join(dir, "src.m4a")
-	if err := os.WriteFile(src, []byte("audio"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	out := filepath.Join(dir, "out.mp3")
-	if err := extractAudio(t.Context(), src, out, "mp3"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(out); err != nil {
-		t.Fatal("expected mp3 output file to exist")
-	}
-}
-
-func TestExtractAudioMp3FromMuxedStream(t *testing.T) {
-	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		t.Skip("ffmpeg not available")
-	}
-	stubFFmpeg(t, `
-if echo "$*" | grep -q 'libmp3lame' && echo "$*" | grep -q '\-vn'; then
-  ext="$(echo "$*" | grep -o '[^ ]*\.mp3$')"
-  touch "$ext"
-fi
-exit 0
-`)
-	dir := t.TempDir()
-	src := filepath.Join(dir, "muxed.mp4")
-	if err := os.WriteFile(src, []byte("muxed"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	out := filepath.Join(dir, "out.mp3")
-	if err := extractAudio(t.Context(), src, out, "mp3"); err != nil {
-		t.Fatal(err)
+			got, err := extractAudio(t.Context(), work, tt.format)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.file {
+				t.Fatalf("extractAudio returned %q, want %q", got, tt.file)
+			}
+			if _, err := os.Stat(filepath.Join(work, got)); err != nil {
+				t.Fatalf("extracted file missing from the work dir: %v", err)
+			}
+			if args := readFFmpegArgs(t, argsFile); args != tt.args {
+				t.Fatalf("ffmpeg args:\n got: %s\nwant: %s", args, tt.args)
+			}
+		})
 	}
 }

@@ -19,56 +19,62 @@ func newMuxWorkDir(dest string) (string, error) {
 	return os.MkdirTemp(dest, ".scraper-yt-")
 }
 
-// ffmpegBaseArgs keep ffmpeg off the terminal: no stdin reads (it would
-// steal TUI keystrokes) and only errors on stderr (kept for messages).
-var ffmpegBaseArgs = []string{"-nostdin", "-hide_banner", "-loglevel", "error", "-y"}
+// ffmpeg runs inside a work dir from newMuxWorkDir and only ever sees these
+// fixed relative names, so no title, destination, or other outside string
+// reaches its argument list. Inputs carry no extension: ffmpeg probes input
+// containers by content; outputs keep one because it selects the muxer.
+const (
+	workVideo  = "video"
+	workAudio  = "audio"
+	workSource = "source"
+	workMuxed  = "muxed.mp4"
+	workM4A    = "audio.m4a"
+	workMP3    = "audio.mp3"
+)
 
-// muxStreams combines a separate video and audio stream into outputPath
-// with ffmpeg. Video is always stream-copied; audio is stream-copied when
-// audioCopy is true (already AAC) and transcoded to AAC otherwise.
+// Every ffmpeg invocation starts with -nostdin (it would otherwise steal TUI
+// keystrokes) and -loglevel error (stderr is kept only for error messages).
+var (
+	muxCopyArgs = []string{"-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+		"-i", workVideo, "-i", workAudio, "-c:v", "copy", "-c:a", "copy", "-movflags", "+faststart", workMuxed}
+	muxTranscodeArgs = []string{"-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+		"-i", workVideo, "-i", workAudio, "-c:v", "copy", "-c:a", "aac", "-movflags", "+faststart", workMuxed}
+	extractM4AArgs = []string{"-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+		"-i", workSource, "-vn", "-acodec", "copy", workM4A}
+	extractMP3Args = []string{"-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+		"-i", workSource, "-vn", "-codec:a", "libmp3lame", "-q:a", "2", workMP3}
+)
+
+// muxStreams combines workDir's video and audio streams into workDir's
+// workMuxed file. Video is always stream-copied; audio is stream-copied
+// when audioCopy is true (already AAC) and transcoded to AAC otherwise.
 // ffmpeg's stderr is captured and its last line included in the returned
 // error — a bare "exit status 1" tells the user nothing about why the mux
 // failed.
-func muxStreams(ctx context.Context, videoPath, audioPath, outputPath string, audioCopy bool) error {
-	var stderr bytes.Buffer
-	audioCodec := "aac"
+func muxStreams(ctx context.Context, workDir string, audioCopy bool) error {
+	args := muxTranscodeArgs
 	if audioCopy {
-		audioCodec = "copy"
+		args = muxCopyArgs
 	}
-	args := append(append([]string(nil), ffmpegBaseArgs...),
-		"-i", videoPath,
-		"-i", audioPath,
-		"-c:v", "copy",
-		"-c:a", audioCodec,
-		"-movflags", "+faststart",
-		outputPath,
-	)
-	// #nosec G204 -- arguments are passed directly without shell evaluation; paths are internally allocated.
-	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return ffmpegError("mux", err, &stderr)
-	}
-	return nil
+	return runFFmpeg("mux", workDir, exec.CommandContext(ctx, "ffmpeg", args...))
 }
 
-// extractAudio extracts or transcodes audio from srcPath to outputPath.
-// For m4a: stream-copies audio (-vn -acodec copy). For mp3: transcodes to
-// mp3 via libmp3lame (-vn -acodec libmp3lame -q:a 2).
-func extractAudio(ctx context.Context, srcPath, outputPath, format string) error {
-	var stderr bytes.Buffer
-	args := append(append([]string(nil), ffmpegBaseArgs...), "-i", srcPath, "-vn")
+// extractAudio turns workDir's source stream into workM4A (stream copy) or,
+// for format "mp3", workMP3 (libmp3lame transcode). It returns the name of
+// the file it wrote inside workDir.
+func extractAudio(ctx context.Context, workDir, format string) (string, error) {
 	if format == "mp3" {
-		args = append(args, "-codec:a", "libmp3lame", "-q:a", "2")
-	} else {
-		args = append(args, "-acodec", "copy")
+		return workMP3, runFFmpeg("extract audio", workDir, exec.CommandContext(ctx, "ffmpeg", extractMP3Args...))
 	}
-	args = append(args, outputPath)
-	// #nosec G204 -- arguments are passed without shell evaluation; paths are internally allocated.
-	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
+	return workM4A, runFFmpeg("extract audio", workDir, exec.CommandContext(ctx, "ffmpeg", extractM4AArgs...))
+}
+
+func runFFmpeg(op, workDir string, cmd *exec.Cmd) error {
+	var stderr bytes.Buffer
+	cmd.Dir = workDir
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return ffmpegError("extract audio", err, &stderr)
+		return ffmpegError(op, err, &stderr)
 	}
 	return nil
 }

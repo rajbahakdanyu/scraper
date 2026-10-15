@@ -78,10 +78,8 @@ func TestCopyStreamToFileReturnsInlineChecksum(t *testing.T) {
 }
 
 func TestSafeOutputPathIsAlwaysAbsolute(t *testing.T) {
-	// A relative dest ("." is what a default --output resolves to) combined
-	// with a title that sanitizes down to something starting with "-" used
-	// to produce a relative path ffmpeg's arg parser could misread as a
-	// flag instead of the positional output path.
+	// A relative dest ("." is what a default --output resolves to) must
+	// still yield an absolute path, even for a title starting with "-".
 	got := safeOutputPath(".", "-rf --evil-flag")
 
 	if !filepath.IsAbs(got) {
@@ -113,19 +111,6 @@ func TestSafeOutputPathAddsMP4ForDotContainingTitle(t *testing.T) {
 	got := safeOutputPath("/tmp/downloads", "Mr. Brightside")
 	if !strings.HasSuffix(got, ".mp4") {
 		t.Fatalf("safeOutputPath(...) = %q, want an .mp4 suffix", got)
-	}
-}
-
-func TestPartOutputPathKeepsExtension(t *testing.T) {
-	tests := []struct{ in, want string }{
-		{"Title.m4a", "Title.m4a.part.m4a"},
-		{"Title.mp3", "Title.mp3.part.mp3"},
-		{"no ext", "no ext.part"},
-	}
-	for _, tt := range tests {
-		if got := partOutputPath(tt.in); got != tt.want {
-			t.Errorf("partOutputPath(%q) = %q, want %q", tt.in, got, tt.want)
-		}
 	}
 }
 
