@@ -1,6 +1,6 @@
 module github.com/rajbahakdanyu/scraper/gui
 
-go 1.26.6
+go 1.26.9
 
 require (
 	github.com/rajbahakdanyu/scraper v0.0.0

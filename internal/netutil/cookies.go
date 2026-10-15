@@ -99,6 +99,7 @@ func WithCookies(client *http.Client, cookies []*http.Cookie) *http.Client {
 	for _, c := range cookies {
 		host := strings.TrimPrefix(c.Domain, ".")
 		if !strings.HasPrefix(c.Domain, ".") {
+			// #nosec G124 -- a copy of an outbound jar cookie; attributes are kept as parsed.
 			hostOnly := *c
 			hostOnly.Domain = ""
 			c = &hostOnly

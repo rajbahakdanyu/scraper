@@ -211,6 +211,7 @@ func readFirefoxCookies(dbPath string, domains []string) ([]*http.Cookie, error)
 		if expiry > 0 && expiry < now {
 			continue
 		}
+		// #nosec G124 -- imported for outbound requests; Secure/HttpOnly mirror the browser's values.
 		cookie := &http.Cookie{
 			Name:     fields[0],
 			Value:    fields[1],
