@@ -4,9 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	goruntime "runtime"
 	"strings"
 
 	"github.com/rajbahakdanyu/scraper/internal/app"
@@ -93,48 +91,29 @@ func (a *App) RevealRetryList(path string) error {
 	return openPath(path, true)
 }
 
-// openPath opens target with the OS file manager, or selects it there
-// when reveal is set. Only existing absolute paths are passed, as
-// arguments to a fixed program, never through a shell.
+// openTarget hands an existing absolute path to the OS file manager (see
+// platformOpen); a variable so tests can observe it without opening windows.
+var openTarget = platformOpen
+
+// openPath shows a folder in the OS file manager, or, when reveal is set,
+// selects a file or folder in its parent. Folders are only ever shown, never
+// launched, so a non-directory is refused unless revealing.
 func openPath(target string, reveal bool) error {
 	abs, err := filepath.Abs(target)
 	if err != nil {
 		return err
 	}
-	if _, err := os.Stat(abs); err != nil {
+	fi, err := os.Stat(abs)
+	if err != nil {
 		return err
 	}
-	cmd := openCommand(goruntime.GOOS, abs, reveal)
-	if err := cmd.Start(); err != nil {
+	if !reveal && !fi.IsDir() {
+		return fmt.Errorf("not a folder: %s", abs)
+	}
+	if err := openTarget(abs, reveal); err != nil {
 		return fmt.Errorf("open %s: %w", abs, err)
 	}
-	go func() { _ = cmd.Wait() }()
 	return nil
-}
-
-func openCommand(goos, abs string, reveal bool) *exec.Cmd {
-	switch goos {
-	case "darwin":
-		if reveal {
-			// #nosec G204 -- fixed binary; abs is an existing absolute path.
-			return exec.Command("open", "-R", abs)
-		}
-		// #nosec G204 -- fixed binary; abs is an existing absolute path.
-		return exec.Command("open", abs)
-	case "windows":
-		if reveal {
-			// #nosec G204 -- fixed binary; abs is an existing absolute path.
-			return exec.Command("explorer", "/select,"+abs)
-		}
-		// #nosec G204 -- fixed binary; abs is an existing absolute path.
-		return exec.Command("explorer", abs)
-	default:
-		if reveal {
-			abs = filepath.Dir(abs)
-		}
-		// #nosec G204 -- fixed binary; abs is an existing absolute path.
-		return exec.Command("xdg-open", abs)
-	}
 }
 
 func existingDir(dir string) string {

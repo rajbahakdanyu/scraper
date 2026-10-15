@@ -3,9 +3,11 @@ package backend
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -375,13 +377,53 @@ func TestRevealRetryListRejectsOtherFiles(t *testing.T) {
 	}
 }
 
-func TestOpenCommandNeverUsesAShell(t *testing.T) {
-	for _, goos := range []string{"darwin", "windows", "linux"} {
-		for _, reveal := range []bool{false, true} {
-			cmd := openCommand(goos, "/tmp/x y/file.mp4", reveal)
-			if name := filepath.Base(cmd.Path); name == "sh" || name == "bash" || name == "cmd" {
-				t.Fatalf("%s: uses a shell: %v", goos, cmd.Args)
-			}
-		}
+func stubOpenTarget(t *testing.T) *[]string {
+	t.Helper()
+	var calls []string
+	prev := openTarget
+	openTarget = func(abs string, reveal bool) error {
+		calls = append(calls, fmt.Sprintf("%s reveal=%v", abs, reveal))
+		return nil
+	}
+	t.Cleanup(func() { openTarget = prev })
+	return &calls
+}
+
+func TestOpenPathShowsFoldersAndRevealsItems(t *testing.T) {
+	calls := stubOpenTarget(t)
+	dir := t.TempDir()
+	file := filepath.Join(dir, "x y.mp4")
+	if err := os.WriteFile(file, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := openPath(dir, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := openPath(file, true); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{dir + " reveal=false", file + " reveal=true"}
+	if !slices.Equal(*calls, want) {
+		t.Fatalf("openTarget calls = %q, want %q", *calls, want)
+	}
+}
+
+func TestOpenPathRefusesToLaunchFilesOrMissingPaths(t *testing.T) {
+	calls := stubOpenTarget(t)
+	dir := t.TempDir()
+	file := filepath.Join(dir, "run.sh")
+	if err := os.WriteFile(file, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := openPath(file, false); err == nil {
+		t.Error("opening (rather than revealing) a file must be refused")
+	}
+	if err := openPath(filepath.Join(dir, "missing"), true); err == nil {
+		t.Error("a missing path must be refused")
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("refused paths reached the file manager: %q", *calls)
 	}
 }
