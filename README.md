@@ -245,7 +245,7 @@ per URL — same as albums).
 | `--scrape-delay` | (none)  | Pause between album scrapes (e.g. `500ms`) |
 | `--log-file`     | (none)  | Append a timestamped run log (scrape errors, retry summaries) |
 | `--watch`        | (none)  | Re-run the input list every interval until interrupted (implies `--no-tui`) |
-| `--cookies-from-browser` | (none) | Import cookies for the supported sites from a local browser profile (`firefox`; macOS, Linux incl. snap/flatpak, Windows; needs the `sqlite3` CLI) |
+| `--cookies-from-browser` | (none) | Import cookies for the supported sites from a local browser profile (`firefox`; macOS, Linux incl. snap/flatpak, Windows) |
 | `--min-size`     | (none)  | Minimum file size (e.g. `1K`, `10M`)                      |
 | `--max-size`     | (none)  | Maximum file size                                         |
 | `--disk-check`   | `true`  | Check free space before downloading                       |

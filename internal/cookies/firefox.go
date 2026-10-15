@@ -1,17 +1,19 @@
 package cookies
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
+
+	// Pure-Go SQLite driver: keeps the CLI CGO-free.
+	_ "modernc.org/sqlite"
 
 	"github.com/rajbahakdanyu/scraper/internal/fileutil"
 	"github.com/rajbahakdanyu/scraper/internal/netutil"
@@ -146,33 +148,12 @@ func profileDir(root string, path, relative string) string {
 	return filepath.Join(root, filepath.FromSlash(path))
 }
 
-// readFirefoxCookies reads cookies for domains out of a Firefox
-// cookies.sqlite using the sqlite3 CLI, avoiding a database driver
-// dependency.
+// readFirefoxCookies reads the cookies for domains out of a Firefox
+// cookies.sqlite.
 func readFirefoxCookies(dbPath string, domains []string) ([]*http.Cookie, error) {
-	if _, err := exec.LookPath("sqlite3"); err != nil {
-		return nil, fmt.Errorf("reading Firefox cookies needs the sqlite3 CLI: %w", err)
-	}
-	var clauses []string
-	for _, domain := range domains {
-		// Domains are interpolated into SQL, so only plain hostnames pass.
-		if !validDomain(domain) {
-			return nil, fmt.Errorf("invalid cookie domain %q", domain)
-		}
-		// Exact host, dot-prefixed host, or a subdomain. A
-		// left-unanchored LIKE ('%bunkr.cr') would also match lookalike
-		// hosts like evilbunkr.cr.
-		clauses = append(clauses,
-			fmt.Sprintf("host = '%s'", domain),
-			fmt.Sprintf("host = '.%s'", domain),
-			fmt.Sprintf("host LIKE '%%.%s'", domain),
-		)
-	}
-	if len(clauses) == 0 {
+	if len(domains) == 0 {
 		return nil, fmt.Errorf("no supported site domains to filter cookies by")
 	}
-	query := "SELECT name, value, host, path, expiry FROM moz_cookies WHERE " +
-		strings.Join(clauses, " OR ")
 	// A running Firefox holds the live database locked, so query a copy.
 	tmp, err := os.MkdirTemp("", "scraper-cookies-")
 	if err != nil {
@@ -188,23 +169,29 @@ func readFirefoxCookies(dbPath string, domains []string) ([]*http.Cookie, error)
 			return nil, fmt.Errorf("copy Firefox cookie database: %w", err)
 		}
 	}
-	// #nosec G204 -- fixed binary, no shell; the query only holds validDomain-checked hostnames.
-	out, err := exec.Command("sqlite3", "-separator", "\t", dbCopy, query).Output()
+
+	db, err := sql.Open("sqlite", dbCopy)
+	if err != nil {
+		return nil, fmt.Errorf("open Firefox cookie database: %w", err)
+	}
+	defer db.Close()
+	rows, err := db.Query("SELECT name, value, host, path, expiry FROM moz_cookies")
 	if err != nil {
 		return nil, fmt.Errorf("read Firefox cookies: %w", err)
 	}
+	defer rows.Close()
 
 	var cookies []*http.Cookie
 	now := time.Now().Unix()
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if line == "" {
+	for rows.Next() {
+		var name, value, host, path string
+		var expiry int64
+		if err := rows.Scan(&name, &value, &host, &path, &expiry); err != nil {
+			return nil, fmt.Errorf("read Firefox cookies: %w", err)
+		}
+		if !hostMatches(host, domains) {
 			continue
 		}
-		fields := strings.Split(line, "\t")
-		if len(fields) != 5 {
-			continue
-		}
-		expiry, _ := strconv.ParseInt(fields[4], 10, 64)
 		// Newer Firefox versions store milliseconds; seconds stay below 1e11
 		// until the year 5138.
 		if expiry > 1e11 {
@@ -217,9 +204,25 @@ func readFirefoxCookies(dbPath string, domains []string) ([]*http.Cookie, error)
 		if expiry > 0 {
 			expires = time.Unix(expiry, 0)
 		}
-		cookies = append(cookies, netutil.NewCookie(fields[0], fields[1], fields[2], fields[3], expires))
+		cookies = append(cookies, netutil.NewCookie(name, value, host, path, expires))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read Firefox cookies: %w", err)
 	}
 	return cookies, nil
+}
+
+// hostMatches reports whether a cookie host (".bunkr.cr", "cdn.bunkr.cr")
+// is one of domains or a subdomain of one; a lookalike such as
+// evilbunkr.cr is not.
+func hostMatches(host string, domains []string) bool {
+	host = strings.ToLower(strings.TrimPrefix(host, "."))
+	for _, d := range domains {
+		if host == d || strings.HasSuffix(host, "."+d) {
+			return true
+		}
+	}
+	return false
 }
 
 func copyFile(src, dst string) error {
@@ -236,16 +239,4 @@ func copyFile(src, dst string) error {
 		return errors.Join(err, out.Close())
 	}
 	return out.Close()
-}
-
-func validDomain(domain string) bool {
-	if domain == "" {
-		return false
-	}
-	for _, r := range domain {
-		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '.' || r == '-') {
-			return false
-		}
-	}
-	return true
 }

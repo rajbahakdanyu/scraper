@@ -1,21 +1,42 @@
 package cookies
 
 import (
+	"database/sql"
+	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 )
 
 var testDomains = []string{"bunkr.cr"}
 
-func TestReadFirefoxCookiesRejectsUnsafeDomain(t *testing.T) {
-	if _, err := exec.LookPath("sqlite3"); err != nil {
-		t.Skip("sqlite3 CLI not available")
+// createCookieDB writes a Firefox-shaped cookies.sqlite with the given
+// (name, value, host, expiry) rows.
+func createCookieDB(t *testing.T, rows [][4]any) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "cookies.sqlite")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := readFirefoxCookies(filepath.Join(t.TempDir(), "missing"), []string{"x' OR 1=1 --"}); err == nil {
-		t.Fatal("expected a domain with SQL metacharacters to be rejected")
+	defer db.Close()
+	if _, err := db.Exec("CREATE TABLE moz_cookies (name TEXT, value TEXT, host TEXT, path TEXT, expiry INTEGER, isSecure INTEGER, isHttpOnly INTEGER)"); err != nil {
+		t.Fatal(err)
 	}
+	for _, r := range rows {
+		if _, err := db.Exec("INSERT INTO moz_cookies VALUES (?, ?, ?, '/', ?, 0, 0)", r[0], r[1], r[2], r[3]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return path
+}
+
+func names(cookies []*http.Cookie) map[string]bool {
+	got := map[string]bool{}
+	for _, c := range cookies {
+		got[c.Name] = true
+	}
+	return got
 }
 
 func TestImportBrowserCookiesRejectsUnsupportedBrowser(t *testing.T) {
@@ -44,48 +65,35 @@ func TestFirefoxProfileDirPrefersDefault(t *testing.T) {
 }
 
 func TestReadFirefoxCookiesFiltersToSupportedSites(t *testing.T) {
-	if _, err := exec.LookPath("sqlite3"); err != nil {
-		t.Skip("sqlite3 CLI not available")
-	}
-	db := filepath.Join(t.TempDir(), "cookies.sqlite")
-	create := exec.Command("sqlite3", db,
-		"CREATE TABLE moz_cookies (name TEXT, value TEXT, host TEXT, path TEXT, expiry INTEGER, isSecure INTEGER, isHttpOnly INTEGER);"+
-			"INSERT INTO moz_cookies VALUES ('sid','abc','.bunkr.cr','/',2000000000,1,1);"+
-			"INSERT INTO moz_cookies VALUES ('sub','abc','cdn.bunkr.cr','/',2000000000,1,1);"+
-			"INSERT INTO moz_cookies VALUES ('lookalike','zzz','.evilbunkr.cr','/',2000000000,0,0);"+
-			"INSERT INTO moz_cookies VALUES ('other','zzz','.example.com','/',2000000000,0,0);")
-	if out, err := create.CombinedOutput(); err != nil {
-		t.Fatalf("create cookies db: %v: %s", err, out)
-	}
+	db := createCookieDB(t, [][4]any{
+		{"sid", "abc", ".bunkr.cr", 2000000000},
+		{"sub", "abc", "cdn.bunkr.cr", 2000000000},
+		{"lookalike", "zzz", ".evilbunkr.cr", 2000000000},
+		{"other", "zzz", ".example.com", 2000000000},
+		{"quote", "zzz", "x' OR 1=1 --", 2000000000},
+	})
 
 	cookies, err := readFirefoxCookies(db, testDomains)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cookies) != 2 {
-		t.Fatalf("cookies = %+v, want exactly the real-domain rows (lookalike evilbunkr.cr excluded)", cookies)
+	if got := names(cookies); len(cookies) != 2 || !got["sid"] || !got["sub"] {
+		t.Fatalf("cookies = %+v, want exactly the real-domain rows", cookies)
 	}
 	for _, c := range cookies {
-		if c.Name == "lookalike" || c.Name == "other" {
-			t.Fatalf("unrelated/lookalike cookie %q must not be imported", c.Name)
+		if !c.Secure || !c.HttpOnly {
+			t.Fatalf("imported cookie %q must be Secure and HttpOnly", c.Name)
 		}
 	}
 }
 
 func TestReadFirefoxCookiesSkipsExpiredAndHandlesMilliseconds(t *testing.T) {
-	if _, err := exec.LookPath("sqlite3"); err != nil {
-		t.Skip("sqlite3 CLI not available")
-	}
-	db := filepath.Join(t.TempDir(), "cookies.sqlite")
-	create := exec.Command("sqlite3", db,
-		"CREATE TABLE moz_cookies (name TEXT, value TEXT, host TEXT, path TEXT, expiry INTEGER, isSecure INTEGER, isHttpOnly INTEGER);"+
-			"INSERT INTO moz_cookies VALUES ('expired','x','.bunkr.cr','/',1000000000,1,1);"+
-			"INSERT INTO moz_cookies VALUES ('seconds','x','.bunkr.cr','/',4000000000,1,1);"+
-			"INSERT INTO moz_cookies VALUES ('millis','x','.bunkr.cr','/',4000000000000,1,1);"+
-			"INSERT INTO moz_cookies VALUES ('expiredMillis','x','.bunkr.cr','/',1000000000000,1,1);")
-	if out, err := create.CombinedOutput(); err != nil {
-		t.Fatalf("create cookies db: %v: %s", err, out)
-	}
+	db := createCookieDB(t, [][4]any{
+		{"expired", "x", ".bunkr.cr", 1000000000},
+		{"seconds", "x", ".bunkr.cr", 4000000000},
+		{"millis", "x", ".bunkr.cr", int64(4000000000000)},
+		{"expiredMillis", "x", ".bunkr.cr", int64(1000000000000)},
+	})
 	before, err := os.ReadFile(db)
 	if err != nil {
 		t.Fatal(err)
@@ -95,15 +103,32 @@ func TestReadFirefoxCookiesSkipsExpiredAndHandlesMilliseconds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := map[string]bool{}
-	for _, c := range cookies {
-		got[c.Name] = true
-	}
-	if len(cookies) != 2 || !got["seconds"] || !got["millis"] {
+	if got := names(cookies); len(cookies) != 2 || !got["seconds"] || !got["millis"] {
 		t.Fatalf("want only the unexpired seconds/millis cookies, got %+v", cookies)
 	}
 	if after, _ := os.ReadFile(db); string(after) != string(before) {
 		t.Fatal("the live Firefox database must not be modified")
+	}
+}
+
+func TestReadFirefoxCookiesNeedsDomains(t *testing.T) {
+	if _, err := readFirefoxCookies(createCookieDB(t, nil), nil); err == nil {
+		t.Fatal("expected an error without any domains to filter by")
+	}
+}
+
+func TestHostMatches(t *testing.T) {
+	for host, want := range map[string]bool{
+		"bunkr.cr":      true,
+		".bunkr.cr":     true,
+		"cdn.bunkr.cr":  true,
+		"CDN.Bunkr.CR":  true,
+		"evilbunkr.cr":  false,
+		"bunkr.cr.evil": false,
+	} {
+		if got := hostMatches(host, testDomains); got != want {
+			t.Errorf("hostMatches(%q) = %v, want %v", host, got, want)
+		}
 	}
 }
 
