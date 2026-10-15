@@ -1,7 +1,10 @@
 version: 2
 updates:
   - package-ecosystem: "gomod"
-    directory: "/"
+    # gui replaces the root module, so both go.mod files must move together.
+    directories:
+      - "/"
+      - "/gui"
     schedule:
       interval: "weekly"
     groups:
