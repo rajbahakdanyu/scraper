@@ -114,6 +114,17 @@ func TestSafeOutputPathAddsMP4ForDotContainingTitle(t *testing.T) {
 	}
 }
 
+func TestSafeOutputPathKeepsRoomForTemporarySuffixes(t *testing.T) {
+	title := strings.Repeat("long-title-", 40)
+	got := safeOutputPath(t.TempDir(), title)
+	if len(filepath.Base(got))+len(".part.resume.json") > 255 {
+		t.Fatalf("output filename leaves no room for temporary suffix: %d bytes", len(filepath.Base(got)))
+	}
+	if filepath.Ext(got) != ".mp4" {
+		t.Fatalf("output extension = %q, want .mp4", filepath.Ext(got))
+	}
+}
+
 func TestCommitOutputIsAtomicAndWritesChecksum(t *testing.T) {
 	dir := t.TempDir()
 	tempPath := filepath.Join(dir, "video.part.mp4")

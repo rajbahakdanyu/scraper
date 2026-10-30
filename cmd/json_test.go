@@ -326,6 +326,13 @@ func TestRunBatchJSONProducesJSONLines(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &lastEvent); err != nil || lastEvent.Event != "summary" {
 		t.Errorf("expected summary as last line, got: %s", lines[len(lines)-1])
 	}
+	var summary model.JSONEvent
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &summary); err != nil {
+		t.Fatal(err)
+	}
+	if summary.TotalBytes != 600 {
+		t.Errorf("summary totalBytes = %d, want 600", summary.TotalBytes)
+	}
 }
 
 func TestRunBatchJSONRetryFileCarriesAlbumURL(t *testing.T) {

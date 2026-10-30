@@ -84,6 +84,8 @@ func PostJSON(ctx context.Context, client *http.Client, url string, headers map[
 	return nil
 }
 
+const maxDocumentBytes = 32 << 20
+
 // GetDoc fetches a document and returns its body limited to 32 MiB.
 func GetDoc(ctx context.Context, client *http.Client, url, userAgent string) (io.Reader, error) {
 	body, err := GetBytes(ctx, client, url, userAgent)
@@ -110,9 +112,12 @@ func GetBytes(ctx context.Context, client *http.Client, url, userAgent string) (
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return nil, newHTTPStatusError(resp.StatusCode, url)
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxDocumentBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
+	}
+	if len(body) > maxDocumentBytes {
+		return nil, fmt.Errorf("response exceeds %d-byte document limit", maxDocumentBytes)
 	}
 	return body, nil
 }
@@ -163,7 +168,7 @@ func (p *Policy) allowDialHost(host string) {
 }
 
 func (p *Policy) dialAllowed(host string) bool {
-	host = strings.ToLower(host)
+	host = normalizeHost(host)
 	if _, ok := p.allowedPrivateHosts[host]; ok {
 		return true
 	}

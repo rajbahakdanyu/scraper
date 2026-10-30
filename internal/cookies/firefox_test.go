@@ -166,3 +166,40 @@ func TestFirefoxProfileDirHonorsAbsoluteProfilePath(t *testing.T) {
 		t.Fatalf("absolute profile path mangled: got %q, want %q", got, want)
 	}
 }
+
+func TestFirefoxProfileDirUsesInstallDefaultAndIgnoresGeneral(t *testing.T) {
+	root := t.TempDir()
+	ini := "[Profile0]\nName=old\nPath=Profiles/old.default\n\n" +
+		"[Profile1]\nName=current\nPath=Profiles/current.default-release\n\n" +
+		"[General]\nStartWithLastProfile=1\n\n" +
+		"[InstallABC123]\nDefault=Profiles/current.default-release\nLocked=1\n"
+	if err := os.WriteFile(filepath.Join(root, "profiles.ini"), []byte(ini), 0600); err != nil {
+		t.Fatal(err)
+	}
+	prev := firefoxRoot
+	firefoxRoot = func() (string, error) { return root, nil }
+	t.Cleanup(func() { firefoxRoot = prev })
+
+	got, err := firefoxProfileDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(root, "Profiles", "current.default-release"); got != want {
+		t.Fatalf("profile = %q, want install default %q", got, want)
+	}
+}
+
+func TestFirefoxProfileDirRejectsProfilesWithoutPaths(t *testing.T) {
+	root := t.TempDir()
+	ini := "[General]\nStartWithLastProfile=1\n[Profile0]\nName=broken\n"
+	if err := os.WriteFile(filepath.Join(root, "profiles.ini"), []byte(ini), 0600); err != nil {
+		t.Fatal(err)
+	}
+	prev := firefoxRoot
+	firefoxRoot = func() (string, error) { return root, nil }
+	t.Cleanup(func() { firefoxRoot = prev })
+
+	if _, err := firefoxProfileDir(); err == nil {
+		t.Fatal("expected an error when no profile has a path")
+	}
+}

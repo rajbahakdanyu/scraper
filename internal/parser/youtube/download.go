@@ -379,8 +379,8 @@ func commitOutputWithChecksum(tempPath, finalPath string, skipChecksums bool, ch
 // paths.
 func safeOutputPath(dest, title string) string {
 	filename := fileutil.SanitizeFilename(title)
-	if !strings.HasSuffix(strings.ToLower(title), ".mp4") {
-		filename += ".mp4"
+	if !strings.HasSuffix(strings.ToLower(filename), ".mp4") {
+		filename = fileutil.SanitizeFilename(filename + ".mp4")
 	}
 	p := filepath.Join(dest, filename)
 	if abs, err := filepath.Abs(p); err == nil {

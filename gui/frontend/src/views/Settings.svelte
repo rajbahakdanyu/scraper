@@ -1,14 +1,14 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import {
-    ApplySettings,
-    ChooseCookiesFile,
-    ChooseLogFile,
-    ChooseOutputDir,
-    GetOptions,
-    GetSettings,
-    ReloadSettings,
-    SaveSettings,
+      ApplySettings,
+      ChooseCookiesFile,
+      ChooseLogFile,
+      ChooseOutputDir,
+      GetOptions,
+      GetSettings,
+      ReloadSettings,
+      SaveSettings,
   } from '../../wailsjs/go/backend/App'
   import type { backend } from '../../wailsjs/go/models'
   import { splitList } from '../lib/format'
@@ -20,8 +20,12 @@
   let error = $state('')
 
   onMount(async () => {
-    opts = await GetOptions()
-    load(await GetSettings())
+    try {
+      opts = await GetOptions()
+      load(await GetSettings())
+    } catch (err) {
+      error = errorText(err)
+    }
   })
 
   function load(next: backend.Settings) {
@@ -54,8 +58,12 @@
   }
 
   async function pick(fn: () => Promise<string>, set: (v: string) => void) {
-    const v = await fn()
-    if (v) set(v)
+    try {
+      const v = await fn()
+      if (v) set(v)
+    } catch (err) {
+      error = errorText(err)
+    }
   }
 </script>
 

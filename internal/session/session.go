@@ -73,7 +73,9 @@ type Item struct {
 	AlbumURL string
 	Err      error
 	// Path is where a completed item was saved.
-	Path string
+	Path          string
+	progressAt    time.Time
+	progressBytes int64
 }
 
 // Session is the state of one download run. Exported fields are read by
@@ -252,7 +254,11 @@ func (s *Session) applyScrape(items []model.MediaItem, err error) []Task {
 	for i := range items {
 		model.AssignIDs(items[i:i+1], fmt.Sprintf("%d:", i))
 		it := items[i]
-		s.Items[i] = Item{Item: it, Status: model.StatusPending, Total: it.Size, AlbumURL: s.SourceURL}
+		st := Item{Item: it, Status: model.StatusPending, Total: it.Size, AlbumURL: s.SourceURL}
+		if it.URL == "" {
+			st.Status = model.StatusCompleted
+		}
+		s.Items[i] = st
 	}
 
 	// Album (multiple files): download into a subfolder named by the slug.
@@ -310,10 +316,15 @@ func (s *Session) applyBatchScrape(album model.Album, items []model.MediaItem, e
 	firstAlbum := s.Phase == PhaseLoading
 
 	if err := fileutil.EnsureDir(album.Dest); err != nil {
-		s.LoadingErr = err.Error()
-		s.ScrapeErrs = append(s.ScrapeErrs, err)
-		s.Phase = PhaseDone
-		return nil
+		albumErr := fmt.Errorf("%s: %w", album.URL, err)
+		s.ScrapeErrs = append(s.ScrapeErrs, albumErr)
+		s.AppendError(albumErr.Error())
+		if s.BatchRemaining == 0 && len(s.Items) == 0 {
+			s.LoadingErr = err.Error()
+			s.Phase = PhaseDone
+			return nil
+		}
+		return s.nextScrape()
 	}
 
 	base := len(s.Items)
@@ -454,17 +465,21 @@ func (s *Session) ApplyProgress(evt model.ProgressEvent) {
 		evt.Status = model.StatusDownloading
 	}
 	st := &s.Items[i]
+	now := time.Now()
 	if st.Started.IsZero() {
-		st.Started = time.Now()
+		st.Started = now
 	}
-	elapsed := time.Since(st.Started).Seconds()
+	if !st.progressAt.IsZero() && evt.Bytes >= st.progressBytes {
+		if elapsed := now.Sub(st.progressAt).Seconds(); elapsed > 0 {
+			st.Speed = float64(evt.Bytes-st.progressBytes) / elapsed
+		}
+	}
+	st.progressAt = now
+	st.progressBytes = evt.Bytes
 	st.Status = evt.Status
 	st.Bytes = evt.Bytes
 	if evt.Total > 0 {
 		st.Total = evt.Total
-	}
-	if elapsed > 0 && evt.Bytes > 0 {
-		st.Speed = float64(evt.Bytes) / elapsed
 	}
 }
 
@@ -497,11 +512,8 @@ func (s *Session) ApplyDone(key string, err error) {
 func (s *Session) Tick() {
 	for i := range s.Items {
 		st := &s.Items[i]
-		if st.Status == model.StatusDownloading && !st.Started.IsZero() {
-			elapsed := time.Since(st.Started).Seconds()
-			if elapsed > 0 && st.Bytes > 0 {
-				st.Speed = float64(st.Bytes) / elapsed
-			}
+		if st.Status == model.StatusDownloading && !st.progressAt.IsZero() && time.Since(st.progressAt) >= 3*time.Second {
+			st.Speed = 0
 		}
 	}
 }
@@ -599,6 +611,8 @@ func (s *Session) reset(i int) Task {
 	st.Total = st.Item.Size
 	st.Speed = 0
 	st.Started = time.Time{}
+	st.progressAt = time.Time{}
+	st.progressBytes = 0
 	st.Err = nil
 	st.Path = ""
 	s.Downloader.Prepare(st.Item)

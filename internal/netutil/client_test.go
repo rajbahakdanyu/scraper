@@ -160,7 +160,7 @@ func TestPostJSONRejectsUnexpectedStatus(t *testing.T) {
 	}
 }
 
-func TestGetDocSetsUserAgentAndLimitsBody(t *testing.T) {
+func TestGetDocSetsUserAgentAndRejectsOversizedBody(t *testing.T) {
 	const userAgent = "doc-test/1.0"
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("User-Agent"); got != userAgent {
@@ -170,16 +170,8 @@ func TestGetDocSetsUserAgentAndLimitsBody(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	reader, err := GetDoc(context.Background(), ts.Client(), ts.URL, userAgent)
-	if err != nil {
-		t.Fatalf("GetDoc failed: %v", err)
-	}
-	body, err := io.ReadAll(reader)
-	if err != nil {
-		t.Fatalf("read document: %v", err)
-	}
-	if len(body) != 32<<20 {
-		t.Fatalf("body length = %d, want %d", len(body), 32<<20)
+	if _, err := GetDoc(context.Background(), ts.Client(), ts.URL, userAgent); err == nil || !strings.Contains(err.Error(), "document limit") {
+		t.Fatalf("GetDoc error = %v, want explicit document limit error", err)
 	}
 }
 
@@ -346,5 +338,13 @@ func TestPublicClientWithPrivateProxyHost(t *testing.T) {
 	}
 	if gotTarget != "http://example.com/page" {
 		t.Fatalf("proxy saw target %q, want http://example.com/page", gotTarget)
+	}
+}
+
+func TestPolicyDialAllowedNormalizesHost(t *testing.T) {
+	policy := NewPolicy()
+	policy.allowDialHost("LOCALHOST.")
+	if !policy.dialAllowed("localhost") || !policy.dialAllowed("LOCALHOST.") {
+		t.Fatal("dial allowlist must ignore host casing and a trailing DNS root dot")
 	}
 }

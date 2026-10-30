@@ -97,29 +97,33 @@ func firefoxProfileDir() (string, error) {
 	var order []string
 	sections := map[string]*profile{}
 	defaults := map[string]bool{}
+	var installDefaults []string
 	var current string
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
 			current = strings.Trim(line, "[]")
-			if _, ok := sections[current]; !ok {
-				order = append(order, current)
-				sections[current] = &profile{section: current}
+			if strings.HasPrefix(current, "Profile") {
+				if _, ok := sections[current]; !ok {
+					order = append(order, current)
+					sections[current] = &profile{section: current}
+				}
 			}
 			continue
 		}
-		if current == "" {
+		if section := sections[current]; section != nil && strings.HasPrefix(line, "Path=") {
+			section.path = strings.TrimPrefix(line, "Path=")
 			continue
 		}
-		if strings.HasPrefix(line, "Path=") {
-			sections[current].path = strings.TrimPrefix(line, "Path=")
+		if section := sections[current]; section != nil && strings.HasPrefix(line, "IsRelative=") {
+			section.relative = strings.TrimPrefix(line, "IsRelative=")
 			continue
 		}
-		if strings.HasPrefix(line, "IsRelative=") {
-			sections[current].relative = strings.TrimPrefix(line, "IsRelative=")
-			continue
-		}
-		if line == "Default=1" {
+		if strings.HasPrefix(current, "Install") && strings.HasPrefix(line, "Default=") {
+			if value := strings.TrimPrefix(line, "Default="); value != "" {
+				installDefaults = append(installDefaults, value)
+			}
+		} else if sections[current] != nil && line == "Default=1" {
 			defaults[current] = true
 		}
 	}
@@ -130,12 +134,30 @@ func firefoxProfileDir() (string, error) {
 	for _, s := range order {
 		profiles = append(profiles, *sections[s])
 	}
+	if len(installDefaults) > 0 {
+		candidate := installDefaults[0]
+		if !filepath.IsAbs(candidate) {
+			candidate = filepath.Join(root, filepath.FromSlash(candidate))
+		}
+		candidate = filepath.Clean(candidate)
+		for _, p := range profiles {
+			if filepath.Clean(profileDir(root, p.path, p.relative)) == candidate {
+				return candidate, nil
+			}
+		}
+		return candidate, nil
+	}
 	for _, p := range profiles {
-		if defaults[p.section] {
+		if defaults[p.section] && p.path != "" {
 			return profileDir(root, p.path, p.relative), nil
 		}
 	}
-	return profileDir(root, profiles[0].path, profiles[0].relative), nil
+	for _, p := range profiles {
+		if p.path != "" {
+			return profileDir(root, p.path, p.relative), nil
+		}
+	}
+	return "", fmt.Errorf("no Firefox profile path found in %s", filepath.Join(root, "profiles.ini"))
 }
 
 // profileDir resolves a profile record to its directory: relative paths

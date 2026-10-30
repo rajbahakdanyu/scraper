@@ -44,6 +44,7 @@
   let statusTimer: ReturnType<typeof setTimeout> | undefined
   let fetching = false
   let dirty = false
+  let loadingRun = false
 
   const run = $derived(ui.run)
   const stats = $derived(run?.stats)
@@ -52,9 +53,14 @@
   const scrapeFailed = $derived(run?.phase === 'done' && !!run.loadingErr && run.visible === 0)
 
   $effect(() => {
-    if (!ui.run) {
+    if (!ui.run && !loadingRun) {
+      loadingRun = true
       RunState().then((s) => {
         ui.run = s
+      }).catch((err) => {
+        toast(errorText(err))
+      }).finally(() => {
+        loadingRun = false
       })
     }
   })
@@ -77,7 +83,10 @@
   $effect(() => {
     if (showErrors && run) {
       void run.errors
-      ErrorLog().then((e) => (errors = e ?? []))
+      ErrorLog().then((e) => (errors = e ?? [])).catch((err) => {
+        errors = []
+        toast(errorText(err))
+      })
     }
   })
 
@@ -96,6 +105,8 @@
         const hit = rows.find((r) => r.index === selected.index)
         if (hit) selected = { row: hit.row, index: hit.index }
       } while (dirty)
+    } catch (err) {
+      toast(errorText(err))
     } finally {
       fetching = false
     }
@@ -140,8 +151,10 @@
   }
 
   async function copyURL(index: number) {
-    const url = await ItemURL(index)
-    if (url && (await ClipboardSetText(url))) toast('URL copied')
+    await guard(async () => {
+      const url = await ItemURL(index)
+      if (url && (await ClipboardSetText(url))) toast('URL copied')
+    })
   }
 
   const saveRetryList = () =>

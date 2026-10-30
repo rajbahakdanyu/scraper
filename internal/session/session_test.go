@@ -3,6 +3,8 @@ package session
 import (
 	"context"
 	"errors"
+	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -126,6 +128,24 @@ func TestSingleRunScrapeFailureIsPlainError(t *testing.T) {
 	}
 }
 
+func TestSingleRunWithURLlessItemsSettles(t *testing.T) {
+	dl := newFakeDownloader()
+	s := New(func(context.Context) ([]model.MediaItem, error) {
+		return []model.MediaItem{{Title: "placeholder"}}, nil
+	}, dl, t.TempDir(), "test")
+	run(s, s.Start())
+
+	if s.Items[0].Status != model.StatusCompleted {
+		t.Fatalf("URL-less item status = %v, want completed", s.Items[0].Status)
+	}
+	if s.Refresh() || s.Phase != PhaseSummary {
+		t.Fatalf("URL-less run did not settle: phase=%v", s.Phase)
+	}
+	if len(dl.prepared) != 0 {
+		t.Fatalf("URL-less item was queued for download: %+v", dl.prepared)
+	}
+}
+
 func TestBatchRunAppendsAlbumsInOrder(t *testing.T) {
 	dl := newFakeDownloader()
 	root := t.TempDir()
@@ -164,6 +184,31 @@ func TestBatchRunAppendsAlbumsInOrder(t *testing.T) {
 	}
 }
 
+func TestBatchRunContinuesAfterAlbumDirectoryFailure(t *testing.T) {
+	root := t.TempDir()
+	blocker := root + "/not-a-directory"
+	if err := os.WriteFile(blocker, []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	dl := newFakeDownloader()
+	albums := []model.Album{
+		{Site: "a", URL: "https://x/a/blocked", Slug: "blocked", Dest: blocker + "/album", Scraper: fakeScraper{items: items("blocked.mp4")}},
+		{Site: "a", URL: "https://x/a/ok", Slug: "ok", Dest: root + "/ok", Scraper: fakeScraper{items: items("ok.mp4")}},
+	}
+	s := NewBatch(dl, root, albums)
+	run(s, s.Start())
+
+	if s.BatchRemaining != 0 || s.BatchIdx != len(albums) {
+		t.Fatalf("batch progress = %d/%d, want all albums handled", s.BatchIdx, len(albums))
+	}
+	if len(s.ScrapeErrs) != 1 || !strings.Contains(s.ScrapeErrs[0].Error(), albums[0].URL) {
+		t.Fatalf("scrape errors = %v, want the failed album URL", s.ScrapeErrs)
+	}
+	if len(s.Items) != 2 || s.Items[1].Item.Title != "ok.mp4" || s.Items[1].Status != model.StatusCompleted {
+		t.Fatalf("items = %+v, want the later album downloaded", s.Items)
+	}
+}
+
 func TestProgressNeverResurrectsTerminalItems(t *testing.T) {
 	s := New(nil, nil, t.TempDir(), "test")
 	s.Items = []Item{{Item: model.MediaItem{ID: "a"}, Status: model.StatusPending}}
@@ -184,6 +229,29 @@ func TestProgressNeverResurrectsTerminalItems(t *testing.T) {
 	s.ApplyProgress(model.ProgressEvent{Item: model.MediaItem{ID: "a"}, Status: model.StatusDownloading})
 	if s.Items[0].Status != model.StatusCancelled {
 		t.Fatal("stale progress must not resurrect a cancelled item")
+	}
+}
+
+func TestProgressSpeedUsesDeltaAfterResume(t *testing.T) {
+	s := New(nil, nil, t.TempDir(), "test")
+	started := time.Now().Add(-time.Second)
+	s.Items = []Item{{
+		Item:          model.MediaItem{ID: "resumed"},
+		Status:        model.StatusDownloading,
+		Started:       started,
+		Bytes:         1_000,
+		progressAt:    started,
+		progressBytes: 1_000,
+	}}
+
+	s.ApplyProgress(model.ProgressEvent{
+		Item:   model.MediaItem{ID: "resumed"},
+		Bytes:  1_100,
+		Total:  2_000,
+		Status: model.StatusDownloading,
+	})
+	if got := s.Items[0].Speed; got < 90 || got > 150 {
+		t.Fatalf("speed = %.1f bytes/s, want about 100 from the 100-byte delta", got)
 	}
 }
 

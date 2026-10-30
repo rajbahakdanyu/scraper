@@ -26,9 +26,13 @@
   const runnable = $derived(detected.length > 0 && (ui.input.site !== '' ? single : detected.every((d) => d.site)))
 
   onMount(async () => {
-    sites = (await GetOptions()).sites
-    outputDir = (await GetSettings()).outputDir
-    detect()
+    try {
+      sites = (await GetOptions()).sites
+      outputDir = (await GetSettings()).outputDir
+      await detect()
+    } catch (err) {
+      error = errorText(err)
+    }
   })
 
   $effect(() => {
@@ -41,7 +45,11 @@
   }
 
   async function detect() {
-    detected = (await DetectSites(ui.input.text)) ?? []
+    try {
+      detected = (await DetectSites(ui.input.text)) ?? []
+    } catch (err) {
+      error = errorText(err)
+    }
   }
 
   async function importList() {
@@ -57,11 +65,11 @@
   }
 
   async function chooseOutput() {
-    const dir = await ChooseOutputDir()
-    if (!dir) return
-    const s = await GetSettings()
-    s.outputDir = dir
     try {
+      const dir = await ChooseOutputDir()
+      if (!dir) return
+      const s = await GetSettings()
+      s.outputDir = dir
       await ApplySettings(s)
       outputDir = dir
     } catch (err) {

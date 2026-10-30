@@ -169,6 +169,7 @@ func runBatchJSON(dl model.Downloader, albums []model.Album, destRoot string, qu
 	var allErrs []error
 	var grandCompleted, grandFailed, grandCancelled int
 	var grandTotalItems int
+	var grandTotalBytes int64
 	var failures []model.FailedItem
 	var scrapeCh <-chan batchScrapeResult
 	// scrapeNext starts the one-album lookahead scrape after albums[idx].
@@ -233,12 +234,13 @@ batchLoop:
 
 		failures = append(failures, app.CollectFailures(items, errs, a.URL)...)
 
-		completed, failed, cancelled, albumReal, _ := writeItemResult(out, items, errs, paths, a.Slug, quality, audioOnly)
+		completed, failed, cancelled, albumReal, albumBytes := writeItemResult(out, items, errs, paths, a.Slug, quality, audioOnly)
 
 		grandCompleted += completed
 		grandFailed += failed
 		grandCancelled += cancelled
 		grandTotalItems += albumReal
+		grandTotalBytes += albumBytes
 
 		if partialErr := model.NewPartialError("album", nonCancelledErrs(errs)); partialErr != nil {
 			allErrs = append(allErrs, partialErr)
@@ -261,12 +263,13 @@ batchLoop:
 	}
 
 	writeJSONLine(out, model.JSONEvent{
-		Event:     "summary",
-		Total:     grandTotalItems,
-		Completed: grandCompleted,
-		Failed:    grandFailed,
-		Cancelled: grandCancelled,
-		RetryFile: retryPath,
+		Event:      "summary",
+		Total:      grandTotalItems,
+		Completed:  grandCompleted,
+		Failed:     grandFailed,
+		Cancelled:  grandCancelled,
+		TotalBytes: grandTotalBytes,
+		RetryFile:  retryPath,
 	})
 
 	return model.NewPartialError("batch", allErrs)
