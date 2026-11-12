@@ -56,12 +56,12 @@ keys are kept).
 The GUI also opens the output folder, reveals finished files, and copies
 item URLs.
 
-To build it yourself you need Node.js 24, the
+To build it yourself you need Node.js 24.15 or later in the 24.x series, the
 [Wails v2 CLI](https://wails.io/docs/gettingstarted/installation), and on
 Linux `libgtk-3-dev libwebkit2gtk-4.1-dev`:
 
 ```bash
-go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0
+go install github.com/wailsapp/wails/v2/cmd/wails@v2.17.1
 cd gui
 wails build                    # Linux: wails build -tags webkit2_41
 # app in gui/build/bin/

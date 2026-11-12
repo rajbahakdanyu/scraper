@@ -121,7 +121,7 @@ jobs:
 
       - name: Build
         run: |
-          go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0
+          go install github.com/wailsapp/wails/v2/cmd/wails@v2.17.1
           tags=()
           if [ -n "$TAGS" ]; then tags=(-tags "$TAGS"); fi
           wails build -clean -trimpath -platform "$PLATFORM" "${tags[@]}"

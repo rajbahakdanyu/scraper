@@ -42,7 +42,7 @@ jobs:
         run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
 
       - name: Security scan
-        run: go run github.com/securego/gosec/v2/cmd/gosec@v2.28.0 -quiet ./...
+        run: go run github.com/securego/gosec/v2/cmd/gosec@v2.29.0 -quiet ./...
 
       - name: Build
         run: go build ./...
@@ -118,7 +118,7 @@ jobs:
 
       - name: Bindings are up to date
         run: |
-          go run github.com/wailsapp/wails/v2/cmd/wails@v2.16.0 generate module
+          go run github.com/wailsapp/wails/v2/cmd/wails@v2.17.1 generate module
           git -c core.fileMode=false diff --exit-code frontend/wailsjs
 
       - name: Vet
@@ -128,10 +128,10 @@ jobs:
         run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 -tags "$GUI_TAGS" ./...
 
       - name: Security scan
-        run: go run github.com/securego/gosec/v2/cmd/gosec@v2.28.0 -quiet -tags "$GUI_TAGS" ./...
+        run: go run github.com/securego/gosec/v2/cmd/gosec@v2.29.0 -quiet -tags "$GUI_TAGS" ./...
 
       - name: Build
-        run: go run github.com/wailsapp/wails/v2/cmd/wails@v2.16.0 build -s -tags webkit2_41
+        run: go run github.com/wailsapp/wails/v2/cmd/wails@v2.17.1 build -s -tags webkit2_41
 
       - name: Vulnerability check
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -tags "$GUI_TAGS" ./...

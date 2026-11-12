@@ -41,8 +41,7 @@ type fakeYouTube struct {
 // page (visitor-ID bootstrap before any POST), the innertube player API, the
 // watch page (embedding the same player response JSON), the embed page and
 // base.js player config fetched while resolving the stream URL, and the
-// media stream itself (honoring the client's ?range=start-end chunk
-// parameter).
+// media stream itself (honoring the client's HTTP Range requests).
 func startFakeYouTube(t *testing.T, videoID, title, content string) *fakeYouTube {
 	t.Helper()
 	f := &fakeYouTube{
@@ -86,24 +85,11 @@ func startFakeYouTube(t *testing.T, videoID, title, content string) *fakeYouTube
 				<-r.Context().Done() // hang until the client aborts
 				return
 			}
-			if rangeParam := r.URL.Query().Get("range"); rangeParam != "" {
-				var start, end int
-				streamContent := f.streamContents[r.URL.Path]
-				if streamContent == "" {
-					streamContent = f.streamContent
-				}
-				if _, err := fmt.Sscanf(rangeParam, "%d-%d", &start, &end); err != nil || end >= len(streamContent) {
-					http.Error(w, "bad range", http.StatusBadRequest)
-					return
-				}
-				fmt.Fprint(w, streamContent[start:end+1])
-				return
-			}
 			streamContent := f.streamContents[r.URL.Path]
 			if streamContent == "" {
 				streamContent = f.streamContent
 			}
-			fmt.Fprint(w, streamContent)
+			http.ServeContent(w, r, "stream", time.Time{}, strings.NewReader(streamContent))
 		default:
 			http.NotFound(w, r)
 		}
