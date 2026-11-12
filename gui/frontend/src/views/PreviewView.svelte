@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { CancelPreview, StartRun } from '../../wailsjs/go/backend/App'
+  import { CancelPreview, StartRun } from '../../bindings/github.com/rajbahakdanyu/scraper/gui/backend/app'
   import { humanBytes } from '../lib/format'
   import { errorText, resetRun, toast, ui } from '../lib/state.svelte'
 

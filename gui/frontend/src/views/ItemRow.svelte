@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { backend } from '../../wailsjs/go/models'
+  import type * as backend from '../../bindings/github.com/rajbahakdanyu/scraper/gui/backend/models'
   import { humanBytes, percent } from '../lib/format'
 
   type Props = {

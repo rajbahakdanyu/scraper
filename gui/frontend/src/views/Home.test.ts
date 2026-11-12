@@ -15,8 +15,11 @@ const api = vi.hoisted(() => ({
   StartWatch: vi.fn(),
 }))
 
-vi.mock('../../wailsjs/go/backend/App', () => api)
-vi.mock('../../wailsjs/runtime/runtime', () => ({ EventsOn: vi.fn() }))
+vi.mock('../../bindings/github.com/rajbahakdanyu/scraper/gui/backend/app', () => api)
+vi.mock('@wailsio/runtime', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@wailsio/runtime')>()
+  return { ...actual, Events: { ...actual.Events, On: vi.fn() } }
+})
 
 afterEach(cleanup)
 
@@ -123,12 +126,12 @@ describe('Home', () => {
     const { getByLabelText, getByRole } = render(Home)
     const alert = await waitFor(() => getByRole('alert'))
     expect(alert.textContent).toContain('Desktop backend unavailable')
-    expect(alert.textContent).toContain('wails dev')
+    expect(alert.textContent).toContain('wails3 dev')
     expect(alert.textContent).toContain('bridge missing')
 
     await fireEvent.input(getByLabelText('Links'), { target: { value: 'https://example.com/file' } })
     await waitFor(() => expect(getByRole('alert').textContent).toContain('detection unavailable'))
-    expect(getByRole('alert').textContent).toContain('wails dev')
+    expect(getByRole('alert').textContent).toContain('wails3 dev')
   })
 
   it('ignores a slower detection result for older input', async () => {

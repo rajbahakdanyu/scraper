@@ -30,13 +30,13 @@ go install github.com/rajbahakdanyu/scraper/cmd/scraper@latest
 ## Desktop GUI
 
 `scraper-gui` is a desktop app ([Wails](https://wails.io) + Svelte) built on
-the same scraping, download, and run-state code as the TUI. Release builds
+the same scraping, download, and run-state code as the TUI. release builds
 for macOS (universal), Windows, and Linux are attached to each
 [release](https://github.com/rajbahakdanyu/scraper/releases). Unless a
 release says it is signed, the builds are unsigned: on macOS, right-click the
 app and choose **Open** the first time; on Windows, choose **More info → Run
-anyway**. Linux needs the WebKitGTK 4.1
-runtime (`libwebkit2gtk-4.1-0` on Debian/Ubuntu).
+anyway**. Linux needs the GTK 4 and WebKitGTK 6 runtime
+(`libwebkitgtk-6.0-4` on Debian/Ubuntu).
 
 The GUI reads and writes the same `~/.scraper.yaml` as the CLI. Settings can
 be applied to the next run only, or saved to the file (comments and unknown
@@ -71,17 +71,20 @@ To build it yourself you need Node.js `^22.22.2 || ^24.15.0 || >=26.0.0`
 (`gui/frontend/.nvmrc` pins 26; pnpm refuses older versions),
 [pnpm](https://pnpm.io/installation) (the version is pinned by
 `packageManager` in `gui/frontend/package.json`; `npm i -g pnpm@12.18.0`), the
-[Wails v2 CLI](https://wails.io/docs/gettingstarted/installation), and on
-Linux `libgtk-3-dev libwebkit2gtk-4.1-dev`:
+[Wails v3.1.0 CLI](https://v3.wails.io/getting-started/installation), and on
+Linux `libgtk-4-dev libwebkitgtk-6.0-dev`:
+
+The commands enable Wails 3.1's YAML build pipeline, which the project
+configuration uses.
 
 ```bash
-go install github.com/wailsapp/wails/v2/cmd/wails@v2.17.1
+go install github.com/wailsapp/wails/v3/cmd/wails3@v3.1.0
 cd gui
-wails build                    # Linux: wails build -tags webkit2_41
+WAILS_EXP_USE_WAKE=1 wails3 build
 # app in gui/build/bin/
 ```
 
-`wails dev` (in `gui/`) runs it with hot reload and also serves the UI at
+`WAILS_EXP_USE_WAKE=1 wails3 dev` (in `gui/`) runs it with hot reload and also serves the UI at
 <http://localhost:34115> with live Go bindings. The Vite-only URL (usually
 port 5173) lacks those bindings, so site detection and downloads won't work
 there.

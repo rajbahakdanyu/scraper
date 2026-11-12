@@ -11,12 +11,10 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
-	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 
 	"github.com/rajbahakdanyu/scraper/internal/app"
 	"github.com/rajbahakdanyu/scraper/internal/config"
@@ -33,13 +31,14 @@ type App struct {
 	host       host
 	configPath string
 
-	mu       sync.Mutex
-	startMu  sync.Mutex
-	settings Settings
-	run      *runner
-	watch    *watcher
-	notices  []string
-	preview  context.CancelFunc
+	mu         sync.Mutex
+	startMu    sync.Mutex
+	settings   Settings
+	run        *runner
+	watch      *watcher
+	notices    []string
+	preview    context.CancelFunc
+	quitPrompt bool
 
 	// Test seams for the network-facing constructors.
 	newScraper    func(site, proxyURL string, cookies []*http.Cookie) (model.Scraper, error)
@@ -78,48 +77,112 @@ func (a *App) loadConfig() (*config.Config, error) {
 // Run starts the desktop app serving the built frontend from assets.
 func Run(assets fs.FS) error {
 	a := New(config.DefaultPath(), nil)
-	var ctxVal atomic.Value
-	macOpts, winOpts, single := nativeOptions(&ctxVal)
-	return wails.Run(&options.App{
+	icon, err := fs.ReadFile(assets, "build/appicon.png")
+	if err != nil {
+		return fmt.Errorf("read GUI icon: %w", err)
+	}
+
+	var window *application.WebviewWindow
+	app := application.New(application.Options{
+		Name:        "Scraper",
+		Description: "Download media from supported websites",
+		Icon:        icon,
+		Services:    []application.Service{application.NewService(a)},
+		Assets: application.AssetOptions{
+			Handler: application.BundledAssetFileServer(assets),
+		},
+		Mac: application.MacOptions{
+			ApplicationShouldTerminateAfterLastWindowClosed: true,
+		},
+		SingleInstance: &application.SingleInstanceOptions{
+			UniqueID: singleInstanceID,
+			OnSecondInstanceLaunch: func(application.SecondInstanceData) {
+				if window != nil {
+					window.Restore()
+					window.Show()
+					window.Focus()
+				}
+			},
+		},
+		ShouldQuit: a.confirmQuit,
+		OnShutdown: a.stopEverything,
+	})
+
+	window = app.Window.NewWithOptions(application.WebviewWindowOptions{
+		Name:               "scraper-main",
 		Title:              "Scraper",
 		Width:              1180,
 		Height:             780,
 		MinWidth:           820,
 		MinHeight:          560,
-		AssetServer:        &assetserver.Options{Assets: assets},
-		BackgroundColour:   &options.RGBA{R: 14, G: 17, B: 23, A: 1},
-		Menu:               appMenu(&ctxVal),
-		Mac:                macOpts,
-		Windows:            winOpts,
-		SingleInstanceLock: single,
-		OnStartup: func(ctx context.Context) {
-			ctxVal.Store(ctx)
-			a.host = wailsHost{ctx: ctx}
+		BackgroundColour:   application.NewRGB(14, 17, 23),
+		UseApplicationMenu: true,
+		Mac: application.MacWindow{
+			Appearance: application.NSAppearanceNameDarkAqua,
 		},
-		OnBeforeClose: func(context.Context) bool { return a.beforeClose() },
-		OnShutdown:    func(context.Context) { a.stopEverything() },
-		Bind:          []any{a},
+		Windows: application.WindowsWindow{
+			Theme: application.Dark,
+		},
 	})
+	a.host = wailsHost{app: app, window: window}
+	menu := appMenu(app, window, a)
+	app.Menu.Set(menu)
+	window.SetMenu(menu)
+	a.setupTray(app, window, icon)
+	window.RegisterHook(events.Common.WindowClosing, a.onWindowClosing)
+	return app.Run()
 }
 
-// beforeClose lets an active watch continue without its window, unless the
-// user chooses to quit and stop it.
-func (a *App) beforeClose() bool {
+func (a *App) onWindowClosing(event *application.WindowEvent) {
 	a.mu.Lock()
 	watching := a.watch != nil
 	a.mu.Unlock()
+	if watching || a.runActive() {
+		event.Cancel()
+		a.confirmQuit()
+	}
+}
+
+func (a *App) confirmQuit() bool {
+	a.mu.Lock()
+	watching := a.watch != nil
+	if a.quitPrompt {
+		a.mu.Unlock()
+		return false
+	}
+	a.mu.Unlock()
+
+	running := a.runActive()
+	if !watching && !running {
+		a.stopEverything()
+		return true
+	}
+
+	a.mu.Lock()
+	if a.quitPrompt {
+		a.mu.Unlock()
+		return false
+	}
+	a.quitPrompt = true
+	a.mu.Unlock()
+
+	title, message := "Quit Scraper?", "Downloads are still running. Quit and cancel them?"
 	if watching {
-		if a.host.Confirm("Watch is running", "Quit Scraper and stop watching? Choose No to keep the watch running in the background.") {
+		title = "Watch is running"
+		message = "Quit Scraper and stop watching? Cancel to keep the watch running in the background."
+	}
+	a.host.Confirm(title, message, func(quit bool) {
+		a.mu.Lock()
+		a.quitPrompt = false
+		watching := a.watch != nil
+		a.mu.Unlock()
+		if quit {
 			a.stopEverything()
-			return false
+			a.host.Quit()
+		} else if watching {
+			a.host.HideWindow()
 		}
-		a.host.HideWindow()
-		return true
-	}
-	if a.runActive() && !a.host.Confirm("Quit Scraper?", "Downloads are still running. Quit and cancel them?") {
-		return true
-	}
-	a.stopEverything()
+	})
 	return false
 }
 

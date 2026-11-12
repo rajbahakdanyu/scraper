@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { ClearNotices } from '../wailsjs/go/backend/App'
+  import { ClearNotices } from '../bindings/github.com/rajbahakdanyu/scraper/gui/backend/app'
   import { initEvents, ui, type View } from './lib/state.svelte'
   import Home from './views/Home.svelte'
   import PreviewView from './views/PreviewView.svelte'

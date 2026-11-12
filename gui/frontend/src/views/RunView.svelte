@@ -19,9 +19,9 @@
       StopRun,
       StopWatch,
       ToggleFold,
-  } from '../../wailsjs/go/backend/App'
-  import type { backend } from '../../wailsjs/go/models'
-  import { ClipboardSetText } from '../../wailsjs/runtime/runtime'
+  } from '../../bindings/github.com/rajbahakdanyu/scraper/gui/backend/app'
+  import type * as backend from '../../bindings/github.com/rajbahakdanyu/scraper/gui/backend/models'
+  import { Clipboard } from '@wailsio/runtime'
   import { duration, humanBytes, percent, statusMarks } from '../lib/format'
   import { errorText, toast, ui } from '../lib/state.svelte'
   import ItemRow from './ItemRow.svelte'
@@ -153,7 +153,10 @@
   async function copyURL(index: number) {
     await guard(async () => {
       const url = await ItemURL(index)
-      if (url && (await ClipboardSetText(url))) toast('URL copied')
+      if (url) {
+        await Clipboard.SetText(url)
+        toast('URL copied')
+      }
     })
   }
 

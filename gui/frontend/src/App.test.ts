@@ -4,7 +4,7 @@ import { ui } from './lib/state.svelte'
 import App from './App.svelte'
 
 // Views load data on mount; leaving the calls pending keeps them inert.
-vi.mock('../wailsjs/go/backend/App', () => {
+vi.mock('../bindings/github.com/rajbahakdanyu/scraper/gui/backend/app', () => {
   const pending = () => vi.fn(() => new Promise(() => {}))
   return {
     ClearNotices: pending(),
@@ -14,7 +14,10 @@ vi.mock('../wailsjs/go/backend/App', () => {
     Notices: pending(),
   }
 })
-vi.mock('../wailsjs/runtime/runtime', () => ({ EventsOn: vi.fn() }))
+vi.mock('@wailsio/runtime', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@wailsio/runtime')>()
+  return { ...actual, Events: { ...actual.Events, On: vi.fn() } }
+})
 
 afterEach(cleanup)
 

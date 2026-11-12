@@ -10,8 +10,8 @@
       Preview,
       StartRun,
       StartWatch,
-  } from '../../wailsjs/go/backend/App'
-  import type { backend } from '../../wailsjs/go/models'
+  } from '../../bindings/github.com/rajbahakdanyu/scraper/gui/backend/app'
+  import type * as backend from '../../bindings/github.com/rajbahakdanyu/scraper/gui/backend/models'
   import { errorText, resetRun, toast, ui } from '../lib/state.svelte'
 
   let detected = $state<backend.DetectedURL[]>([])
@@ -50,9 +50,7 @@
 
   function backendError(err: unknown): string {
     const detail = errorText(err)
-    return 'go' in window
-      ? detail
-      : `Desktop backend unavailable. Open the app, or run "wails dev" in gui/ and use http://localhost:34115. (${detail})`
+    return `Desktop backend unavailable. Open the app, or run "wails3 dev" in gui/ and use http://localhost:34115. (${detail})`
   }
 
   onMount(async () => {

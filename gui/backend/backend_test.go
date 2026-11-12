@@ -16,6 +16,7 @@ import (
 	"github.com/rajbahakdanyu/scraper/internal/app"
 	"github.com/rajbahakdanyu/scraper/internal/config"
 	"github.com/rajbahakdanyu/scraper/internal/model"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 type fakeHost struct {
@@ -24,6 +25,7 @@ type fakeHost struct {
 	data    []any
 	confirm bool
 	hidden  int
+	quits   int
 }
 
 func (h *fakeHost) Emit(event string, data any) {
@@ -36,11 +38,16 @@ func (h *fakeHost) Emit(event string, data any) {
 func (h *fakeHost) PickDirectory(string, string) (string, error)  { return "", nil }
 func (h *fakeHost) PickFile(string, []FileFilter) (string, error) { return "", nil }
 func (h *fakeHost) PickSaveFile(string, string) (string, error)   { return "", nil }
-func (h *fakeHost) Confirm(string, string) bool                   { return h.confirm }
+func (h *fakeHost) Confirm(_, _ string, onResult func(bool))      { onResult(h.confirm) }
 func (h *fakeHost) HideWindow() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.hidden++
+}
+func (h *fakeHost) Quit() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.quits++
 }
 
 func (h *fakeHost) all(event string) []any {
@@ -386,13 +393,13 @@ func TestWatchCheckDelayUsesWallClockDeadline(t *testing.T) {
 	}
 }
 
-func TestBeforeCloseCanKeepWatchRunningInBackground(t *testing.T) {
+func TestClosePromptCanKeepWatchRunningInBackground(t *testing.T) {
 	a, h, _ := newTestApp(t, media("https://cyberdrop.cr/f/a.mp4"), nil)
 	if err := a.StartWatch(RunInput{Text: "https://cyberdrop.cr/a/x"}, "1h"); err != nil {
 		t.Fatal(err)
 	}
-	if !a.beforeClose() {
-		t.Fatal("declining to quit must prevent shutdown")
+	if a.confirmQuit() {
+		t.Fatal("an active watch must require confirmation")
 	}
 	if h.hidden != 1 {
 		t.Fatalf("hidden window count = %d, want 1", h.hidden)
@@ -404,8 +411,8 @@ func TestBeforeCloseCanKeepWatchRunningInBackground(t *testing.T) {
 		t.Fatal("declining to quit must keep the watch active")
 	}
 	h.confirm = true
-	if a.beforeClose() {
-		t.Fatal("confirming quit must allow shutdown")
+	if a.confirmQuit() {
+		t.Fatal("the async confirmation must defer the quit decision")
 	}
 	a.mu.Lock()
 	watching = a.watch != nil
@@ -413,9 +420,12 @@ func TestBeforeCloseCanKeepWatchRunningInBackground(t *testing.T) {
 	if watching {
 		t.Fatal("confirming quit must stop the watch")
 	}
+	if h.quits != 1 {
+		t.Fatalf("quit count = %d, want 1", h.quits)
+	}
 }
 
-func TestBeforeCloseAsksWhileDownloading(t *testing.T) {
+func TestWindowCloseConfirmsBeforeCancellingDownloads(t *testing.T) {
 	a, h, _ := newTestApp(t, nil, nil)
 	block := make(chan struct{})
 	a.newScraper = func(string, string, []*http.Cookie) (model.Scraper, error) {
@@ -424,17 +434,25 @@ func TestBeforeCloseAsksWhileDownloading(t *testing.T) {
 	if err := a.StartRun(RunInput{Text: "https://cyberdrop.cr/a/x"}); err != nil {
 		t.Fatal(err)
 	}
-	if !a.beforeClose() {
-		t.Fatal("closing over an active run must be prevented when the user says no")
+	event := application.NewWindowEvent()
+	a.onWindowClosing(event)
+	if !event.IsCancelled() {
+		t.Fatal("the close event must be cancelled while the confirmation is pending")
+	}
+	if h.quits != 0 {
+		t.Fatal("declining to quit must keep the app running")
 	}
 	h.confirm = true
-	if a.beforeClose() {
-		t.Fatal("confirmed close must proceed")
+	event = application.NewWindowEvent()
+	a.onWindowClosing(event)
+	if !event.IsCancelled() {
+		t.Fatal("the close event must remain cancelled while the app quits explicitly")
+	}
+	if h.quits != 1 {
+		t.Fatal("confirming quit must request application shutdown")
 	}
 	close(block)
-	if len(h.all("run:finished")) != 1 {
-		t.Fatal("closing must end the run")
-	}
+	waitFor(t, "cancelled run", func() bool { return len(h.all("run:finished")) == 1 })
 }
 
 type blockingScraper struct{ block chan struct{} }

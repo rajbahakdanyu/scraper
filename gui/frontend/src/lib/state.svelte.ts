@@ -1,6 +1,6 @@
-import { Notices } from '../../wailsjs/go/backend/App'
-import type { backend } from '../../wailsjs/go/models'
-import { EventsOn } from '../../wailsjs/runtime/runtime'
+import { Notices } from '../../bindings/github.com/rajbahakdanyu/scraper/gui/backend/app'
+import type * as backend from '../../bindings/github.com/rajbahakdanyu/scraper/gui/backend/models'
+import { Events } from '@wailsio/runtime'
 
 export type View = 'home' | 'run' | 'preview' | 'settings'
 
@@ -41,23 +41,23 @@ export function resetRun() {
 
 export async function initEvents() {
   ui.notices = (await Notices()) ?? []
-  EventsOn('run:update', (state: backend.RunState) => {
-    ui.run = state
+  Events.On('run:update', (event) => {
+    ui.run = event.data as backend.RunState
   })
-  EventsOn('run:group', (g: GroupResult) => {
-    ui.groups = [...ui.groups, g]
+  Events.On('run:group', (event) => {
+    ui.groups = [...ui.groups, event.data as GroupResult]
   })
-  EventsOn('run:finished', (r: RunResult) => {
-    ui.finished = r
+  Events.On('run:finished', (event) => {
+    ui.finished = event.data as RunResult
   })
-  EventsOn('notice', (msg: string) => {
-    ui.notices = [...ui.notices.slice(-199), msg]
+  Events.On('notice', (event) => {
+    ui.notices = [...ui.notices.slice(-199), event.data as string]
     ui.unreadNotices++
   })
-  EventsOn('watch:next', (at: string) => {
-    ui.nextRun = at
+  Events.On('watch:next', (event) => {
+    ui.nextRun = event.data as string
   })
-  EventsOn('watch:stopped', () => {
+  Events.On('watch:stopped', () => {
     ui.nextRun = ''
   })
 }

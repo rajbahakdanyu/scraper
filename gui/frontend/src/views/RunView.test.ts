@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render } from '@testing-library/svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { backend } from '../../wailsjs/go/models'
+import type * as backend from '../../bindings/github.com/rajbahakdanyu/scraper/gui/backend/models'
 import { ui } from '../lib/state.svelte'
 import RunView from './RunView.svelte'
 
@@ -29,8 +29,15 @@ const api = vi.hoisted(() => {
   }
 })
 
-vi.mock('../../wailsjs/go/backend/App', () => api)
-vi.mock('../../wailsjs/runtime/runtime', () => ({ ClipboardSetText: vi.fn() }))
+vi.mock('../../bindings/github.com/rajbahakdanyu/scraper/gui/backend/app', () => api)
+vi.mock('@wailsio/runtime', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@wailsio/runtime')>()
+  return {
+    ...actual,
+    Clipboard: { ...actual.Clipboard, SetText: vi.fn() },
+    Events: { ...actual.Events, On: vi.fn() },
+  }
+})
 
 // jsdom lacks ResizeObserver, which Svelte's size bindings use.
 globalThis.ResizeObserver ??= class {

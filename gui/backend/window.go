@@ -1,72 +1,69 @@
 package backend
 
 import (
-	"context"
 	goruntime "runtime"
-	"sync/atomic"
 
-	"github.com/wailsapp/wails/v2/pkg/menu"
-	"github.com/wailsapp/wails/v2/pkg/menu/keys"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/mac"
-	"github.com/wailsapp/wails/v2/pkg/options/windows"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/icons"
 )
 
-// singleInstanceID identifies the app so a second launch focuses the
-// running window instead of opening another one on the same config.
 const singleInstanceID = "com.rajbahakdanyu.scraper-gui"
 
-// appMenu provides standard App and Edit menus plus a Window menu that can
-// restore a hidden window. Other platforms keep a menu-less window.
-func appMenu(ctx *atomic.Value) *menu.Menu {
-	if goruntime.GOOS != "darwin" {
-		return nil
+func appMenu(app *application.App, window *application.WebviewWindow, a *App) *application.Menu {
+	menu := app.NewMenu()
+	if goruntime.GOOS == "darwin" {
+		menu.AddRole(application.AppMenu)
 	}
-	window := menu.NewMenu()
-	window.AddText("Show Scraper", nil, func(*menu.CallbackData) {
-		c, ok := ctx.Load().(context.Context)
-		if !ok {
-			return
-		}
-		runtime.WindowUnminimise(c)
-		runtime.WindowShow(c)
+	menu.AddRole(application.FileMenu)
+	menu.AddRole(application.EditMenu)
+
+	windowMenu := menu.AddSubmenu("Window")
+	windowMenu.Add("Show Scraper").OnClick(func(*application.Context) {
+		window.Restore()
+		window.Show()
+		window.Focus()
 	})
-	window.AddSeparator()
-	window.AddText("Minimize", keys.CmdOrCtrl("m"), func(*menu.CallbackData) {
-		if c, ok := ctx.Load().(context.Context); ok {
-			runtime.WindowMinimise(c)
-		}
-	})
-	window.AddText("Zoom", nil, func(*menu.CallbackData) {
-		if c, ok := ctx.Load().(context.Context); ok {
-			runtime.WindowToggleMaximise(c)
-		}
-	})
-	window.AddText("Toggle Full Screen", keys.Combo("f", keys.ControlKey, keys.CmdOrCtrlKey), func(*menu.CallbackData) {
-		if c, ok := ctx.Load().(context.Context); ok {
-			if runtime.WindowIsFullscreen(c) {
-				runtime.WindowUnfullscreen(c)
-			} else {
-				runtime.WindowFullscreen(c)
-			}
-		}
-	})
-	return menu.NewMenuFromItems(menu.AppMenu(), menu.EditMenu(), menu.SubMenu("Window", window))
+	windowMenu.AddRole(application.Minimise)
+	windowMenu.AddRole(application.Zoom)
+	windowMenu.AddRole(application.FullScreen)
+
+	menu.AddRole(application.HelpMenu)
+	return menu
 }
 
-// nativeOptions makes the window behave like a native app: dark title bar
-// chrome matching the UI, no pinch-zoom, and a single running instance.
-func nativeOptions(ctx *atomic.Value) (*mac.Options, *windows.Options, *options.SingleInstanceLock) {
-	focus := func(options.SecondInstanceData) {
-		c, ok := ctx.Load().(context.Context)
-		if !ok {
+func (a *App) setupTray(app *application.App, window *application.WebviewWindow, icon []byte) {
+	tray := app.SystemTray.New()
+	if goruntime.GOOS == "darwin" {
+		tray.SetTemplateIcon(icons.SystrayMacTemplate)
+	} else {
+		tray.SetIcon(icon)
+	}
+	tray.SetTooltip("Scraper")
+	tray.OnClick(func() {
+		if window.IsVisible() && !window.IsMinimised() {
+			window.Hide()
 			return
 		}
-		runtime.WindowUnminimise(c)
-		runtime.WindowShow(c)
-	}
-	return &mac.Options{Appearance: mac.NSAppearanceNameDarkAqua},
-		&windows.Options{Theme: windows.Dark, DisablePinchZoom: true},
-		&options.SingleInstanceLock{UniqueId: singleInstanceID, OnSecondInstanceLaunch: focus}
+		window.Restore()
+		window.Show()
+		window.Focus()
+	})
+	tray.OnRightClick(func() { tray.OpenMenu() })
+
+	menu := app.NewMenu()
+	menu.Add("Show Scraper").OnClick(func(*application.Context) {
+		window.Restore()
+		window.Show()
+		window.Focus()
+	})
+	menu.Add("Stop Watching").OnClick(func(*application.Context) {
+		a.StopWatch()
+	})
+	menu.AddSeparator()
+	menu.Add("Quit Scraper").OnClick(func(*application.Context) {
+		if a.confirmQuit() {
+			a.host.Quit()
+		}
+	})
+	tray.SetMenu(menu)
 }

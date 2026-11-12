@@ -9,8 +9,8 @@
       GetSettings,
       ReloadSettings,
       SaveSettings,
-  } from '../../wailsjs/go/backend/App'
-  import type { backend } from '../../wailsjs/go/models'
+  } from '../../bindings/github.com/rajbahakdanyu/scraper/gui/backend/app'
+  import type * as backend from '../../bindings/github.com/rajbahakdanyu/scraper/gui/backend/models'
   import { splitList } from '../lib/format'
   import { errorText, toast } from '../lib/state.svelte'
 
