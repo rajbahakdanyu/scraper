@@ -4,7 +4,7 @@ description: Export your open Firefox tabs as URL lists for Scraper.
 ---
 
 **Scraper Tab Export** is a Firefox extension that saves every open tab on a
-supported site as an [`--input-file`](/scraper/guides/batch-downloads/#from-a-file)
+supported site as an [`--input-file`](/guides/batch-downloads/#from-a-file)
 list in your Downloads folder.
 
 ## Install

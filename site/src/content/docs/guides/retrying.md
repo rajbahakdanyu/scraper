@@ -38,17 +38,17 @@ Many 503s from one host mean it's overloaded. Retry with `--per-host 1`.
 :::
 
 Lines with a single URL, such as hand-written lists or
-[extension exports](/scraper/guides/browser-extension/), still work and
+[extension exports](/guides/browser-extension/), still work and
 download to that URL's own folder. Items without a page of their own (such
 as GoonBox's direct image links) are written as their album URL alone;
 replaying re-scrapes the album and downloads only the missing items.
 
 From the dashboard summary, press <kbd>L</kbd> to write the list on demand.
-In [JSON mode](/scraper/guides/scripting/#json-lines) the path is reported as
+In [JSON mode](/guides/scripting/#json-lines) the path is reported as
 `retryFile` in the final `summary` event.
 
 ## Run log
 
 `--log-file` appends a timestamped log of scrape errors and retry summaries,
-which is useful for unattended or [watch](/scraper/guides/batch-downloads/#watch-mode)
+which is useful for unattended or [watch](/guides/batch-downloads/#watch-mode)
 runs.

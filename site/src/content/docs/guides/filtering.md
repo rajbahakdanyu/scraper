@@ -23,7 +23,7 @@ prints `media filter: N/M items (K skipped non-media)`. YouTube is not
 affected.
 
 To keep extra types, pass `--allow-ext` (repeatable) or list them under
-`media_extensions` in the [config](/scraper/reference/configuration/):
+`media_extensions` in the [config](/reference/configuration/):
 
 ```bash
 scraper --allow-ext cbz --allow-ext epub https://bunkr.cr/a/ALBUM_ID

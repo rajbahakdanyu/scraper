@@ -8,7 +8,7 @@ scraper [flags] [url...]
 scraper <site> [flags] <url>
 ```
 
-Flags override [config file](/scraper/reference/configuration/) values.
+Flags override [config file](/reference/configuration/) values.
 
 ## Output
 
@@ -52,7 +52,7 @@ Flags override [config file](/scraper/reference/configuration/) values.
 | `--disk-check` | `true` | Check free space before downloading |
 | `--checksums` | `false` | Write and verify `.sha256` sidecar files |
 
-See [Filtering](/scraper/guides/filtering/) for details.
+See [Filtering](/guides/filtering/) for details.
 
 ## YouTube
 

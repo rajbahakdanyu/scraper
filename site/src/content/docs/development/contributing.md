@@ -77,7 +77,7 @@ This site is built with [Starlight](https://starlight.astro.build) from
 ```bash
 cd site
 pnpm install --frozen-lockfile
-pnpm dev     # http://localhost:4321/scraper/
+pnpm dev     # http://localhost:4321/
 pnpm check
 pnpm build
 ```

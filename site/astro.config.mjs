@@ -6,8 +6,7 @@ import starlight from '@astrojs/starlight';
 const repo = 'https://github.com/rajbahakdanyu/scraper';
 
 export default defineConfig({
-	site: 'https://rajbahakdanyu.github.io',
-	base: '/scraper',
+	site: 'https://scraper.rajbahakdanyu.dev',
 	trailingSlash: 'always',
 	integrations: [
 		starlight({

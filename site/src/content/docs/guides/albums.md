@@ -15,7 +15,7 @@ album ID:
 ```
 
 Single-file links (such as CyberDrop `/f/` or Filester `/d/`) download
-straight into the output directory. In a [batch](/scraper/guides/batch-downloads/)
+straight into the output directory. In a [batch](/guides/batch-downloads/)
 each URL gets its own subfolder, the same as albums.
 
 ## Concurrency and politeness

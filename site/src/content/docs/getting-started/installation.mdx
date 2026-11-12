@@ -10,7 +10,7 @@ Scraper ships as two programs that share the same download engine and
 settings file:
 
 - **`scraper`**: the command-line tool and terminal dashboard.
-- **`scraper-gui`**: the [desktop app](/scraper/guides/desktop-app/).
+- **`scraper-gui`**: the [desktop app](/guides/desktop-app/).
 
 ## Download a release
 
@@ -18,7 +18,7 @@ settings file:
 
 The buttons always point at the newest release. Extract the archive and run
 `scraper` (or open the desktop app). The
-[Firefox tab-export extension](/scraper/guides/browser-extension/) and older
+[Firefox tab-export extension](/guides/browser-extension/) and older
 versions are on the [releases page](https://github.com/rajbahakdanyu/scraper/releases).
 
 <Aside type="tip" title="Verify a download">
@@ -36,7 +36,7 @@ shasum -a 256 -c checksums.txt --ignore-missing
   already in one stream (they are muxed together automatically).
 - Optional: [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) on `PATH`, used as a
   fallback for YouTube videos the built-in downloader can't fetch. See
-  [YouTube](/scraper/guides/youtube/#yt-dlp-fallback).
+  [YouTube](/guides/youtube/#yt-dlp-fallback).
 
 ## Install with Go
 
@@ -53,7 +53,7 @@ go build -o scraper ./cmd/scraper
 ```
 
 To build the desktop app yourself, see
-[Contributing](/scraper/development/contributing/#desktop-app).
+[Contributing](/development/contributing/#desktop-app).
 
 ## Shell completion
 

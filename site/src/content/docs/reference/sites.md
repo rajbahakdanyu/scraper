@@ -9,7 +9,7 @@ subcommand (`youtube`, `cyberdrop`, `bunker`, `goonbox`, `filester`,
 
 | Site | URL formats | How it's fetched |
 | --- | --- | --- |
-| YouTube | `youtu.be/ID`, `youtube.com/watch?v=ID`, `playlist?list=ID` | Highest quality by default; `--quality` caps resolution; auto-mux. See [YouTube](/scraper/guides/youtube/) |
+| YouTube | `youtu.be/ID`, `youtube.com/watch?v=ID`, `playlist?list=ID` | Highest quality by default; `--quality` caps resolution; auto-mux. See [YouTube](/guides/youtube/) |
 | CyberDrop | `cyberdrop.cr/f/SLUG`, `/a/SLUG` | API with signed CDN URLs |
 | Bunkr | `bunkr.cr/a/ALBUM_ID` | API with token signing, parallel fetch |
 | GoonBox | `goonbox.cr/a/ALBUM_ID` | JSON API, paginated albums |
@@ -18,4 +18,4 @@ subcommand (`youtube`, `cyberdrop`, `bunker`, `goonbox`, `filester`,
 | Turbo | `turbo.cr/a/ALBUM_ID`, `/d/FILE_ID`, `/v/FILE_ID` | Album page listing; signed URLs resolved at download time |
 
 Pixeldrain throttles speed after about 6 GB per IP in 24 hours; see
-[Albums and files](/scraper/guides/albums/#pixeldrain-limits).
+[Albums and files](/guides/albums/#pixeldrain-limits).

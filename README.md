@@ -1,7 +1,7 @@
 # Scraper
 
 [![CI](https://github.com/rajbahakdanyu/scraper/actions/workflows/ci.yml/badge.svg)](https://github.com/rajbahakdanyu/scraper/actions/workflows/ci.yml)
-[![Docs](https://img.shields.io/badge/docs-rajbahakdanyu.github.io%2Fscraper-4f46e5)](https://rajbahakdanyu.github.io/scraper/)
+[![Docs](https://img.shields.io/badge/docs-scraper.rajbahakdanyu.dev-4f46e5)](https://scraper.rajbahakdanyu.dev/)
 
 Download media from YouTube, CyberDrop, Bunkr, GoonBox, Filester, Pixeldrain,
 and Turbo, from a terminal dashboard that launches instantly or a desktop app
@@ -9,7 +9,7 @@ for macOS, Windows, and Linux. Albums download concurrently, interrupted
 downloads resume, and failures are saved to a retry list you can replay with
 one command.
 
-**📖 Documentation: <https://rajbahakdanyu.github.io/scraper/>**
+**📖 Documentation: <https://scraper.rajbahakdanyu.dev/>**
 
 ## Install
 
@@ -23,7 +23,7 @@ go install github.com/rajbahakdanyu/scraper/cmd/scraper@latest
 
 YouTube downloads need `ffmpeg` on `PATH`; [`yt-dlp`](https://github.com/yt-dlp/yt-dlp)
 is an optional fallback. See
-[Installation](https://rajbahakdanyu.github.io/scraper/getting-started/installation/).
+[Installation](https://scraper.rajbahakdanyu.dev/getting-started/installation/).
 
 ## Usage
 
@@ -34,12 +34,12 @@ scraper https://youtu.be/ID https://bunkr.cr/a/ID   # batch, mixed sites
 scraper -i urls.txt                                 # batch from a file
 ```
 
-- [Quick start](https://rajbahakdanyu.github.io/scraper/getting-started/quick-start/)
-- [Desktop app](https://rajbahakdanyu.github.io/scraper/guides/desktop-app/)
-- [Supported sites](https://rajbahakdanyu.github.io/scraper/reference/sites/)
-- [Flags](https://rajbahakdanyu.github.io/scraper/reference/flags/) and
-  [configuration](https://rajbahakdanyu.github.io/scraper/reference/configuration/)
-- [Retrying failures](https://rajbahakdanyu.github.io/scraper/guides/retrying/)
+- [Quick start](https://scraper.rajbahakdanyu.dev/getting-started/quick-start/)
+- [Desktop app](https://scraper.rajbahakdanyu.dev/guides/desktop-app/)
+- [Supported sites](https://scraper.rajbahakdanyu.dev/reference/sites/)
+- [Flags](https://scraper.rajbahakdanyu.dev/reference/flags/) and
+  [configuration](https://scraper.rajbahakdanyu.dev/reference/configuration/)
+- [Retrying failures](https://scraper.rajbahakdanyu.dev/guides/retrying/)
 
 ## Development
 
@@ -49,5 +49,5 @@ go build ./... && go vet ./... && go test ./...
 
 The desktop app (`gui/`), browser extension (`browser-extension/`), and docs
 site (`site/`) have their own toolchains; see
-[Contributing](https://rajbahakdanyu.github.io/scraper/development/contributing/)
-and [Releasing](https://rajbahakdanyu.github.io/scraper/development/releasing/).
+[Contributing](https://scraper.rajbahakdanyu.dev/development/contributing/)
+and [Releasing](https://scraper.rajbahakdanyu.dev/development/releasing/).

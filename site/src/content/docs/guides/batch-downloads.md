@@ -27,7 +27,7 @@ scraper -i urls.txt
 
 A line may add a tab-separated album URL after the item URL so that the item
 lands in that album's folder. This is the format of
-[retry lists](/scraper/guides/retrying/).
+[retry lists](/guides/retrying/).
 
 ## From stdin
 
@@ -48,5 +48,5 @@ so later passes mostly fetch what's new:
 scraper --watch 30m -i urls.txt
 ```
 
-The [desktop app](/scraper/guides/desktop-app/#watching-in-the-background)
+The [desktop app](/guides/desktop-app/#watching-in-the-background)
 can keep watching with its window hidden.

@@ -45,7 +45,7 @@ scraper turbo https://turbo.cr/v/FILE_ID
 
 ## Next steps
 
-- Download many URLs in one run with [batch mode](/scraper/guides/batch-downloads/).
-- Learn the [dashboard keys](/scraper/guides/dashboard/).
-- Save your defaults in [`~/.scraper.yaml`](/scraper/reference/configuration/).
-- Prefer a window? Use the [desktop app](/scraper/guides/desktop-app/).
+- Download many URLs in one run with [batch mode](/guides/batch-downloads/).
+- Learn the [dashboard keys](/guides/dashboard/).
+- Save your defaults in [`~/.scraper.yaml`](/reference/configuration/).
+- Prefer a window? Use the [desktop app](/guides/desktop-app/).

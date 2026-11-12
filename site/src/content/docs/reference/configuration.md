@@ -4,8 +4,8 @@ description: Set defaults in ~/.scraper.yaml.
 ---
 
 Defaults live in `~/.scraper.yaml` (or the file given with `--config`).
-[Flags](/scraper/reference/flags/) override it. The
-[desktop app](/scraper/guides/desktop-app/) reads and writes the same file and
+[Flags](/reference/flags/) override it. The
+[desktop app](/guides/desktop-app/) reads and writes the same file and
 keeps your comments and unknown keys.
 
 ```yaml title="~/.scraper.yaml"

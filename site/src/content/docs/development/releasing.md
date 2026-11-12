@@ -35,7 +35,7 @@ isn't on `main`, there are no new commits, or the tag already exists.
    commits since the previous tag into breaking changes, features, fixes, and
    other changes (`.github/scripts/changelog.mjs`).
 3. The docs site is rebuilt and deployed, so its download buttons, latest
-   version, and [changelog](/scraper/changelog/) pick up the new release.
+   version, and [changelog](/changelog/) pick up the new release.
 
 A failed build publishes nothing, so there's nothing to clean up. A **dry
 run** attaches the builds to the workflow run as artifacts instead.

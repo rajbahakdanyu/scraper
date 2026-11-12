@@ -6,9 +6,9 @@ description: Use Scraper from a native window on macOS, Windows, or Linux.
 `scraper-gui` is a desktop app built with [Wails](https://wails.io) and
 Svelte on the same scraping, download, and run-state code as the terminal
 dashboard. Download it from the
-[latest release](/scraper/getting-started/installation/#download-a-release).
+[latest release](/getting-started/installation/#download-a-release).
 
-It reads and writes the same [`~/.scraper.yaml`](/scraper/reference/configuration/)
+It reads and writes the same [`~/.scraper.yaml`](/reference/configuration/)
 as the CLI. Settings can apply to the next run only, or be saved to the file;
 comments and unknown keys in the file are kept.
 
