@@ -31,7 +31,11 @@ isn't on `main`, there are no new commits, or the tag already exists.
 1. The CLI (after tests), desktop app, and browser extension are built in
    parallel, all stamped with the new version.
 2. Only if every build succeeds, the tag is created on the built commit and
-   the GitHub release is published with generated notes and all files.
+   the GitHub release is published with all files. Its notes group the
+   commits since the previous tag into breaking changes, features, fixes, and
+   other changes (`.github/scripts/changelog.mjs`).
+3. The docs site is rebuilt and deployed, so its download buttons, latest
+   version, and [changelog](/scraper/changelog/) pick up the new release.
 
 A failed build publishes nothing, so there's nothing to clean up. A **dry
 run** attaches the builds to the workflow run as artifacts instead.

@@ -1,0 +1,26 @@
+---
+const base = import.meta.env.BASE_URL;
+const sites = [
+	{ name: 'YouTube', what: 'Videos and playlists' },
+	{ name: 'CyberDrop', what: 'Albums and files' },
+	{ name: 'Bunkr', what: 'Albums' },
+	{ name: 'GoonBox', what: 'Albums' },
+	{ name: 'Filester', what: 'Folders and files' },
+	{ name: 'Pixeldrain', what: 'Lists and files' },
+	{ name: 'Turbo', what: 'Albums and files' },
+];
+---
+
+<ul class="sites not-content">
+	{sites.map(({ name, what }) => (
+		<li>
+			<a href={`${base}reference/sites/`}>
+				<span class="site-initial" aria-hidden="true">{name[0]}</span>
+				<span class="site-text">
+					<strong>{name}</strong>
+					<span>{what}</span>
+				</span>
+			</a>
+		</li>
+	))}
+</ul>

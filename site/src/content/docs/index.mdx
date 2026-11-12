@@ -12,20 +12,33 @@ hero:
       link: /scraper/getting-started/installation/
       icon: right-arrow
     - text: Download
-      link: https://github.com/rajbahakdanyu/scraper/releases/latest
-      icon: external
+      link: '#download'
+      icon: download
+      variant: secondary
+    - text: View on GitHub
+      link: https://github.com/rajbahakdanyu/scraper
+      icon: github
       variant: minimal
 ---
 
-import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+import { Card, CardGrid, LinkCard, Steps } from '@astrojs/starlight/components';
+import Downloads from '../../components/Downloads.astro';
+import Sites from '../../components/Sites.astro';
 
-## Features
+<h2 id="download" class="section-title">Download</h2>
+
+<Downloads />
+
+Prefer Go? `go install github.com/rajbahakdanyu/scraper/cmd/scraper@latest`.
+See [Installation](/scraper/getting-started/installation/) for checksums and
+runtime requirements.
+
+<h2 id="features" class="section-title">Features</h2>
 
 <CardGrid stagger>
 	<Card title="Seven sites, one command" icon="rocket">
-		Paste a YouTube, CyberDrop, Bunkr, GoonBox, Filester, Pixeldrain, or Turbo
-		URL. The site is detected for you, and albums download concurrently into
-		their own folder.
+		Paste a URL and the site is detected for you. Albums download
+		concurrently into their own folder.
 	</Card>
 	<Card title="Terminal or desktop" icon="laptop">
 		A terminal dashboard that launches instantly, plus a native desktop app for
@@ -41,16 +54,46 @@ import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 	</Card>
 </CardGrid>
 
-## Quick look
+<h2 id="sites" class="section-title">Supported sites</h2>
 
-```bash
-scraper https://pixeldrain.com/l/CSbjLYKs              # auto-detects the site
-scraper --dry-run https://filester.sh/f/FOLDER_ID      # preview count and size
-scraper -i urls.txt                                    # batch from a file
-scraper --input-file ~/Downloads/scraper-failed-*.txt  # retry what failed
-```
+<Sites />
+
+<h2 id="how-it-works" class="section-title">How it works</h2>
+
+<Steps>
+
+1. **Paste links.** One URL, a whole list, or a text file. The
+   [Firefox extension](/scraper/guides/browser-extension/) can export your open
+   tabs straight into one.
+
+2. **Preview.** `--dry-run` resolves every album and shows the file count and
+   total size before anything downloads.
+
+   ```bash
+   scraper --dry-run https://filester.sh/f/FOLDER_ID
+   ```
+
+3. **Download.** Files stream in concurrently with live progress, per-host
+   limits, and automatic backoff when a site rate-limits you.
+
+   ```bash
+   scraper -i urls.txt
+   ```
+
+4. **Retry what failed.** Anything that didn't finish is saved to a retry list
+   you can replay later; partial files resume where they stopped.
+
+   ```bash
+   scraper --input-file ~/Downloads/scraper-failed-*.txt
+   ```
+
+</Steps>
+
+<h2 id="next" class="section-title">Next steps</h2>
 
 <CardGrid>
-	<LinkCard title="Install" href="/scraper/getting-started/installation/" description="Download a release or build from source." />
-	<LinkCard title="Supported sites" href="/scraper/reference/sites/" description="URL formats and how each site is fetched." />
+	<LinkCard title="Quick start" href="/scraper/getting-started/quick-start/" description="Your first download in a minute." />
+	<LinkCard title="Desktop app" href="/scraper/guides/desktop-app/" description="Preview, download, and watch lists in a native window." />
+	<LinkCard title="Command-line flags" href="/scraper/reference/flags/" description="Every option, with defaults." />
+	<LinkCard title="Changelog" href="/scraper/changelog/" description="What's new in each release." />
 </CardGrid>

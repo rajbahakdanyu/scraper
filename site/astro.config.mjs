@@ -18,6 +18,7 @@ export default defineConfig({
 			social: [{ icon: 'github', label: 'GitHub', href: repo }],
 			editLink: { baseUrl: `${repo}/edit/main/site/` },
 			lastUpdated: true,
+			customCss: ['./src/styles/custom.css'],
 			sidebar: [
 				{
 					label: 'Getting started',
@@ -39,7 +40,7 @@ export default defineConfig({
 				},
 				{
 					label: 'Reference',
-					items: ['reference/sites', 'reference/flags', 'reference/configuration'],
+					items: ['reference/sites', 'reference/flags', 'reference/configuration', 'changelog'],
 				},
 				{
 					label: 'Development',

@@ -1,0 +1,96 @@
+---
+import { Badge, LinkButton, TabItem, Tabs } from '@astrojs/starlight/components';
+import release from '../generated/release.json';
+
+const repo = 'https://github.com/rajbahakdanyu/scraper';
+const latest = `${repo}/releases/latest/download`;
+const base = import.meta.env.BASE_URL;
+const released = release.date
+	? new Date(`${release.date}T00:00:00Z`).toLocaleDateString('en-US', {
+			year: 'numeric',
+			month: 'short',
+			day: 'numeric',
+			timeZone: 'UTC',
+		})
+	: null;
+---
+
+<div class="downloads not-content">
+	<p class="downloads-meta">
+		{release.tag ? (
+			<>
+				<Badge text={`Latest ${release.tag}`} variant="success" />
+				{released && <span>Released {released}</span>}
+				<a href={`${base}changelog/`}>What's new</a>
+			</>
+		) : (
+			<a href={`${repo}/releases/latest`}>Latest release</a>
+		)}
+		<a href={`${repo}/releases`}>All releases</a>
+	</p>
+
+	{/* Preselects the visitor's OS unless they already picked a tab. */}
+	<script is:inline>
+		(() => {
+			const key = 'starlight-synced-tabs__os';
+			try {
+				if (localStorage.getItem(key)) return;
+				const ua = navigator.userAgent;
+				const os = /Windows/i.test(ua) ? 'Windows' : /Mac/i.test(ua) ? 'macOS' : /Linux|X11/i.test(ua) ? 'Linux' : null;
+				if (os) localStorage.setItem(key, os);
+			} catch {}
+		})();
+	</script>
+
+	<Tabs syncKey="os">
+		<TabItem label="macOS" icon="apple">
+			<div class="download-row">
+				<LinkButton href={`${latest}/scraper-gui-darwin-universal.zip`} icon="download" iconPlacement="start">
+					Desktop app
+				</LinkButton>
+				<LinkButton href={`${latest}/scraper-darwin-arm64.tar.gz`} variant="secondary">
+					CLI · Apple Silicon
+				</LinkButton>
+				<LinkButton href={`${latest}/scraper-darwin-amd64.tar.gz`} variant="secondary">
+					CLI · Intel
+				</LinkButton>
+			</div>
+			<p class="download-note">
+				The desktop app is a universal build for Intel and Apple Silicon. If it's unsigned, right-click it and
+				choose <strong>Open</strong> the first time.
+			</p>
+		</TabItem>
+		<TabItem label="Windows" icon="seti:windows">
+			<div class="download-row">
+				<LinkButton href={`${latest}/scraper-gui-windows-amd64.zip`} icon="download" iconPlacement="start">
+					Desktop app
+				</LinkButton>
+				<LinkButton href={`${latest}/scraper-windows-amd64.exe.tar.gz`} variant="secondary">
+					CLI · x64
+				</LinkButton>
+			</div>
+			<p class="download-note">
+				If SmartScreen warns about an unsigned app, choose <strong>More info → Run anyway</strong>.
+			</p>
+		</TabItem>
+		<TabItem label="Linux" icon="linux">
+			<div class="download-row">
+				<LinkButton href={`${latest}/scraper-gui-linux-amd64.tar.gz`} icon="download" iconPlacement="start">
+					Desktop app · x86-64
+				</LinkButton>
+				<LinkButton href={`${latest}/scraper-gui-linux-arm64.tar.gz`} icon="download" iconPlacement="start">
+					Desktop app · ARM64
+				</LinkButton>
+				<LinkButton href={`${latest}/scraper-linux-amd64.tar.gz`} variant="secondary">
+					CLI · x86-64
+				</LinkButton>
+				<LinkButton href={`${latest}/scraper-linux-arm64.tar.gz`} variant="secondary">
+					CLI · ARM64
+				</LinkButton>
+			</div>
+			<p class="download-note">
+				The desktop app needs GTK 4 and WebKitGTK 6 (<code>libwebkitgtk-6.0-4</code> on Debian and Ubuntu).
+			</p>
+		</TabItem>
+	</Tabs>
+</div>

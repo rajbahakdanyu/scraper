@@ -3,6 +3,9 @@ title: Installation
 description: Download a prebuilt release or build Scraper from source.
 ---
 
+import { Aside } from '@astrojs/starlight/components';
+import Downloads from '../../../components/Downloads.astro';
+
 Scraper ships as two programs that share the same download engine and
 settings file:
 
@@ -11,26 +14,21 @@ settings file:
 
 ## Download a release
 
-Every [GitHub release](https://github.com/rajbahakdanyu/scraper/releases/latest)
-includes:
+<Downloads />
 
-| Download | Platforms |
-| --- | --- |
-| `scraper-<os>-<arch>.tar.gz` | CLI for macOS (Intel and Apple Silicon), Linux (x86-64 and ARM64), and Windows (x86-64) |
-| `scraper-gui-darwin-universal.zip` | Desktop app for macOS (Intel and Apple Silicon) |
-| `scraper-gui-windows-amd64.zip` | Desktop app for Windows |
-| `scraper-gui-linux-<arch>.tar.gz` | Desktop app for Linux (x86-64 and ARM64) |
-| `scraper-tab-export-<version>.xpi` | [Firefox tab-export extension](/scraper/guides/browser-extension/) |
+The buttons always point at the newest release. Extract the archive and run
+`scraper` (or open the desktop app). The
+[Firefox tab-export extension](/scraper/guides/browser-extension/) and older
+versions are on the [releases page](https://github.com/rajbahakdanyu/scraper/releases).
 
-Each file has a matching `.sha256` checksum (the CLI archives share
-`checksums.txt`).
+<Aside type="tip" title="Verify a download">
+Each desktop archive has a matching `.sha256` file, and the CLI archives share
+`checksums.txt`:
 
-Unless a release says it is signed, the desktop builds are unsigned:
-
-- **macOS:** right-click the app and choose **Open** the first time.
-- **Windows:** choose **More info → Run anyway**.
-- **Linux:** install the GTK 4 and WebKitGTK 6 runtime (`libwebkitgtk-6.0-4`
-  on Debian and Ubuntu).
+```bash
+shasum -a 256 -c checksums.txt --ignore-missing
+```
+</Aside>
 
 ## Runtime requirements
 

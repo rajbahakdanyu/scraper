@@ -10,6 +10,9 @@ on:
     paths:
       - 'site/**'
       - '.github/workflows/docs.yml'
+      - '.github/scripts/changelog.mjs'
+      - '.github/scripts/changelog.mjs'
+  workflow_call: # from release.yml after each release
   workflow_dispatch:
 
 permissions:
@@ -29,6 +32,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0 # the changelog and latest version come from the tags
           persist-credentials: false
 
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1

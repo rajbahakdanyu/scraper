@@ -1,0 +1,193 @@
+/* Indigo accent to match the logo (#4f46e5). */
+:root {
+	--sl-color-accent-low: hsl(243, 45%, 20%);
+	--sl-color-accent: hsl(243, 75%, 65%);
+	--sl-color-accent-high: hsl(243, 100%, 87%);
+	--sl-color-white: hsl(0, 0%, 100%);
+	--sl-color-gray-1: hsl(230, 25%, 92%);
+	--sl-color-gray-2: hsl(230, 15%, 78%);
+	--sl-color-gray-3: hsl(230, 10%, 60%);
+	--sl-color-gray-4: hsl(230, 10%, 42%);
+	--sl-color-gray-5: hsl(232, 14%, 27%);
+	--sl-color-gray-6: hsl(234, 18%, 16%);
+	--sl-color-black: hsl(236, 24%, 9%);
+	--sl-content-width: 48rem;
+	--scraper-glow: hsla(243, 75%, 60%, 0.35);
+}
+
+:root[data-theme='light'] {
+	--sl-color-accent-low: hsl(243, 90%, 94%);
+	--sl-color-accent: hsl(243, 75%, 58%);
+	--sl-color-accent-high: hsl(243, 60%, 30%);
+	--sl-color-white: hsl(236, 24%, 9%);
+	--sl-color-gray-1: hsl(234, 18%, 16%);
+	--sl-color-gray-2: hsl(232, 14%, 27%);
+	--sl-color-gray-3: hsl(230, 10%, 42%);
+	--sl-color-gray-4: hsl(230, 10%, 60%);
+	--sl-color-gray-5: hsl(230, 15%, 82%);
+	--sl-color-gray-6: hsl(230, 25%, 94%);
+	--sl-color-gray-7: hsl(230, 33%, 97%);
+	--sl-color-black: hsl(0, 0%, 100%);
+	--scraper-glow: hsla(243, 75%, 58%, 0.18);
+}
+
+/* Landing page */
+[data-has-hero] .page {
+	background:
+		radial-gradient(ellipse 70% 40rem at 70% -10rem, var(--scraper-glow), transparent),
+		var(--sl-color-black);
+}
+[data-has-hero] header.header {
+	background-color: transparent;
+	border-bottom-color: transparent;
+}
+.hero {
+	padding-block: clamp(2rem, 6vw, 5rem) 0;
+}
+.hero h1 {
+	background: linear-gradient(120deg, var(--sl-color-white) 30%, var(--sl-color-accent));
+	-webkit-background-clip: text;
+	background-clip: text;
+	color: transparent;
+	letter-spacing: -0.03em;
+}
+.hero > img {
+	width: min(55%, 13rem);
+	justify-self: center;
+	filter: drop-shadow(0 1.5rem 3rem var(--scraper-glow));
+}
+
+.sl-markdown-content h2.section-title {
+	margin-top: 3rem;
+	font-size: var(--sl-text-2xl);
+	letter-spacing: -0.02em;
+}
+
+/* Download panel */
+.downloads {
+	margin-block: 1rem;
+	padding: 1.25rem 1.5rem 1.5rem;
+	border: 1px solid var(--sl-color-gray-5);
+	border-radius: 1rem;
+	background: color-mix(in srgb, var(--sl-color-gray-6) 70%, transparent);
+	box-shadow: 0 1.5rem 3rem -2rem var(--scraper-glow);
+}
+@media (max-width: 40rem) {
+	.downloads {
+		padding: 1rem 0.75rem 1.25rem;
+	}
+	.downloads [role='tab'] {
+		padding-inline: 0.75rem;
+	}
+}
+.downloads-meta {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.5rem 1rem;
+	margin-bottom: 0.75rem;
+	font-size: var(--sl-text-sm);
+	color: var(--sl-color-gray-3);
+}
+.downloads-meta a {
+	color: var(--sl-color-text-accent);
+	text-decoration: none;
+}
+.downloads-meta a:hover {
+	text-decoration: underline;
+}
+.download-row {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.75rem;
+	margin-top: 1rem;
+}
+.download-row .sl-link-button {
+	margin: 0;
+}
+.download-note {
+	margin-top: 1rem;
+	font-size: var(--sl-text-sm);
+	color: var(--sl-color-gray-3);
+}
+
+/* Supported sites */
+.sites {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+	gap: 0.75rem;
+	margin-block: 1rem;
+	padding: 0;
+	list-style: none;
+}
+.sites a {
+	display: flex;
+	align-items: center;
+	gap: 0.75rem;
+	height: 100%;
+	padding: 0.75rem 1rem;
+	border: 1px solid var(--sl-color-gray-5);
+	border-radius: 0.75rem;
+	color: var(--sl-color-white);
+	text-decoration: none;
+	transition:
+		border-color 0.15s,
+		transform 0.15s;
+}
+.sites a:hover {
+	border-color: var(--sl-color-accent);
+	transform: translateY(-2px);
+}
+.site-initial {
+	display: grid;
+	flex: none;
+	place-items: center;
+	width: 2.25rem;
+	height: 2.25rem;
+	border-radius: 0.6rem;
+	background: var(--sl-color-accent-low);
+	color: var(--sl-color-text-accent);
+	font-weight: 700;
+}
+.site-text {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	line-height: 1.3;
+}
+.site-text span {
+	font-size: var(--sl-text-xs);
+	color: var(--sl-color-gray-3);
+}
+/* Cards */
+.card {
+	border-radius: 0.75rem;
+	transition: border-color 0.15s;
+}
+.card:hover {
+	border-color: var(--sl-color-accent);
+}
+
+/* Changelog */
+.release-meta {
+	margin-top: 0.25rem;
+	font-size: var(--sl-text-sm);
+	color: var(--sl-color-gray-3);
+}
+.sl-markdown-content details {
+	margin-top: 1rem;
+}
+.sl-markdown-content summary {
+	cursor: pointer;
+	color: var(--sl-color-gray-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.sites a,
+	.card {
+		transition: none;
+	}
+	.sites a:hover {
+		transform: none;
+	}
+}

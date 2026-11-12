@@ -6,10 +6,10 @@
     "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
   },
   "scripts": {
-    "dev": "astro dev",
-    "build": "astro build",
+    "dev": "node scripts/releases.mjs && astro dev",
+    "build": "node scripts/releases.mjs && astro build",
     "preview": "astro preview",
-    "check": "astro check"
+    "check": "node scripts/releases.mjs && astro check"
   },
   "packageManager": "pnpm@12.18.0",
   "dependencies": {
