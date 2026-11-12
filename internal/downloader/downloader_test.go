@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -455,5 +456,40 @@ func TestDownloadRefererHeader(t *testing.T) {
 				t.Fatalf("Referer = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// errAfterDataBody returns its data together with a transport error on the
+// first Read, then io.EOF, like a connection reset mid-body.
+type errAfterDataBody struct{ done bool }
+
+func (b *errAfterDataBody) Read(p []byte) (int, error) {
+	if b.done {
+		return 0, io.EOF
+	}
+	b.done = true
+	return copy(p, "\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom"), io.ErrUnexpectedEOF
+}
+
+func (b *errAfterDataBody) Close() error { return nil }
+
+func TestDownloadFailsWhenFirstReadReturnsDataAndError(t *testing.T) {
+	dl := newTestDownloader(1, 0, "")
+	dl.client = &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode:    http.StatusOK,
+			Header:        http.Header{},
+			Body:          &errAfterDataBody{},
+			ContentLength: -1,
+			Request:       r,
+		}, nil
+	})}
+	dest := t.TempDir()
+	item := model.MediaItem{URL: "https://cdn.example.com/clip.mp4", Title: "clip.mp4"}
+	if _, err := dl.Download(item, dest); !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("Download error = %v, want io.ErrUnexpectedEOF", err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "clip.mp4")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a truncated body must not be committed, stat err = %v", err)
 	}
 }

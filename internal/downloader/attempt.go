@@ -202,6 +202,10 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, res
 			return "", errors.Join(err, out.Close())
 		}
 	}
+	// The bytes are kept so a later attempt can resume after them.
+	if headErr != nil && headErr != io.EOF {
+		return "", errors.Join(headErr, out.Close())
+	}
 
 	copiedBytes, copyErr := io.Copy(out, source)
 	copiedBytes += int64(headBytes)
