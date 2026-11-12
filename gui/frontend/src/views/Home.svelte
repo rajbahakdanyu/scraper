@@ -17,7 +17,21 @@
   let detected = $state<backend.DetectedURL[]>([])
   let sites = $state<string[]>([])
   let outputDir = $state('')
-  let watchEvery = $state('30m')
+  const watchUnits = [
+    { value: 's', label: 'seconds', one: 'second' },
+    { value: 'm', label: 'minutes', one: 'minute' },
+    { value: 'h', label: 'hours', one: 'hour' },
+    { value: 'd', label: 'days', one: 'day' },
+  ]
+  let watchAmount = $state<number | null>(30)
+  let watchUnit = $state('m')
+  const watchValid = $derived(Number.isInteger(watchAmount) && (watchAmount ?? 0) >= 1)
+  // Go durations have no day unit, so days are sent as hours.
+  const watchInterval = $derived(watchUnit === 'd' ? `${(watchAmount ?? 0) * 24}h` : `${watchAmount}${watchUnit}`)
+  const watchLabel = $derived.by(() => {
+    const u = watchUnits.find((x) => x.value === watchUnit)!
+    return `${watchAmount} ${watchAmount === 1 ? u.one : u.label}`
+  })
   let busy = $state('')
   let detecting = $state(false)
   let error = $state('')
@@ -168,8 +182,8 @@
   const watch = () =>
     act('watch', async () => {
       resetRun()
-      await StartWatch(input(), watchEvery)
-      toast(`Watching every ${watchEvery}`)
+      await StartWatch(input(), watchInterval)
+      toast(`Watching every ${watchLabel}`)
       ui.view = 'run'
     })
 </script>
@@ -279,11 +293,22 @@
       </button>
       <button disabled={!runnable || !!busy} onclick={preview}>Preview</button>
       <span class="grow"></span>
-      <label class="row watch-label" title="Re-run the list at this interval">
+      <div class="row watch-label" role="group" aria-label="Repeat interval" title="Re-run the list at this interval">
         <span class="dim">Repeat every</span>
-        <input type="text" bind:value={watchEvery} size="6" aria-label="Repeat interval" />
-      </label>
-      <button disabled={!runnable || !!busy || !!ui.run?.running} onclick={watch}>Watch</button>
+        <input
+          type="number"
+          class="watch-amount"
+          min="1"
+          step="1"
+          bind:value={watchAmount}
+          aria-label="Repeat amount"
+          aria-invalid={!watchValid}
+        />
+        <select bind:value={watchUnit} aria-label="Repeat unit">
+          {#each watchUnits as u (u.value)}<option value={u.value}>{u.label}</option>{/each}
+        </select>
+      </div>
+      <button disabled={!runnable || !watchValid || !!busy || !!ui.run?.running} onclick={watch}>Watch</button>
     </div>
     {#if !runnable && hasInput && !detecting && !error}
       <p class="dim small action-hint">
@@ -470,6 +495,12 @@
   }
   .watch-label {
     font-size: 12px;
+  }
+  .watch-amount {
+    width: 64px;
+  }
+  .watch-amount[aria-invalid='true'] {
+    border-color: var(--err);
   }
   .action-hint {
     margin: 8px 2px 0;

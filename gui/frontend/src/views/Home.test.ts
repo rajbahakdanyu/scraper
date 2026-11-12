@@ -99,6 +99,24 @@ describe('Home', () => {
     expect((getByRole('button', { name: /Download/ }) as HTMLButtonElement).disabled).toBe(false)
   })
 
+  it('builds the repeat interval from the amount and unit', async () => {
+    api.StartWatch.mockResolvedValue(undefined)
+    const { getByLabelText, getByRole, getByText } = render(Home)
+    await fireEvent.input(getByLabelText('Links'), { target: { value: 'https://youtube.com/watch?v=w' } })
+    await waitFor(() => expect(getByText('1 supported')).toBeTruthy())
+    const watch = getByRole('button', { name: 'Watch' }) as HTMLButtonElement
+    const amount = getByLabelText('Repeat amount') as HTMLInputElement
+
+    await fireEvent.input(amount, { target: { value: '0' } })
+    expect(watch.disabled).toBe(true)
+    await fireEvent.input(amount, { target: { value: '2' } })
+    await fireEvent.change(getByLabelText('Repeat unit'), { target: { value: 'd' } })
+    expect(watch.disabled).toBe(false)
+
+    await fireEvent.click(watch)
+    await waitFor(() => expect(api.StartWatch).toHaveBeenCalledWith(expect.anything(), '48h'))
+  })
+
   it('explains how to start the backend when opened in a plain browser', async () => {
     api.GetOptions.mockRejectedValue(new Error('bridge missing'))
     api.DetectSites.mockRejectedValue(new Error('detection unavailable'))
