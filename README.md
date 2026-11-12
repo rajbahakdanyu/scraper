@@ -3,7 +3,7 @@
 [![CI](https://github.com/rajbahakdanyu/scraper/actions/workflows/ci.yml/badge.svg)](https://github.com/rajbahakdanyu/scraper/actions/workflows/ci.yml)
 
 A Go-based CLI tool for scraping and downloading media from YouTube,
-CyberDrop, Bunker, GoonBox, and Filester — with a futuristic terminal UI that
+CyberDrop, Bunker, GoonBox, Filester, Pixeldrain, and Turbo — with a futuristic terminal UI that
 launches instantly and shows live download progress, and a
 [desktop GUI](#desktop-gui) with the same features.
 
@@ -97,6 +97,8 @@ guesses wrong):
 ./scraper filester https://filester.sh/d/FILE_SLUG
 ./scraper pixeldrain https://pixeldrain.com/l/CSbjLYKs
 ./scraper pixeldrain https://pixeldrain.com/u/qZz2NiiW
+./scraper turbo https://turbo.cr/a/ALBUM_ID
+./scraper turbo https://turbo.cr/v/FILE_ID
 ```
 Preview what would be downloaded — item count and total size — without
 downloading anything or launching the TUI:
@@ -208,7 +210,7 @@ best available audio track is downloaded separately and muxed in with ffmpeg.
 `--audio-only m4a` stream-copies AAC when possible and transcodes incompatible
 audio such as Opus to AAC.
 
-### Albums (Bunker, GoonBox, CyberDrop, Filester)
+### Albums (Bunker, GoonBox, CyberDrop, Filester, Pixeldrain, Turbo)
 
 All files in an album/folder are auto-downloaded concurrently into a
 subfolder named after the album ID:
@@ -401,6 +403,7 @@ YouTube client library does not expose a stable entity validator/range contract.
 | GoonBox   | `goonbox.cr/a/ALBUM_ID`            | JSON API, paginated albums           |
 | Filester  | `filester.sh/f/ID` or `/d/SLUG`    | HTML folder listing + signed download tokens, paginated |
 | Pixeldrain| `pixeldrain.com/l/LIST_ID` or `/u/FILE_ID` | JSON API, direct download, Range-request resume |
+| Turbo     | `turbo.cr/a/ALBUM_ID`, `/d/FILE_ID` or `/v/FILE_ID` | Album page listing, signed download URLs resolved at download time |
 
 Pixeldrain throttles download speed after ~6 GB per IP in a 24h window. To bypass this, use `--proxy` to switch IPs and regain full speed. Range-request resume also reuses partial downloads across runs, so an interrupted file picks up where it left off.
 
