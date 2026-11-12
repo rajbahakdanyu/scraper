@@ -19,6 +19,11 @@ updates:
       interval: "weekly"
     cooldown:
       default-days: 7
+    ignore:
+      # svelte-check currently supports TypeScript 5 and 6, but not 7.
+      - dependency-name: "typescript"
+        versions:
+          - ">=7.0.0"
     groups:
       frontend:
         patterns:

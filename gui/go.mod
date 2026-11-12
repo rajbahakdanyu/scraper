@@ -1,6 +1,6 @@
 module github.com/rajbahakdanyu/scraper/gui
 
-go 1.26.9
+go 1.26.11
 
 require (
 	github.com/godbus/dbus/v5 v5.2.4
