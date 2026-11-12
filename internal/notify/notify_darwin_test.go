@@ -1,7 +1,9 @@
 package notify
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -35,5 +37,25 @@ func TestDarwinMessageReadsTheEnvironmentVerbatim(t *testing.T) {
 	}
 	if got := strings.TrimSuffix(string(out), "\n"); got != hostileSummary {
 		t.Fatalf("message = %q, want %q", got, hostileSummary)
+	}
+}
+
+func TestSendReportsOsascriptFailure(t *testing.T) {
+	fake := filepath.Join(t.TempDir(), "osascript")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\necho 'not allowed' >&2\nexit 1\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	orig := osascript
+	t.Cleanup(func() { osascript = orig })
+	osascript = fake
+
+	err := Send("done")
+	if err == nil || !strings.Contains(err.Error(), "osascript failed") || !strings.Contains(err.Error(), "not allowed") {
+		t.Fatalf("err = %v, want the failure and osascript's output", err)
+	}
+
+	osascript = "/usr/bin/true"
+	if err := Send("done"); err != nil {
+		t.Fatalf("successful send: %v", err)
 	}
 }

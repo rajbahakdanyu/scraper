@@ -29,8 +29,11 @@ func send(summary string) error {
 	return nil
 }
 
+// osascript is absolute so a PATH entry can't shadow it; tests swap it.
+var osascript = "/usr/bin/osascript"
+
 func notifyCommand(summary string) *exec.Cmd {
-	cmd := exec.Command("/usr/bin/osascript", "-l", "JavaScript", "-e", darwinScript)
+	cmd := exec.Command(osascript, "-l", "JavaScript", "-e", darwinScript)
 	cmd.Env = append(os.Environ(), envMessage+"="+summary)
 	return cmd
 }
