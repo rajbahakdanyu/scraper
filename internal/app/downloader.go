@@ -32,6 +32,7 @@ func BuildDownloader(scraper model.Scraper, siteName string, cfg *config.Config,
 			Cookies:      cfg.ParsedCookies(),
 			Quality:      cfg.Quality,
 			AudioOnly:    cfg.AudioOnly,
+			Backend:      cfg.YouTubeBackend,
 			Warn:         func(msg string) { hooks.notice("%s", msg) },
 		})
 		if err != nil {

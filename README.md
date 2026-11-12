@@ -12,6 +12,8 @@ launches instantly and shows live download progress, and a
 - Go 1.26.11 or newer
 - `ffmpeg` (YouTube downloads whose video and audio aren't already combined
   in one stream are muxed together automatically)
+- Optional: [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) on `PATH`, used as a
+  fallback for YouTube videos the built-in downloader can't fetch
 
 ## Build
 
@@ -211,6 +213,13 @@ best available audio track is downloaded separately and muxed in with ffmpeg.
 `--audio-only m4a` stream-copies AAC when possible and transcodes incompatible
 audio such as Opus to AAC.
 
+If YouTube refuses a stream (HTTP 403/400) or the built-in downloader can't
+read a video's formats or info, and `yt-dlp` is on `PATH`, that video is
+retried with yt-dlp and a notice is shown. `--youtube-backend builtin` turns
+the fallback off; `--youtube-backend yt-dlp` uses yt-dlp for every video. yt-dlp
+gets the same quality, audio-only, proxy, and speed-limit settings, plus any
+YouTube/Google cookies from `--cookies` or `--cookies-from-browser`.
+
 ### Albums (Bunker, GoonBox, CyberDrop, Filester, Pixeldrain, Turbo)
 
 All files in an album/folder are auto-downloaded concurrently into a
@@ -247,6 +256,7 @@ per URL — same as albums).
 | `--cookies`      | (none)  | Netscape-format cookies file for HTTP requests |
 | `--quality`      | (auto)  | Maximum YouTube quality (`2160p`, `1440p`, `1080p`, `720p`, `480p`, `360p`, `240p`) |
 | `--audio-only`   | (off)   | YouTube audio only; optional format: `m4a` (default) or `mp3` |
+| `--youtube-backend` | `auto` | YouTube downloader: `auto` (built-in, falls back to yt-dlp), `builtin`, or `yt-dlp` |
 | `--include`      | (none)  | Glob pattern(s) to filter items (repeatable, e.g. `--include '*.mp4'`) |
 | `--exclude`      | (none)  | Glob pattern(s) to exclude items                          |
 | `--allow-ext`    | (none)  | Extra file extensions to keep with `--media-only` (repeatable, e.g. `--allow-ext cbz`) |
@@ -368,6 +378,7 @@ proxy: http://proxy:8080
 cookies: ~/.scraper-cookies.txt
 quality: "1080p"
 audio_only: ""  # off; or "m4a" / "mp3" — a YAML boolean here fails to load
+youtube_backend: auto  # or "builtin" / "yt-dlp"
 include: ["*.mp4", "*.mkv"]
 exclude: ["*.txt"]
 media_extensions: []

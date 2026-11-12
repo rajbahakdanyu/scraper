@@ -20,6 +20,9 @@ import (
 	"golang.org/x/time/rate"
 )
 
+// errVideoInfo marks a failure to read a video's metadata.
+var errVideoInfo = errors.New("youtube: failed to fetch video info")
+
 // takeParsedVideo returns the video info Parse already fetched for videoID,
 // or nil when there is none cached (playlist items only get resolved here at
 // download time). The entry is removed as it is claimed: that bounds the
@@ -44,7 +47,7 @@ func (s *Scraper) downloadBest(ctx context.Context, videoID, dest, owner string,
 		var err error
 		video, err = s.getVideo(ctx, videoID)
 		if err != nil {
-			return "", fmt.Errorf("youtube: failed to fetch video info: %w", err)
+			return "", fmt.Errorf("%w: %w", errVideoInfo, err)
 		}
 	}
 

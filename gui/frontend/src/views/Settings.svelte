@@ -123,6 +123,13 @@
           </select>
         </label>
       </div>
+      <label title="yt-dlp must be installed and on PATH">Downloader
+        <select bind:value={s.youtubeBackend}>
+          <option value="">Built-in, fall back to yt-dlp</option>
+          <option value="builtin">Built-in only</option>
+          <option value="yt-dlp">yt-dlp only</option>
+        </select>
+      </label>
     </fieldset>
 
     <fieldset class="panel">

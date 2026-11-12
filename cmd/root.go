@@ -103,6 +103,7 @@ func NewRootCmd() *cobra.Command {
 	root.PersistentFlags().String("cookies", "", "Netscape-format cookies file (e.g. ~/cookies.txt)")
 	root.PersistentFlags().String("quality", "", "Max YouTube resolution (2160p, 1440p, 1080p, 720p, 480p, 360p, 240p)")
 	root.PersistentFlags().String("audio-only", "", "YouTube audio only; optional format: m4a (default) or mp3")
+	root.PersistentFlags().String("youtube-backend", "", "YouTube downloader: auto (built-in, falls back to yt-dlp), builtin, or yt-dlp")
 	// Bare --audio-only means m4a: the help text calls the format
 	// optional, so the flag must work without a value.
 	root.PersistentFlags().Lookup("audio-only").NoOptDefVal = "m4a"

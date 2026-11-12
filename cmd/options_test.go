@@ -221,6 +221,24 @@ func TestLoadGlobalConfigPerHostOverride(t *testing.T) {
 	}
 }
 
+func TestLoadGlobalConfigYouTubeBackend(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cfg.yaml")
+	if err := os.WriteFile(path, []byte("youtube_backend: builtin\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadGlobalConfig(globalOptions{configPath: path})
+	if err != nil || cfg.YouTubeBackend != "builtin" {
+		t.Fatalf("config youtube_backend = %v, %v; want builtin", cfg, err)
+	}
+	cfg, err = loadGlobalConfig(globalOptions{configPath: path, youtubeBackend: "yt-dlp", youtubeBackendSet: true})
+	if err != nil || cfg.YouTubeBackend != "yt-dlp" {
+		t.Fatalf("--youtube-backend yt-dlp = %v, %v", cfg, err)
+	}
+	if _, err := loadGlobalConfig(globalOptions{configPath: path, youtubeBackend: "ffmpeg", youtubeBackendSet: true}); err == nil {
+		t.Fatal("expected an error for an unknown backend")
+	}
+}
+
 func TestExpandHomePath(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

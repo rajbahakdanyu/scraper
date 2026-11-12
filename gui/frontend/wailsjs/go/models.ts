@@ -287,6 +287,7 @@ export namespace backend {
 	    cookies: string;
 	    cookiesFromBrowser: string;
 	    quality: string;
+	    youtubeBackend: string;
 	    audioOnly: string;
 	    include: string[];
 	    exclude: string[];
@@ -317,6 +318,7 @@ export namespace backend {
 	        this.cookies = source["cookies"];
 	        this.cookiesFromBrowser = source["cookiesFromBrowser"];
 	        this.quality = source["quality"];
+	        this.youtubeBackend = source["youtubeBackend"];
 	        this.audioOnly = source["audioOnly"];
 	        this.include = source["include"];
 	        this.exclude = source["exclude"];

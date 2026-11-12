@@ -44,8 +44,7 @@ type streamResume struct {
 // which may be a small tmpfs or a different filesystem than a multi-GB
 // download needs.
 func streamWorkDir(dest, finalPath, identity string) (string, error) {
-	key := fileutil.SourceIdentity(identity + "\n" + finalPath)[:16]
-	dir := filepath.Join(dest, ".scraper-yt-"+key)
+	dir := workDirPath(dest, finalPath, identity)
 	if err := os.Mkdir(dir, 0750); err != nil && !errors.Is(err, os.ErrExist) {
 		return "", err
 	}
@@ -57,6 +56,12 @@ func streamWorkDir(dest, finalPath, identity string) (string, error) {
 		return "", fmt.Errorf("youtube: work dir %s is not a directory", dir)
 	}
 	return dir, nil
+}
+
+// workDirPath is the stable work dir location for one output and identity.
+func workDirPath(dest, finalPath, identity string) string {
+	key := fileutil.SourceIdentity(identity + "\n" + finalPath)[:16]
+	return filepath.Join(dest, ".scraper-yt-"+key)
 }
 
 // releaseWorkDir removes dir unless err is transient (network failure,
@@ -161,13 +166,19 @@ func streamStatusErr(resp *http.Response) error {
 	if code == http.StatusOK || code == http.StatusPartialContent {
 		return nil
 	}
-	err := fmt.Errorf("youtube: stream returned HTTP %d", code)
 	if model.IsRetryableStatus(code) {
-		return model.NewHTTPStatusError(err, code, "", 0)
+		return model.NewHTTPStatusError(fmt.Errorf("youtube: stream returned HTTP %d", code), code, "", 0)
 	}
 	// Other statuses (403 for an expired or rejected URL) stay retryable:
 	// each retry fetches fresh stream URLs.
-	return err
+	return &streamStatusError{Code: code}
+}
+
+// streamStatusError is YouTube refusing a stream outright (403, 400, ...).
+type streamStatusError struct{ Code int }
+
+func (e *streamStatusError) Error() string {
+	return fmt.Sprintf("youtube: stream returned HTTP %d", e.Code)
 }
 
 // openWholeStream fetches a stream of unknown length in one request.
@@ -218,11 +229,13 @@ type chunkResult struct {
 // pumpChunks writes the chunks to w in order. The pending queue's capacity
 // bounds how many chunks are fetched or buffered ahead of the writer.
 func (s *Scraper) pumpChunks(ctx context.Context, streamURL string, offset, size int64, w io.Writer) error {
+	// Snapshot the tunables: the producer can outlive this call by a moment.
+	chunkSize := streamChunkSize
 	pending := make(chan chan chunkResult, streamChunkWorkers)
 	go func() {
 		defer close(pending)
-		for start := offset; start < size; start += streamChunkSize {
-			end := min(start+streamChunkSize, size) - 1
+		for start := offset; start < size; start += chunkSize {
+			end := min(start+chunkSize, size) - 1
 			res := make(chan chunkResult, 1)
 			select {
 			case pending <- res:

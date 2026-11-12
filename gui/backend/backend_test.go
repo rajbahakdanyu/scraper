@@ -312,6 +312,11 @@ func TestSettingsSaveAndValidate(t *testing.T) {
 		t.Fatal("a bad duration must be rejected")
 	}
 	s.ScrapeDelay = "250ms"
+	s.YouTubeBackend = "ffmpeg"
+	if err := a.ApplySettings(s); err == nil {
+		t.Fatal("an unknown YouTube backend must be rejected")
+	}
+	s.YouTubeBackend = "yt-dlp"
 	s.Include = []string{" *.mp4 ", "", "*.mp4"}
 	if err := a.SaveSettings(s); err != nil {
 		t.Fatal(err)
@@ -320,12 +325,15 @@ func TestSettingsSaveAndValidate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ConcurrentDownloads != 5 || cfg.PerHostConcurrency != 0 || cfg.Quality != "720p" || cfg.ScrapeDelay != 250*time.Millisecond || len(cfg.Include) != 1 {
+	if cfg.ConcurrentDownloads != 5 || cfg.PerHostConcurrency != 0 || cfg.Quality != "720p" || cfg.ScrapeDelay != 250*time.Millisecond || len(cfg.Include) != 1 || cfg.YouTubeBackend != "yt-dlp" {
 		t.Fatalf("saved config = %+v", cfg)
 	}
 	reloaded, err := a.ReloadSettings()
-	if err != nil || reloaded.ScrapeDelay != "250ms" || reloaded.Concurrency != 5 {
+	if err != nil || reloaded.ScrapeDelay != "250ms" || reloaded.Concurrency != 5 || reloaded.YouTubeBackend != "yt-dlp" {
 		t.Fatalf("reloaded = %+v %v", reloaded, err)
+	}
+	if got := settingsFromConfig(&config.Config{YouTubeBackend: "auto"}).YouTubeBackend; got != "" {
+		t.Fatalf("config backend auto shows as %q in the GUI, want the auto option", got)
 	}
 }
 

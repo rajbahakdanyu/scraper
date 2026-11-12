@@ -37,6 +37,9 @@ func FinalizeConfig(cfg *config.Config) error {
 			return fmt.Errorf("invalid --quality value %q (valid: 2160p, 1440p, 1080p, 720p, 480p, 360p, 240p)", cfg.Quality)
 		}
 	}
+	if !youtube.ValidBackend(cfg.YouTubeBackend) {
+		return fmt.Errorf("invalid --youtube-backend value %q (valid: auto, builtin, yt-dlp)", cfg.YouTubeBackend)
+	}
 	if cfg.AudioOnly != "" {
 		if cfg.AudioOnly != "m4a" && cfg.AudioOnly != "mp3" {
 			return fmt.Errorf("invalid --audio-only value %q (valid: m4a, mp3)", cfg.AudioOnly)

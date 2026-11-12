@@ -45,6 +45,9 @@ type Config struct {
 	// AudioOnly downloads only the audio track from YouTube videos.
 	// Accepted values: empty (off), "m4a", "mp3".
 	AudioOnly string `yaml:"audio_only"`
+	// YouTubeBackend picks the YouTube downloader: "auto" (built-in, with
+	// a yt-dlp fallback when it is on PATH), "builtin", or "yt-dlp".
+	YouTubeBackend string `yaml:"youtube_backend"`
 	// Cookies is the path to a Netscape-format cookies file.
 	// Empty means no cookies file (default).
 	Cookies string `yaml:"cookies"`

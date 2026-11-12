@@ -36,6 +36,8 @@ type globalOptions struct {
 	qualitySet            bool
 	audioOnly             string
 	audioOnlySet          bool
+	youtubeBackend        string
+	youtubeBackendSet     bool
 	include               []string
 	includeSet            bool
 	exclude               []string
@@ -100,6 +102,9 @@ func loadGlobalConfig(opts globalOptions) (*config.Config, error) {
 	}
 	if opts.audioOnlySet && cfg.AudioOnly == "" {
 		cfg.AudioOnly = "m4a"
+	}
+	if opts.youtubeBackendSet {
+		cfg.YouTubeBackend = opts.youtubeBackend
 	}
 	if opts.includeSet {
 		cfg.Include = opts.include
@@ -207,6 +212,10 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 	if err != nil {
 		return globalOptions{}, err
 	}
+	youtubeBackend, err := flags.GetString("youtube-backend")
+	if err != nil {
+		return globalOptions{}, err
+	}
 	include, err := flags.GetStringSlice("include")
 	if err != nil {
 		return globalOptions{}, err
@@ -292,6 +301,8 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 		qualitySet:            flags.Changed("quality"),
 		audioOnly:             audioOnly,
 		audioOnlySet:          flags.Changed("audio-only"),
+		youtubeBackend:        youtubeBackend,
+		youtubeBackendSet:     flags.Changed("youtube-backend"),
 		include:               include,
 		includeSet:            flags.Changed("include"),
 		exclude:               exclude,

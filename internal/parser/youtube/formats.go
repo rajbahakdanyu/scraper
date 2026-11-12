@@ -1,6 +1,7 @@
 package youtube
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -100,13 +101,16 @@ func betterAudioFormat(candidate, current *ytdl.Format) bool {
 
 // formatsForDownload validates the selected format pair. When audioOnly is
 // true, videoFmt is always nil — only audio matters.
+// errNoFormats marks a video with no usable formats for the built-in client.
+var errNoFormats = errors.New("youtube")
+
 func formatsForDownload(video *ytdl.Video, maxHeight int, audioOnly bool) (vidFmt, audFmt *ytdl.Format, err error) {
 	if audioOnly {
 		audFmt = selectBestAudio(video)
 		if audFmt == nil {
 			vidFmt, _ = selectFormats(video, 0)
 			if vidFmt == nil {
-				return nil, nil, fmt.Errorf("youtube: no audio format found for %s", video.ID)
+				return nil, nil, fmt.Errorf("%w: no audio format found for %s", errNoFormats, video.ID)
 			}
 			return vidFmt, nil, nil
 		}
@@ -114,10 +118,10 @@ func formatsForDownload(video *ytdl.Video, maxHeight int, audioOnly bool) (vidFm
 	}
 	vidFmt, audFmt = selectFormats(video, maxHeight)
 	if vidFmt == nil {
-		return nil, nil, fmt.Errorf("youtube: no video formats found for %s", video.ID)
+		return nil, nil, fmt.Errorf("%w: no video formats found for %s", errNoFormats, video.ID)
 	}
 	if vidFmt.AudioChannels == 0 && audFmt == nil {
-		return nil, nil, fmt.Errorf("youtube: no audio format found for %s", video.ID)
+		return nil, nil, fmt.Errorf("%w: no audio format found for %s", errNoFormats, video.ID)
 	}
 	return vidFmt, audFmt, nil
 }

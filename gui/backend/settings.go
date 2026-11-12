@@ -23,6 +23,7 @@ type Settings struct {
 	Cookies            string   `json:"cookies"`
 	CookiesFromBrowser string   `json:"cookiesFromBrowser"`
 	Quality            string   `json:"quality"`
+	YouTubeBackend     string   `json:"youtubeBackend"`
 	AudioOnly          string   `json:"audioOnly"`
 	Include            []string `json:"include"`
 	Exclude            []string `json:"exclude"`
@@ -59,6 +60,7 @@ func settingsFromConfig(c *config.Config) Settings {
 		Cookies:            c.Cookies,
 		CookiesFromBrowser: c.CookiesFromBrowser,
 		Quality:            c.Quality,
+		YouTubeBackend:     guiBackend(c.YouTubeBackend),
 		AudioOnly:          c.AudioOnly,
 		Include:            nonNil(c.Include),
 		Exclude:            nonNil(c.Exclude),
@@ -95,6 +97,7 @@ func (s Settings) apply(c *config.Config) error {
 	c.Cookies = strings.TrimSpace(s.Cookies)
 	c.CookiesFromBrowser = s.CookiesFromBrowser
 	c.Quality = s.Quality
+	c.YouTubeBackend = s.YouTubeBackend
 	c.AudioOnly = s.AudioOnly
 	c.Include = cleanList(s.Include)
 	c.Exclude = cleanList(s.Exclude)
@@ -172,4 +175,12 @@ func nonNil(in []string) []string {
 		return []string{}
 	}
 	return in
+}
+
+// guiBackend maps the explicit "auto" backend to "", the GUI's auto option.
+func guiBackend(backend string) string {
+	if backend == "auto" {
+		return ""
+	}
+	return backend
 }
