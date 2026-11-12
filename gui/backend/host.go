@@ -20,6 +20,7 @@ type host interface {
 	PickFile(title string, filters []FileFilter) (string, error)
 	PickSaveFile(title, name string) (string, error)
 	Confirm(title, message string) bool
+	HideWindow()
 }
 
 type wailsHost struct{ ctx context.Context }
@@ -62,4 +63,8 @@ func (h wailsHost) Confirm(title, message string) bool {
 		CancelButton:  "No",
 	})
 	return err == nil && answer == "Yes"
+}
+
+func (h wailsHost) HideWindow() {
+	runtime.WindowHide(h.ctx)
 }

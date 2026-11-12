@@ -88,7 +88,7 @@ func Run(assets fs.FS) error {
 		MinHeight:          560,
 		AssetServer:        &assetserver.Options{Assets: assets},
 		BackgroundColour:   &options.RGBA{R: 14, G: 17, B: 23, A: 1},
-		Menu:               appMenu(),
+		Menu:               appMenu(&ctxVal),
 		Mac:                macOpts,
 		Windows:            winOpts,
 		SingleInstanceLock: single,
@@ -102,9 +102,20 @@ func Run(assets fs.FS) error {
 	})
 }
 
-// beforeClose asks before quitting over running downloads, then stops
-// them the way quitting the TUI does.
+// beforeClose lets an active watch continue without its window, unless the
+// user chooses to quit and stop it.
 func (a *App) beforeClose() bool {
+	a.mu.Lock()
+	watching := a.watch != nil
+	a.mu.Unlock()
+	if watching {
+		if a.host.Confirm("Watch is running", "Quit Scraper and stop watching? Choose No to keep the watch running in the background.") {
+			a.stopEverything()
+			return false
+		}
+		a.host.HideWindow()
+		return true
+	}
 	if a.runActive() && !a.host.Confirm("Quit Scraper?", "Downloads are still running. Quit and cancel them?") {
 		return true
 	}

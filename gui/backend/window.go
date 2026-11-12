@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 
 	"github.com/wailsapp/wails/v2/pkg/menu"
+	"github.com/wailsapp/wails/v2/pkg/menu/keys"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
@@ -16,14 +17,42 @@ import (
 // running window instead of opening another one on the same config.
 const singleInstanceID = "com.rajbahakdanyu.scraper-gui"
 
-// appMenu is the standard macOS menu bar. Without it the webview gets no
-// Edit menu, so ⌘C/⌘V/⌘Z and ⌘Q/⌘H/⌘M do nothing. Other platforms keep
-// a menu-less window.
-func appMenu() *menu.Menu {
+// appMenu provides standard App and Edit menus plus a Window menu that can
+// restore a hidden window. Other platforms keep a menu-less window.
+func appMenu(ctx *atomic.Value) *menu.Menu {
 	if goruntime.GOOS != "darwin" {
 		return nil
 	}
-	return menu.NewMenuFromItems(menu.AppMenu(), menu.EditMenu(), menu.WindowMenu())
+	window := menu.NewMenu()
+	window.AddText("Show Scraper", nil, func(*menu.CallbackData) {
+		c, ok := ctx.Load().(context.Context)
+		if !ok {
+			return
+		}
+		runtime.WindowUnminimise(c)
+		runtime.WindowShow(c)
+	})
+	window.AddSeparator()
+	window.AddText("Minimize", keys.CmdOrCtrl("m"), func(*menu.CallbackData) {
+		if c, ok := ctx.Load().(context.Context); ok {
+			runtime.WindowMinimise(c)
+		}
+	})
+	window.AddText("Zoom", nil, func(*menu.CallbackData) {
+		if c, ok := ctx.Load().(context.Context); ok {
+			runtime.WindowToggleMaximise(c)
+		}
+	})
+	window.AddText("Toggle Full Screen", keys.Combo("f", keys.ControlKey, keys.CmdOrCtrlKey), func(*menu.CallbackData) {
+		if c, ok := ctx.Load().(context.Context); ok {
+			if runtime.WindowIsFullscreen(c) {
+				runtime.WindowUnfullscreen(c)
+			} else {
+				runtime.WindowFullscreen(c)
+			}
+		}
+	})
+	return menu.NewMenuFromItems(menu.AppMenu(), menu.EditMenu(), menu.SubMenu("Window", window))
 }
 
 // nativeOptions makes the window behave like a native app: dark title bar

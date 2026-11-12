@@ -23,6 +23,7 @@ type fakeHost struct {
 	events  []string
 	data    []any
 	confirm bool
+	hidden  int
 }
 
 func (h *fakeHost) Emit(event string, data any) {
@@ -36,6 +37,11 @@ func (h *fakeHost) PickDirectory(string, string) (string, error)  { return "", n
 func (h *fakeHost) PickFile(string, []FileFilter) (string, error) { return "", nil }
 func (h *fakeHost) PickSaveFile(string, string) (string, error)   { return "", nil }
 func (h *fakeHost) Confirm(string, string) bool                   { return h.confirm }
+func (h *fakeHost) HideWindow() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.hidden++
+}
 
 func (h *fakeHost) all(event string) []any {
 	h.mu.Lock()
@@ -366,6 +372,46 @@ func TestWatchRerunsUntilStopped(t *testing.T) {
 	}
 	if err := a.StartWatch(RunInput{Text: "x"}, "nope"); err == nil {
 		t.Fatal("a bad interval must be rejected")
+	}
+}
+
+func TestWatchCheckDelayUsesWallClockDeadline(t *testing.T) {
+	now := time.Now().Round(0)
+	next := now.Add(time.Hour)
+	if got := watchCheckDelay(now, next); got != watchPollInterval {
+		t.Fatalf("check delay before deadline = %v, want %v", got, watchPollInterval)
+	}
+	if got := watchCheckDelay(next.Add(time.Second), next); got != 0 {
+		t.Fatalf("check delay after deadline = %v, want immediate check", got)
+	}
+}
+
+func TestBeforeCloseCanKeepWatchRunningInBackground(t *testing.T) {
+	a, h, _ := newTestApp(t, media("https://cyberdrop.cr/f/a.mp4"), nil)
+	if err := a.StartWatch(RunInput{Text: "https://cyberdrop.cr/a/x"}, "1h"); err != nil {
+		t.Fatal(err)
+	}
+	if !a.beforeClose() {
+		t.Fatal("declining to quit must prevent shutdown")
+	}
+	if h.hidden != 1 {
+		t.Fatalf("hidden window count = %d, want 1", h.hidden)
+	}
+	a.mu.Lock()
+	watching := a.watch != nil
+	a.mu.Unlock()
+	if !watching {
+		t.Fatal("declining to quit must keep the watch active")
+	}
+	h.confirm = true
+	if a.beforeClose() {
+		t.Fatal("confirming quit must allow shutdown")
+	}
+	a.mu.Lock()
+	watching = a.watch != nil
+	a.mu.Unlock()
+	if watching {
+		t.Fatal("confirming quit must stop the watch")
 	}
 }
 

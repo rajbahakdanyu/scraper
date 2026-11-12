@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+const watchPollInterval = time.Minute
+
 // watcher re-runs the same input every interval, like --watch: groups
 // finish on their own and failures never stop the loop.
 type watcher struct {
@@ -54,22 +56,43 @@ func (a *App) scheduleWatch(w *watcher) {
 	if a.watch != w {
 		return
 	}
-	w.next = time.Now().Add(w.interval)
-	w.timer = time.AfterFunc(w.interval, func() {
+	w.next = time.Now().Add(w.interval).Round(0)
+	a.scheduleWatchCheckLocked(w)
+	if a.host != nil {
+		a.host.Emit("watch:next", w.next.Format(time.RFC3339))
+	}
+}
+
+func watchCheckDelay(now, next time.Time) time.Duration {
+	delay := next.Sub(now)
+	if delay <= 0 {
+		return 0
+	}
+	if delay > watchPollInterval {
+		return watchPollInterval
+	}
+	return delay
+}
+
+func (a *App) scheduleWatchCheckLocked(w *watcher) {
+	delay := watchCheckDelay(time.Now(), w.next)
+	w.timer = time.AfterFunc(delay, func() {
 		a.mu.Lock()
-		still := a.watch == w
-		a.mu.Unlock()
-		if !still {
+		if a.watch != w {
+			a.mu.Unlock()
 			return
 		}
+		if time.Now().Before(w.next) {
+			a.scheduleWatchCheckLocked(w)
+			a.mu.Unlock()
+			return
+		}
+		a.mu.Unlock()
 		if err := a.watchRun(w); err != nil {
 			a.notice(fmt.Sprintf("watch: %v", err))
 			a.scheduleWatch(w)
 		}
 	})
-	if a.host != nil {
-		a.host.Emit("watch:next", w.next.Format(time.RFC3339))
-	}
 }
 
 // StopWatch stops re-running and ends the current run.
