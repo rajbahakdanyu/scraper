@@ -1,0 +1,56 @@
+---
+title: Media downloader for the terminal and desktop
+description: Download media from YouTube, CyberDrop, Bunkr, GoonBox, Filester, Pixeldrain, and Turbo from the terminal or a desktop app.
+template: splash
+hero:
+  title: Scraper
+  tagline: Download whole albums, playlists, and file lists from the terminal or a desktop app, with live progress, resumable downloads, and one-command retries.
+  image:
+    file: ../../assets/logo.svg
+  actions:
+    - text: Get started
+      link: /scraper/getting-started/installation/
+      icon: right-arrow
+    - text: Download
+      link: https://github.com/rajbahakdanyu/scraper/releases/latest
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+## Features
+
+<CardGrid stagger>
+	<Card title="Seven sites, one command" icon="rocket">
+		Paste a YouTube, CyberDrop, Bunkr, GoonBox, Filester, Pixeldrain, or Turbo
+		URL. The site is detected for you, and albums download concurrently into
+		their own folder.
+	</Card>
+	<Card title="Terminal or desktop" icon="laptop">
+		A terminal dashboard that launches instantly, plus a native desktop app for
+		macOS, Windows, and Linux with the same features and settings file.
+	</Card>
+	<Card title="Built to recover" icon="approve-check">
+		Interrupted downloads resume, transient errors back off and retry, and
+		failures are written to a retry list you can replay with one command.
+	</Card>
+	<Card title="Scriptable" icon="seti:json">
+		Plain-text or JSON Lines output, dry runs, stable exit codes, and a watch
+		mode that re-runs a list on a schedule.
+	</Card>
+</CardGrid>
+
+## Quick look
+
+```bash
+scraper https://pixeldrain.com/l/CSbjLYKs              # auto-detects the site
+scraper --dry-run https://filester.sh/f/FOLDER_ID      # preview count and size
+scraper -i urls.txt                                    # batch from a file
+scraper --input-file ~/Downloads/scraper-failed-*.txt  # retry what failed
+```
+
+<CardGrid>
+	<LinkCard title="Install" href="/scraper/getting-started/installation/" description="Download a release or build from source." />
+	<LinkCard title="Supported sites" href="/scraper/reference/sites/" description="URL formats and how each site is fetched." />
+</CardGrid>

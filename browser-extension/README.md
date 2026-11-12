@@ -1,6 +1,6 @@
 # Scraper Tab Export (Firefox)
 
-One-click export of every open tab on a [scraper](../README.md)-supported
+One-click export of every open tab on a [scraper](https://rajbahakdanyu.github.io/scraper/)-supported
 domain as `--input-file` lists in your Downloads folder.
 
 ## Install (temporary add-on)
