@@ -70,6 +70,7 @@ func (p *plainPrinter) event(evt model.ProgressEvent) {
 func runPlain(dl model.Downloader, scrapeFn func() ([]model.MediaItem, error), dest, slug, sourceURL string, out io.Writer) error {
 	reportDir := dest
 	items, err := scrapeFn()
+	var scrapeErrs []error
 	if err != nil && len(items) == 0 {
 		if errors.Is(err, app.ErrNoItems) {
 			fmt.Fprintln(out, "No items found.")
@@ -78,6 +79,7 @@ func runPlain(dl model.Downloader, scrapeFn func() ([]model.MediaItem, error), d
 	}
 	if err != nil {
 		fmt.Fprintf(out, "Warning: %v\n", err)
+		scrapeErrs = append(scrapeErrs, err)
 	}
 	if len(items) == 0 {
 		fmt.Fprintln(out, "No items found.")
@@ -159,12 +161,14 @@ drain:
 		fmt.Fprintf(out, "failed %s: %v\n", title, errs[i])
 		realErrs = append(realErrs, errs[i])
 	}
-	if _, summary, rErr := retryReport(reportDir, app.CollectFailures(items, errs, sourceURL), time.Now()); rErr != nil {
+	failures := app.CollectFailures(items, errs, sourceURL)
+	failures = append(failures, app.CollectScrapeFailure(err, sourceURL)...)
+	if _, summary, rErr := retryReport(reportDir, failures, time.Now()); rErr != nil {
 		fmt.Fprintf(out, "retry list: %v\n", rErr)
 	} else if summary != "" {
 		fmt.Fprintln(out, summary)
 	}
-	return model.NewPartialError("download", realErrs)
+	return model.NewPartialError("download", append(scrapeErrs, realErrs...))
 }
 
 // runBatchPlain is the non-TTY fallback for runBatch: it scrapes albums with
@@ -245,11 +249,14 @@ batchLoop:
 				printCh <- fmt.Sprintf("failed: %v\n", err)
 			}
 			allErrs = append(allErrs, err)
+			failures = append(failures, app.CollectScrapeFailure(err, a.URL)...)
 			scrapeNext(albumIdx)
 			continue
 		}
 		if err != nil {
 			printCh <- fmt.Sprintf("Warning: %v\n", err)
+			allErrs = append(allErrs, fmt.Errorf("%s: %w", a.URL, err))
+			failures = append(failures, app.CollectScrapeFailure(err, a.URL)...)
 		}
 		if len(items) == 0 {
 			printCh <- "No items found.\n"

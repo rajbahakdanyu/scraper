@@ -74,6 +74,23 @@ func TestRetryReportWritesListAndSummary(t *testing.T) {
 	}
 }
 
+func TestYouTubeRetryURLsKeepRequiredIdentifiersOnly(t *testing.T) {
+	watch := "https://www.youtube.com/watch?v=abc123XYZ_-&si=tracking"
+	playlist := "https://www.youtube.com/playlist?list=PL123&si=tracking"
+	if got := RetryItemURL(model.MediaItem{URL: watch}); got != "https://www.youtube.com/watch?v=abc123XYZ_-" {
+		t.Fatalf("RetryItemURL = %q", got)
+	}
+	if got := RetryEntry(model.FailedItem{
+		Item:     model.MediaItem{URL: "https://www.youtube.com/watch?v=abc123XYZ_-"},
+		AlbumURL: playlist,
+	}); got != "https://www.youtube.com/watch?v=abc123XYZ_-" {
+		t.Fatalf("video retry URL = %q", got)
+	}
+	if got := RetryEntry(model.FailedItem{Item: model.MediaItem{URL: playlist}}); got != "https://www.youtube.com/playlist?list=PL123" {
+		t.Fatalf("playlist retry URL = %q", got)
+	}
+}
+
 func TestRetryReportDeduplicatesAndSkipsEmptyURLs(t *testing.T) {
 	dir := t.TempDir()
 	failures := []model.FailedItem{

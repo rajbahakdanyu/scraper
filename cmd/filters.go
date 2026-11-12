@@ -45,6 +45,9 @@ func runDryRunWithDiskCheck(scraper model.Scraper, targetURL, outputDir string, 
 	} else {
 		fmt.Printf("%d items, %s total\n", len(p.Items), fileutil.HumanBytes(p.TotalSize))
 	}
+	if p.Warning != nil {
+		return model.NewPartialError("scrape", []error{p.Warning})
+	}
 	return nil
 }
 

@@ -8,6 +8,7 @@
     height: number
     selected: boolean
     mark: string
+    retryDisabled?: boolean
     onselect: () => void
     onfold: () => void
     oncancel: () => void
@@ -17,7 +18,7 @@
     oncopy: () => void
   }
 
-  let { row, top, height, selected, mark, onselect, onfold, oncancel, onretry, oninspect, onreveal, oncopy }: Props = $props()
+  let { row, top, height, selected, mark, retryDisabled = false, onselect, onfold, oncancel, onretry, oninspect, onreveal, oncopy }: Props = $props()
 
   const pct = $derived(percent(row.bytes, row.total))
   const live = $derived(row.status === 'pending' || row.status === 'downloading')
@@ -67,7 +68,7 @@
     <span class="c-actions row actions">
       {#if live}<button onclick={(e) => { e.stopPropagation(); oncancel() }}>Cancel</button>{/if}
       {#if row.status === 'failed'}
-        <button onclick={(e) => { e.stopPropagation(); onretry() }}>Retry</button>
+        <button disabled={retryDisabled} onclick={(e) => { e.stopPropagation(); onretry() }}>Retry</button>
         <button onclick={(e) => { e.stopPropagation(); oninspect() }}>Error</button>
       {/if}
       {#if row.hasPath}<button onclick={(e) => { e.stopPropagation(); onreveal() }}>Show</button>{/if}

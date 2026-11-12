@@ -191,6 +191,28 @@ func TestSingleRunRetryAndFinish(t *testing.T) {
 	}
 }
 
+func TestFinishedRunDoesNotRestartFailedItems(t *testing.T) {
+	items := media("https://cyberdrop.cr/f/a.mp4")
+	a, h, _ := newTestApp(t, items, map[string]error{"https://cyberdrop.cr/f/a.mp4": errors.New("boom")})
+
+	if err := a.StartRun(RunInput{Text: "https://cyberdrop.cr/a/album"}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "summary", phaseIs(a, "summary"))
+	a.ContinueRun()
+	waitFor(t, "run end", func() bool { return len(h.all("run:finished")) == 1 })
+
+	rows := a.Rows(0, 10)
+	if len(rows) != 1 || rows[0].Status != "failed" {
+		t.Fatalf("finished rows = %+v", rows)
+	}
+	a.RetryItem(rows[0].Index)
+	a.RetryAllFailed()
+	if got := a.Rows(0, 10)[0].Status; got != "failed" {
+		t.Fatalf("retry after run end changed item status to %q", got)
+	}
+}
+
 func TestBatchRunsYouTubeGroupFirstAndWritesRetryList(t *testing.T) {
 	items := media("https://x.example/f/a.mp4")
 	a, h, _ := newTestApp(t, items, map[string]error{"https://x.example/f/a.mp4": errors.New("boom")})

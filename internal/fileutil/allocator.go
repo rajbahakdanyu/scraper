@@ -60,6 +60,13 @@ func NewPathAllocator() *PathAllocator {
 }
 
 func (a *PathAllocator) Claim(path, owner string) string {
+	claimed, _ := a.ClaimAvailable(path, owner, nil)
+	return claimed
+}
+
+// ClaimAvailable assigns a collision-free path to owner, considering an
+// existing filesystem entry reusable only when available reports true.
+func (a *PathAllocator) ClaimAvailable(path, owner string, available func(string) (bool, error)) (string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -69,21 +76,33 @@ func (a *PathAllocator) Claim(path, owner string) string {
 	if a.owners == nil {
 		a.owners = make(map[string]string)
 	}
-	if currentOwner, ok := a.claimed[pathKey(path)]; !ok || currentOwner == owner {
-		a.claimed[pathKey(path)] = owner
-		a.owners[owner] = path
-		return path
+	if existing, ok := a.owners[owner]; ok {
+		return existing, nil
 	}
 
 	ext := filepath.Ext(path)
 	stem := strings.TrimSuffix(path, ext)
-	for suffix := 2; ; suffix++ {
-		candidate := fmt.Sprintf("%s (%d)%s", stem, suffix, ext)
-		if _, exists := a.claimed[pathKey(candidate)]; !exists {
-			a.claimed[pathKey(candidate)] = owner
-			a.owners[owner] = candidate
-			return candidate
+	for suffix := 1; ; suffix++ {
+		candidate := path
+		if suffix > 1 {
+			candidate = fmt.Sprintf("%s (%d)%s", stem, suffix, ext)
 		}
+		key := pathKey(candidate)
+		if currentOwner, exists := a.claimed[key]; exists && currentOwner != owner {
+			continue
+		}
+		if available != nil {
+			ok, err := available(candidate)
+			if err != nil {
+				return "", err
+			}
+			if !ok {
+				continue
+			}
+		}
+		a.claimed[key] = owner
+		a.owners[owner] = candidate
+		return candidate, nil
 	}
 }
 

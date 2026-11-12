@@ -176,7 +176,7 @@ text lines as items are scraped and downloaded:
 ```
 
 `-j, --json` outputs JSON Lines instead — one JSON event per line
-(`album_start`, `album_error`, `item`, `summary`, `error`); it implies `--no-tui`. Combined
+(`album_start`, `album_error`, `scrape_warning`, `item`, `summary`, `error`); it implies `--no-tui`. Combined
 with `--dry-run`, it emits a single JSON document describing the albums
 (URLs, items, sizes) with no download (batch mode emits one document per URL):
 
@@ -186,7 +186,9 @@ with `--dry-run`, it emits a single JSON document describing the albums
 
 Exit status is the same in every mode (TUI, `--no-tui`, `--json`): `0` when
 everything downloaded, `1` when the run failed outright (e.g. the URL could not
-be scraped), and `2` when only some items or albums failed.
+be scraped), and `2` when a scrape returned partial results or only some items
+or albums failed. A partial dry-run includes the available items and reports
+the scrape warning; it exits with status `2`.
 
 ### YouTube
 
@@ -198,9 +200,13 @@ Works on both a single video URL and a playlist URL (anything with a
 ./scraper youtube "https://www.youtube.com/playlist?list=PLAYLIST_ID"
 ```
 
-Always downloads the highest-quality format available. If that format
-doesn't already include audio, the best available audio track is
-downloaded separately and muxed in with ffmpeg.
+Downloads the highest-quality format available by default; `--quality` caps
+the video resolution. Preview sizes use the selected video/audio formats as
+an estimate, and may differ from the final size after muxing or audio
+transcoding. If the selected video format doesn't already include audio, the
+best available audio track is downloaded separately and muxed in with ffmpeg.
+`--audio-only m4a` stream-copies AAC when possible and transcodes incompatible
+audio such as Opus to AAC.
 
 ### Albums (Bunker, GoonBox, CyberDrop, Filester)
 
@@ -331,7 +337,11 @@ example) are written as their album URL alone — replaying re-scrapes that
 album and downloads only the missing items into it.
 
 JSON mode adds the retry-list path to the final `summary` event as
-`retryFile`.
+`retryFile`; partial results set `partial: true`, and partial scrape
+results also emit a `scrape_warning` event. Existing output files are reused
+only when their source identity and content digest can be verified. Legacy or
+unverified files are preserved, and a new download is saved under a
+collision-safe name.
 Transient failures are retried in-run with exponential backoff (5 attempts,
 honoring `Retry-After` when the server sends it) and signed URLs are
 re-resolved once when an attempt fails, so many blips recover on their own.
@@ -385,7 +395,7 @@ YouTube client library does not expose a stable entity validator/range contract.
 
 | Site      | URL format                          | Notes                                |
 |-----------|-------------------------------------|--------------------------------------|
-| YouTube   | `youtu.be/ID`, `youtube.com/watch?v=ID`, or a `playlist?list=ID` URL | Always highest quality, auto-mux |
+| YouTube   | `youtu.be/ID`, `youtube.com/watch?v=ID`, or a `playlist?list=ID` URL | Highest available by default; `--quality` caps video resolution; auto-mux |
 | CyberDrop | `cyberdrop.cr/f/SLUG` or `/a/SLUG` | API-based, signed CDN URLs           |
 | Bunker    | `bunkr.cr/a/ALBUM_ID`              | API + token signing, parallel fetch  |
 | GoonBox   | `goonbox.cr/a/ALBUM_ID`            | JSON API, paginated albums           |

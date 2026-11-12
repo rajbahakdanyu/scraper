@@ -24,6 +24,11 @@ var allowedMediaExtensions = map[string]struct{}{
 	"bz2": {}, "xz": {}, "tbz2": {}, "txz": {}, "iso": {},
 }
 
+var archiveExtensions = map[string]struct{}{
+	"zip": {}, "rar": {}, "7z": {}, "tar": {}, "gz": {}, "tgz": {},
+	"bz2": {}, "xz": {}, "tbz2": {}, "txz": {}, "iso": {},
+}
+
 // isVolumeExtension reports whether an extension names a split-archive
 // volume rather than a file type: .r00-.r99 (RAR), .z01-.z99 (Zip), and
 // .001-.999 (7-Zip / Zip split parts). Without these, a media-only run
@@ -108,6 +113,14 @@ func (f MediaFilter) Filter(items []MediaItem) ([]MediaItem, int) {
 // an archive, using the default allowlist.
 func IsAllowedMediaItem(item MediaItem) bool {
 	return MediaFilter{}.IsAllowed(item)
+}
+
+func IsArchiveItem(item MediaItem) bool {
+	ext := itemExtension(item)
+	if _, ok := archiveExtensions[ext]; ok {
+		return true
+	}
+	return isVolumeExtension(ext)
 }
 
 // itemExtension returns the lowercase extension (without the dot) from the

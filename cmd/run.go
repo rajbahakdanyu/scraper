@@ -140,7 +140,7 @@ func tuiResult(final tea.Model, outputDir string) error {
 	if !ok {
 		return nil
 	}
-	if _, summary, rErr := retryReport(outputDir, dash.Failures(), time.Now()); rErr != nil {
+	if _, summary, rErr := retryReport(outputDir, dash.RetryFailures(), time.Now()); rErr != nil {
 		fmt.Fprintf(os.Stderr, "retry list: %v\n", rErr)
 	} else if summary != "" {
 		fmt.Fprintln(os.Stdout, summary)

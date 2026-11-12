@@ -388,6 +388,52 @@ func TestRunBatchJSONWithFailedAlbum(t *testing.T) {
 	}
 }
 
+func TestRunBatchJSONReportsPartialScrapeAndRetrySource(t *testing.T) {
+	destRoot := t.TempDir()
+	dl := newFakePlainDownloader()
+	scrapeErr := errors.New("second page failed")
+	scraper := &fakeBatchJSONScraper{
+		items: []model.MediaItem{{URL: "https://example.com/a.mp4", Title: "a.mp4"}},
+		err:   scrapeErr,
+	}
+	albums := []model.Album{{
+		Site: "test", URL: "https://example.com/album", Slug: "album",
+		Dest: t.TempDir(), Scraper: scraper,
+	}}
+	var buf bytes.Buffer
+	err := runBatchJSON(dl, albums, destRoot, "", "", &buf)
+	var partial *model.PartialError
+	if !errors.As(err, &partial) || !errors.Is(err, scrapeErr) {
+		t.Fatalf("expected partial error carrying scrape warning, got %v", err)
+	}
+	var warning, summary model.JSONEvent
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		var event model.JSONEvent
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatal(err)
+		}
+		switch event.Event {
+		case "scrape_warning":
+			warning = event
+		case "summary":
+			summary = event
+		}
+	}
+	if warning.Event == "" || warning.Error != scrapeErr.Error() {
+		t.Fatalf("missing scrape_warning event: %+v", warning)
+	}
+	if summary.Event == "" || !summary.Partial || summary.RetryFile == "" {
+		t.Fatalf("summary must identify partial result and retry file: %+v", summary)
+	}
+	data, err := os.ReadFile(summary.RetryFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "https://example.com/album") {
+		t.Fatalf("retry file missing scrape source: %s", data)
+	}
+}
+
 func TestRunJSONRefusesSymlinkedAlbumDir(t *testing.T) {
 	root := t.TempDir()
 	target := filepath.Join(root, "outside")

@@ -72,6 +72,7 @@ func runJSON(dl model.Downloader, scrapeFn func() ([]model.MediaItem, error), de
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+		writeJSONLine(out, model.JSONEvent{Event: "scrape_warning", URL: targetURL, Error: err.Error()})
 	}
 	if len(items) == 0 {
 		writeJSONLine(out, model.JSONEvent{Event: "error", URL: targetURL, Error: "no media items found"})
@@ -123,7 +124,9 @@ func runJSON(dl model.Downloader, scrapeFn func() ([]model.MediaItem, error), de
 
 	completed, failed, cancelled, realItems, totalBytes := writeItemResult(out, items, errs, paths, slug, quality, audioOnly)
 
-	retryPath, summary, rErr := retryReport(reportDir, app.CollectFailures(items, errs, targetURL), time.Now())
+	failures := app.CollectFailures(items, errs, targetURL)
+	failures = append(failures, app.CollectScrapeFailure(err, targetURL)...)
+	retryPath, summary, rErr := retryReport(reportDir, failures, time.Now())
 	if rErr != nil {
 		fmt.Fprintf(os.Stderr, "retry list: %v\n", rErr)
 	} else if summary != "" {
@@ -138,9 +141,14 @@ func runJSON(dl model.Downloader, scrapeFn func() ([]model.MediaItem, error), de
 		Cancelled:  cancelled,
 		TotalBytes: totalBytes,
 		RetryFile:  retryPath,
+		Partial:    err != nil || len(nonCancelledErrs(errs)) > 0,
 	})
 
-	return model.NewPartialError("download", nonCancelledErrs(errs))
+	runErrs := append([]error(nil), nonCancelledErrs(errs)...)
+	if err != nil {
+		runErrs = append(runErrs, err)
+	}
+	return model.NewPartialError("download", runErrs)
 }
 
 // runBatchJSON downloads items from multiple albums with one-album scrape
@@ -198,11 +206,15 @@ batchLoop:
 		if err != nil && len(items) == 0 {
 			writeJSONLine(out, model.JSONEvent{Event: "album_error", Site: a.Site, URL: a.URL, Slug: a.Slug, Error: err.Error()})
 			allErrs = append(allErrs, err)
+			failures = append(failures, app.CollectScrapeFailure(err, a.URL)...)
 			scrapeNext(albumIdx)
 			continue
 		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+			writeJSONLine(out, model.JSONEvent{Event: "scrape_warning", Site: a.Site, URL: a.URL, Error: err.Error()})
+			allErrs = append(allErrs, fmt.Errorf("%s: %w", a.URL, err))
+			failures = append(failures, app.CollectScrapeFailure(err, a.URL)...)
 		}
 		if len(items) == 0 {
 			writeJSONLine(out, model.JSONEvent{Event: "album_error", Site: a.Site, URL: a.URL, Slug: a.Slug, Error: "no media items found"})
@@ -270,6 +282,7 @@ batchLoop:
 		Cancelled:  grandCancelled,
 		TotalBytes: grandTotalBytes,
 		RetryFile:  retryPath,
+		Partial:    len(allErrs) > 0,
 	})
 
 	return model.NewPartialError("batch", allErrs)
@@ -338,11 +351,19 @@ func runDryRunJSONWithDiskCheck(scraper model.Scraper, targetURL, siteName, slug
 			UnknownSize: unknownSize,
 		},
 	}
+	scrapeErr := err
+	if scrapeErr != nil {
+		result["warning"] = scrapeErr.Error()
+		result["partial"] = true
+	}
 
 	data, err := json.Marshal(result)
 	if err != nil {
 		return fmt.Errorf("json: encode error: %w", err)
 	}
 	fmt.Fprintln(out, string(data))
+	if scrapeErr != nil {
+		return model.NewPartialError("scrape", []error{scrapeErr})
+	}
 	return nil
 }

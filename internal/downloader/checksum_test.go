@@ -114,13 +114,21 @@ func TestDownloadRedownloadsWhenChecksumMismatches(t *testing.T) {
 		t.Fatalf("failed to seed a checksum sidecar: %v", err)
 	}
 
-	if _, err := dl.Download(item, dest); err != nil {
+	path, err := dl.Download(item, dest)
+	if err != nil {
 		t.Fatalf("download failed: %v", err)
 	}
 	if got := atomic.LoadInt32(&requests); got != 1 {
-		t.Errorf("expected the corrupted file to be redownloaded, got %d requests", got)
+		t.Errorf("expected one request for the unverified legacy file, got %d", got)
 	}
-	got, err := os.ReadFile(finalPath)
+	if path != filepath.Join(dest, "verify (2).bin") {
+		t.Fatalf("download path = %q, want a separate verified copy", path)
+	}
+	legacy, err := os.ReadFile(finalPath)
+	if err != nil || string(legacy) != "CORRUPTED" {
+		t.Fatalf("legacy file changed: content=%q err=%v", legacy, err)
+	}
+	got, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("failed to read final file: %v", err)
 	}
@@ -151,12 +159,75 @@ func TestDownloadSkipsWhenChecksumMatches(t *testing.T) {
 	if err := os.WriteFile(sidecar, []byte(hex.EncodeToString(sum[:])+"  cached.bin\n"), 0644); err != nil {
 		t.Fatalf("failed to seed a checksum sidecar: %v", err)
 	}
+	if err := fileutil.WriteSource(finalPath, itemIdentity(item), hex.EncodeToString(sum[:])); err != nil {
+		t.Fatal(err)
+	}
 
 	if _, err := dl.Download(item, dest); err != nil {
 		t.Fatalf("download failed: %v", err)
 	}
 	if got := atomic.LoadInt32(&requests); got != 0 {
 		t.Errorf("expected no request for a file matching its checksum, got %d", got)
+	}
+}
+
+func TestDownloadPreservesUnverifiedLegacyFileAndWritesVerifiedCopy(t *testing.T) {
+	const content = "complete content"
+	var requests int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&requests, 1)
+		_, _ = w.Write([]byte(content))
+	}))
+	defer ts.Close()
+	item := model.MediaItem{URL: ts.URL + "/item", Title: "legacy.bin", Size: int64(len(content))}
+	dest := t.TempDir()
+	legacyPath := filepath.Join(dest, "legacy.bin")
+	if err := os.WriteFile(legacyPath, []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	dl := newTestDownloader(1, 0, "")
+	defer dl.Shutdown()
+	path, err := dl.Download(item, dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != filepath.Join(dest, "legacy (2).bin") || requests != 1 {
+		t.Fatalf("path=%q requests=%d", path, requests)
+	}
+	got, err := os.ReadFile(legacyPath)
+	if err != nil || string(got) != "x" {
+		t.Fatalf("legacy file changed: content=%q err=%v", got, err)
+	}
+	if ok, err := fileutil.VerifySource(path, itemIdentity(item), int64(len(content))); err != nil || !ok {
+		t.Fatalf("new output lacks verifiable source metadata: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestDifferentSameNamedItemsDoNotReuseEachOthersFiles(t *testing.T) {
+	var secondRequests int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/second" {
+			atomic.AddInt32(&secondRequests, 1)
+			_, _ = w.Write([]byte("second"))
+			return
+		}
+		_, _ = w.Write([]byte("first!"))
+	}))
+	defer ts.Close()
+	dest := t.TempDir()
+	first := newTestDownloader(1, 0, "")
+	if _, err := first.Download(model.MediaItem{URL: ts.URL + "/first", Title: "same.bin"}, dest); err != nil {
+		t.Fatal(err)
+	}
+	first.Shutdown()
+	second := newTestDownloader(1, 0, "")
+	defer second.Shutdown()
+	path, err := second.Download(model.MediaItem{URL: ts.URL + "/second", Title: "same.bin"}, dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondRequests != 1 || filepath.Base(path) != "same (2).bin" {
+		t.Fatalf("second item path=%q requests=%d", path, secondRequests)
 	}
 }
 
@@ -181,16 +252,19 @@ func TestDownloadTreatsMalformedChecksumSidecarAsAbsent(t *testing.T) {
 	if _, err := dl.Download(item, dest); err != nil {
 		t.Fatalf("a malformed sidecar must not fail the item: %v", err)
 	}
-	if requests != 0 {
-		t.Fatalf("malformed sidecar unexpectedly triggered %d requests", requests)
+	if requests != 1 {
+		t.Fatalf("expected a fresh download for the unverified legacy file, got %d requests", requests)
 	}
-	// The existing file is trusted exactly as if no sidecar were present.
 	got, err := os.ReadFile(filepath.Join(dest, "malformed.bin"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(got) != "existing" {
-		t.Fatalf("file content = %q, want existing", got)
+		t.Fatalf("legacy file content = %q, want existing", got)
+	}
+	got, err = os.ReadFile(filepath.Join(dest, "malformed (2).bin"))
+	if err != nil || string(got) != "new content" {
+		t.Fatalf("new verified file content = %q err=%v", got, err)
 	}
 }
 

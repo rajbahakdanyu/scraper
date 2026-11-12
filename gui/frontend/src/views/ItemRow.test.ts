@@ -62,6 +62,14 @@ describe('ItemRow', () => {
     expect(onretry).toHaveBeenCalledOnce()
   })
 
+  it('disables retry after the run has ended', () => {
+    const { getAllByText } = render(ItemRow, {
+      ...props({ status: 'failed' }),
+      retryDisabled: true,
+    })
+    expect((getAllByText('Retry').at(-1) as HTMLButtonElement).disabled).toBe(true)
+  })
+
   it('renders album headers with counts and toggles the fold on click', async () => {
     const onfold = vi.fn()
     const { container } = render(

@@ -61,7 +61,7 @@ var suspiciousContentMarkers = [][]byte{
 // pre-transfer sniff: a resumed Range response begins mid-file, where
 // any on-disk bytes are trusted (recorded decision).
 func refuseSuspiciousContent(tempPath string, item model.MediaItem, rawURL string) error {
-	if !model.IsAllowedMediaItem(item) {
+	if !model.IsAllowedMediaItem(item) || model.IsArchiveItem(item) {
 		return nil
 	}
 	f, err := fileutil.Open(tempPath)

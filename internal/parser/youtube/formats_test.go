@@ -104,11 +104,26 @@ func TestEstimatedSizeSumsVideoAndAudio(t *testing.T) {
 	}
 }
 
+func TestEstimatedDownloadSizeUsesConfiguredVideoQuality(t *testing.T) {
+	video := &ytdl.Video{Formats: ytdl.FormatList{
+		{Height: 1080, ContentLength: 900},
+		{Height: 720, ContentLength: 600},
+		{Height: 0, AudioChannels: 2, ContentLength: 100},
+	}}
+	if got := estimatedDownloadSize(video, 720, false); got != 700 {
+		t.Fatalf("720p estimate = %d, want video plus audio size 700", got)
+	}
+	if got := estimatedDownloadSize(video, 0, true); got != 100 {
+		t.Fatalf("audio-only estimate = %d, want 100", got)
+	}
+}
+
 func TestAudioCopyable(t *testing.T) {
 	aac := &ytdl.Format{MimeType: `audio/mp4; codecs="mp4a.40.2"`}
+	muxedAAC := &ytdl.Format{MimeType: `video/mp4; codecs="avc1.4d401f, mp4a.40.2"`}
 	opus := &ytdl.Format{MimeType: `audio/webm; codecs="opus"`}
-	if !audioCopyable(aac) {
-		t.Error("audio/mp4 (AAC) should be copyable into the mp4 container")
+	if !audioCopyable(aac) || !audioCopyable(muxedAAC) {
+		t.Error("AAC in an MP4 container should be copyable into the mp4 container")
 	}
 	if audioCopyable(opus) {
 		t.Error("audio/webm (opus) must be transcoded, not copied")

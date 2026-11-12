@@ -44,6 +44,16 @@ func TestPathAllocatorReturnsSamePathToSameOwner(t *testing.T) {
 	}
 }
 
+func TestPathAllocatorRetryKeepsCollisionPath(t *testing.T) {
+	allocator := NewPathAllocator()
+	allocator.Claim("/tmp/video.mp4", "first")
+	first := allocator.Claim("/tmp/video.mp4", "second")
+	again := allocator.Claim("/tmp/video.mp4", "second")
+	if first != "/tmp/video (2).mp4" || again != first {
+		t.Fatalf("collision path = %q, retry path = %q", first, again)
+	}
+}
+
 func TestSafeJoinRejectsTraversal(t *testing.T) {
 	for _, component := range []string{"..", "../escape", `..\escape`, "/absolute"} {
 		if _, err := SafeJoin(t.TempDir(), component); err == nil {

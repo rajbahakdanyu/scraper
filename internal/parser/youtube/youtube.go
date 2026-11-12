@@ -27,7 +27,9 @@ type Scraper struct {
 	parsed map[string]*ytdl.Video
 
 	// warn receives non-fatal notices (quality fallback); nil drops them.
-	warn func(string)
+	warn      func(string)
+	maxHeight int
+	audioOnly string
 }
 
 // NewYouTubeScraper creates a YouTube scraper using the kkdai/youtube library
@@ -52,6 +54,13 @@ func NewYouTubeScraperWithOptions(proxyURL string, cookies []*http.Cookie) (*Scr
 
 func (s *Scraper) Name() string {
 	return "youtube"
+}
+
+// SetDownloadOptions keeps scrape-time size estimates aligned with the
+// formats selected by the downloader.
+func (s *Scraper) SetDownloadOptions(quality, audioOnly string) {
+	s.maxHeight, _ = ValidQuality(quality)
+	s.audioOnly = audioOnly
 }
 
 func (s *Scraper) getVideo(ctx context.Context, videoID string) (*ytdl.Video, error) {
@@ -94,7 +103,7 @@ func (s *Scraper) Parse(ctx context.Context, rawURL string) ([]model.MediaItem, 
 	return []model.MediaItem{{
 		URL:   videoWatchURL(videoID),
 		Title: title,
-		Size:  estimatedSize(video, 0),
+		Size:  estimatedDownloadSize(video, s.maxHeight, s.audioOnly != ""),
 		Type:  model.MediaTypeVideo,
 	}}, nil
 }

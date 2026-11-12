@@ -170,7 +170,7 @@ func (r *runner) finishGroup() {
 	res := s.Result()
 	r.results = append(r.results, res)
 	gr := GroupResult{Group: r.idx, Error: errText(res)}
-	rep, err := app.WriteRetryReport(r.cfg.OutputDir, s.Failures(), time.Now())
+	rep, err := app.WriteRetryReport(r.cfg.OutputDir, s.RetryFailures(), time.Now())
 	if err != nil {
 		r.app.notice(fmt.Sprintf("retry list: %v", err))
 	} else if rep.Path != "" {

@@ -63,20 +63,21 @@ func (s *Scraper) downloadBest(ctx context.Context, videoID, dest, owner string,
 	if s.warn != nil && audioOnly == "" && maxHeight > 0 && videoFmt.Height > maxHeight {
 		s.warn(fmt.Sprintf("youtube: %s: %dp not available, using %dp", title, maxHeight, videoFmt.Height))
 	}
+	identity := youtubeOutputIdentity(videoID, maxHeight, audioOnly)
 
 	if audioOnly != "" {
-		err := s.downloadAudioOnly(ctx, video, videoFmt, audioFmt, title, dest, owner, paths, limiter, skipChecksums, audioOnly, onProgress)
+		err := s.downloadAudioOnly(ctx, video, videoFmt, audioFmt, title, dest, owner, paths, limiter, skipChecksums, audioOnly, identity, onProgress)
 		return paths.Load(owner), err
 	}
 	if audioFmt == nil {
-		err := s.downloadStreamDirect(ctx, video, videoFmt, title, dest, owner, paths, limiter, skipChecksums, onProgress)
+		err := s.downloadStreamDirect(ctx, video, videoFmt, title, dest, owner, paths, limiter, skipChecksums, identity, onProgress)
 		return paths.Load(owner), err
 	}
-	err = s.downloadAndMux(ctx, video, videoFmt, audioFmt, title, dest, owner, paths, limiter, skipChecksums, onProgress)
+	err = s.downloadAndMux(ctx, video, videoFmt, audioFmt, title, dest, owner, paths, limiter, skipChecksums, identity, onProgress)
 	return paths.Load(owner), err
 }
 
-func (s *Scraper) downloadAudioOnly(ctx context.Context, video *ytdl.Video, videoFmt, audioFmt *ytdl.Format, title, dest, owner string, paths *fileutil.PathAllocator, limiter *rate.Limiter, skipChecksums bool, audioFormat string, onProgress func(int64, int64)) error {
+func (s *Scraper) downloadAudioOnly(ctx context.Context, video *ytdl.Video, videoFmt, audioFmt *ytdl.Format, title, dest, owner string, paths *fileutil.PathAllocator, limiter *rate.Limiter, skipChecksums bool, audioFormat, identity string, onProgress func(int64, int64)) error {
 	var srcFormat *ytdl.Format
 	if audioFmt != nil {
 		srcFormat = audioFmt
@@ -88,10 +89,13 @@ func (s *Scraper) downloadAudioOnly(ctx context.Context, video *ytdl.Video, vide
 	if audioFormat == "mp3" {
 		ext = "mp3"
 	}
-	finalPath := safeOutputPath(dest, title)
-	finalPath = strings.TrimSuffix(finalPath, filepath.Ext(finalPath)) + "." + ext
-	finalPath = paths.Claim(finalPath, owner)
-	skip, err := prepareOutput(finalPath, skipChecksums)
+	outputPath := safeOutputPath(dest, title)
+	outputPath = strings.TrimSuffix(outputPath, filepath.Ext(outputPath)) + "." + ext
+	finalPath, err := claimYouTubeOutput(paths, outputPath, owner, identity)
+	if err != nil {
+		return model.NewNonRetryable(err)
+	}
+	skip, err := prepareOutput(finalPath, identity)
 	if err != nil {
 		return err
 	}
@@ -115,24 +119,27 @@ func (s *Scraper) downloadAudioOnly(ctx context.Context, video *ytdl.Video, vide
 		return err
 	}
 
-	extracted, err := extractAudio(ctx, workDir, audioFormat)
+	extracted, err := extractAudio(ctx, workDir, audioFormat, audioCopyable(srcFormat))
 	if err != nil {
 		return err
 	}
-	return commitOutput(filepath.Join(workDir, extracted), finalPath, skipChecksums)
+	return commitOutputForSource(filepath.Join(workDir, extracted), finalPath, skipChecksums, "", identity)
 }
 
-func (s *Scraper) downloadStreamDirect(ctx context.Context, video *ytdl.Video, format *ytdl.Format, title, dest, owner string, paths *fileutil.PathAllocator, limiter *rate.Limiter, skipChecksums bool, onProgress func(int64, int64)) error {
+func (s *Scraper) downloadStreamDirect(ctx context.Context, video *ytdl.Video, format *ytdl.Format, title, dest, owner string, paths *fileutil.PathAllocator, limiter *rate.Limiter, skipChecksums bool, identity string, onProgress func(int64, int64)) error {
 	ext := "mp4"
 	if strings.Contains(format.MimeType, "webm") {
 		ext = "webm"
 	}
-	finalPath := safeOutputPath(dest, title)
+	outputPath := safeOutputPath(dest, title)
 	if ext != "mp4" {
-		finalPath = strings.TrimSuffix(finalPath, filepath.Ext(finalPath)) + "." + ext
+		outputPath = strings.TrimSuffix(outputPath, filepath.Ext(outputPath)) + "." + ext
 	}
-	finalPath = paths.Claim(finalPath, owner)
-	skip, err := prepareOutput(finalPath, skipChecksums)
+	finalPath, err := claimYouTubeOutput(paths, outputPath, owner, identity)
+	if err != nil {
+		return model.NewNonRetryable(err)
+	}
+	skip, err := prepareOutput(finalPath, identity)
 	if err != nil {
 		return err
 	}
@@ -149,12 +156,15 @@ func (s *Scraper) downloadStreamDirect(ctx context.Context, video *ytdl.Video, f
 	if err != nil {
 		return err
 	}
-	return commitOutputWithChecksum(tempPath, finalPath, skipChecksums, checksum)
+	return commitOutputForSource(tempPath, finalPath, skipChecksums, checksum, identity)
 }
 
-func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFmt, audioFmt *ytdl.Format, title, dest, owner string, paths *fileutil.PathAllocator, limiter *rate.Limiter, skipChecksums bool, onProgress func(int64, int64)) error {
-	outputPath := paths.Claim(safeOutputPath(dest, title), owner)
-	skip, err := prepareOutput(outputPath, skipChecksums)
+func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFmt, audioFmt *ytdl.Format, title, dest, owner string, paths *fileutil.PathAllocator, limiter *rate.Limiter, skipChecksums bool, identity string, onProgress func(int64, int64)) error {
+	outputPath, err := claimYouTubeOutput(paths, safeOutputPath(dest, title), owner, identity)
+	if err != nil {
+		return model.NewNonRetryable(err)
+	}
+	skip, err := prepareOutput(outputPath, identity)
 	if err != nil {
 		return err
 	}
@@ -224,7 +234,7 @@ func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFm
 	if err := muxStreams(ctx, tmpDir, audioCopyable(audioFmt)); err != nil {
 		return err
 	}
-	if err := commitOutput(filepath.Join(tmpDir, workMuxed), outputPath, skipChecksums); err != nil {
+	if err := commitOutputForSource(filepath.Join(tmpDir, workMuxed), outputPath, skipChecksums, "", identity); err != nil {
 		return err
 	}
 
@@ -314,49 +324,54 @@ func copyStreamToFile(ctx context.Context, stream io.Reader, size int64, path st
 	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
-// prepareOutput's failures are all local filesystem operations, so every
-// error it returns is wrapped as nonRetryable: retrying the download can't
-// fix a filesystem problem.
-func prepareOutput(path string, skipChecksums bool) (bool, error) {
-	info, err := os.Stat(path)
+// prepareOutput skips only a complete output carrying matching identity and
+// integrity metadata. Files from an older version are preserved separately.
+func prepareOutput(path, identity string) (bool, error) {
+	_, err := os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
 	if err != nil {
 		return false, model.NewNonRetryable(err)
 	}
-	if info.Size() == 0 {
-		if err := os.Remove(path); err != nil {
-			return false, model.NewNonRetryable(err)
-		}
-		return false, nil
-	}
-	if skipChecksums {
-		return true, nil
-	}
-	present, matches, err := fileutil.VerifyChecksum(path)
+	matches, err := fileutil.VerifySource(path, identity, 0)
 	if err != nil {
 		return false, model.NewNonRetryable(err)
 	}
-	if !present || matches {
-		return true, nil
-	}
-	if err := os.Remove(path); err != nil {
-		return false, model.NewNonRetryable(err)
-	}
-	if err := os.Remove(fileutil.ChecksumPath(path)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return false, model.NewNonRetryable(err)
-	}
-	return false, nil
+	return matches, nil
+}
+
+func claimYouTubeOutput(paths *fileutil.PathAllocator, path, owner, identity string) (string, error) {
+	return paths.ClaimAvailable(path, owner, func(candidate string) (bool, error) {
+		info, err := os.Lstat(candidate)
+		if errors.Is(err, os.ErrNotExist) {
+			return true, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		if !info.Mode().IsRegular() {
+			return false, nil
+		}
+		return fileutil.VerifySource(candidate, identity, 0)
+	})
+}
+
+func youtubeOutputIdentity(videoID string, maxHeight int, audioOnly string) string {
+	return fileutil.SourceIdentity(fmt.Sprintf("youtube\n%s\n%d\n%s", videoID, maxHeight, audioOnly))
 }
 
 // commitOutput's failures are all local filesystem operations, so every
 // error it returns is wrapped as nonRetryable (see prepareOutput).
 func commitOutput(tempPath, finalPath string, skipChecksums bool) error {
-	return commitOutputWithChecksum(tempPath, finalPath, skipChecksums, "")
+	return commitOutputForSource(tempPath, finalPath, skipChecksums, "", "")
 }
 
 func commitOutputWithChecksum(tempPath, finalPath string, skipChecksums bool, checksum string) error {
+	return commitOutputForSource(tempPath, finalPath, skipChecksums, checksum, "")
+}
+
+func commitOutputForSource(tempPath, finalPath string, skipChecksums bool, checksum, identity string) error {
 	if err := os.Rename(tempPath, finalPath); err != nil {
 		return model.NewNonRetryable(err)
 	}
@@ -369,6 +384,18 @@ func commitOutputWithChecksum(tempPath, finalPath string, skipChecksums bool, ch
 		}
 		if err != nil {
 			return model.NewNonRetryable(fmt.Errorf("write checksum for %s: %w", finalPath, err))
+		}
+	}
+	if identity != "" {
+		if checksum == "" {
+			var err error
+			checksum, err = fileutil.DigestFile(finalPath)
+			if err != nil {
+				return model.NewNonRetryable(fmt.Errorf("hash %s: %w", finalPath, err))
+			}
+		}
+		if err := fileutil.WriteSource(finalPath, identity, checksum); err != nil {
+			return model.NewNonRetryable(fmt.Errorf("write source metadata for %s: %w", finalPath, err))
 		}
 	}
 	return nil

@@ -128,6 +128,25 @@ func TestSingleRunScrapeFailureIsPlainError(t *testing.T) {
 	}
 }
 
+func TestPartialScrapeWithUsableItemsIsReportedAndRetryable(t *testing.T) {
+	partial := model.NewPartialError("album", []error{errors.New("page 2 failed")})
+	dl := newFakeDownloader()
+	sourceURL := "https://example.com/a/album"
+	s := New(func(context.Context) ([]model.MediaItem, error) {
+		return items("a.mp4"), partial
+	}, dl, t.TempDir(), "test")
+	s.SourceURL = sourceURL
+	run(s, s.Start())
+	var result *model.PartialError
+	if !errors.As(s.Result(), &result) {
+		t.Fatalf("Result() = %v, want partial error", s.Result())
+	}
+	failures := s.RetryFailures()
+	if len(failures) != 1 || failures[0].Item.URL != sourceURL {
+		t.Fatalf("RetryFailures() = %+v", failures)
+	}
+}
+
 func TestSingleRunWithURLlessItemsSettles(t *testing.T) {
 	dl := newFakeDownloader()
 	s := New(func(context.Context) ([]model.MediaItem, error) {

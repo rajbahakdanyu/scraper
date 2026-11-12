@@ -21,6 +21,20 @@ func estimatedSize(video *ytdl.Video, maxHeight int) int64 {
 	return size
 }
 
+func estimatedDownloadSize(video *ytdl.Video, maxHeight int, audioOnly bool) int64 {
+	if !audioOnly {
+		return estimatedSize(video, maxHeight)
+	}
+	if audio := selectBestAudio(video); audio != nil {
+		return audio.ContentLength
+	}
+	videoFmt, _ := selectFormats(video, 0)
+	if videoFmt != nil {
+		return videoFmt.ContentLength
+	}
+	return 0
+}
+
 // selectFormats picks the best video format (capped at maxHeight when set,
 // 0 = no cap) and the best audio-only format. When maxHeight is set and
 // no format fits, the displayable best is returned instead.
@@ -117,7 +131,7 @@ func audioCopyable(format *ytdl.Format) bool {
 		return false
 	}
 	mime := strings.ToLower(format.MimeType)
-	return strings.Contains(mime, "audio/mp4") && strings.Contains(mime, "mp4a")
+	return strings.Contains(mime, "mp4") && strings.Contains(mime, "mp4a")
 }
 
 var qualityHeights = map[string]int{

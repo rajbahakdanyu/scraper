@@ -55,6 +55,9 @@ type FilterScraper struct {
 
 // NewFilterScraper wraps inner with cfg's filters. cfg must be finalized.
 func NewFilterScraper(inner model.Scraper, cfg *config.Config, scrapeDelay time.Duration, diskCheck bool, hooks Hooks) *FilterScraper {
+	if configurable, ok := inner.(interface{ SetDownloadOptions(string, string) }); ok {
+		configurable.SetDownloadOptions(cfg.Quality, cfg.AudioOnly)
+	}
 	return &FilterScraper{
 		inner:           inner,
 		include:         cfg.Include,

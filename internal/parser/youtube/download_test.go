@@ -207,7 +207,15 @@ func TestDownloadBestWarnsOnQualityFallback(t *testing.T) {
 	}}
 	dest := t.TempDir()
 	// An existing output makes downloadBest skip the network fetch.
-	if err := os.WriteFile(filepath.Join(dest, "Clip.mp4"), []byte("x"), 0600); err != nil {
+	output := filepath.Join(dest, "Clip.mp4")
+	if err := os.WriteFile(output, []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	digest, err := fileutil.DigestFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fileutil.WriteSource(output, youtubeOutputIdentity("v", 240, ""), digest); err != nil {
 		t.Fatal(err)
 	}
 

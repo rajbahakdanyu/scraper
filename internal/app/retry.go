@@ -30,6 +30,17 @@ func CollectFailures(items []model.MediaItem, errs []error, albumURL string) []m
 	return out
 }
 
+func CollectScrapeFailure(err error, albumURL string) []model.FailedItem {
+	if err == nil || model.IsCancelled(err) || albumURL == "" {
+		return nil
+	}
+	return []model.FailedItem{{
+		Item:     model.MediaItem{URL: albumURL},
+		Err:      err,
+		AlbumURL: albumURL,
+	}}
+}
+
 // RetryItemURL returns the item's own scrapable page URL, or its URL with
 // any query or fragment stripped so signed parameters never reach the
 // retry list.
@@ -45,6 +56,13 @@ func RetryItemURL(item model.MediaItem) string {
 // Items whose URL is a direct CDN link (goonbox and friends) cannot be
 // scraped on their own, so their album is the only replayable entry.
 func RetryEntry(f model.FailedItem) string {
+	itemURL := f.Item.PageURL
+	if itemURL == "" {
+		itemURL = f.Item.URL
+	}
+	if isYouTubeWatchURL(itemURL) {
+		return stripQueryFragment(itemURL)
+	}
 	if page := stripQueryFragment(f.Item.PageURL); page != "" {
 		if album := stripQueryFragment(f.AlbumURL); album != "" {
 			return page + "\t" + album
@@ -65,9 +83,34 @@ func stripQueryFragment(raw string) string {
 	if err != nil {
 		return ""
 	}
+	query := u.Query()
 	u.RawQuery = ""
 	u.Fragment = ""
+	if isYouTubeHost(u.Hostname()) {
+		switch u.Path {
+		case "/watch":
+			if videoID := query.Get("v"); videoID != "" {
+				u.RawQuery = url.Values{"v": []string{videoID}}.Encode()
+			}
+		case "/playlist":
+			if playlistID := query.Get("list"); playlistID != "" {
+				u.RawQuery = url.Values{"list": []string{playlistID}}.Encode()
+			}
+		}
+	}
 	return u.String()
+}
+
+func isYouTubeHost(host string) bool {
+	host = strings.ToLower(host)
+	return host == "youtube.com" || strings.HasSuffix(host, ".youtube.com") ||
+		host == "youtube-nocookie.com" || strings.HasSuffix(host, ".youtube-nocookie.com") ||
+		host == "youtu.be"
+}
+
+func isYouTubeWatchURL(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && isYouTubeHost(u.Hostname()) && u.Path == "/watch" && u.Query().Get("v") != ""
 }
 
 // FailureReason classifies an error into a short reason for the grouped

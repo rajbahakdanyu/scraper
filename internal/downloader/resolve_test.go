@@ -263,7 +263,7 @@ func TestDownloadPermanentResolverErrorFailsImmediately(t *testing.T) {
 // resource. The URL strings differ, but the stable ETag validator — not
 // URL equality — is what protects resume integrity, so the partial must
 // resume via a Range request instead of being discarded.
-func TestDownloadResumesAfterSignedURLRotation(t *testing.T) {
+func TestDownloadDoesNotResumeUnverifiedResolvedPartial(t *testing.T) {
 	const full = "0123456789ABCDEFGHIJ"
 	var mu sync.Mutex
 	var sawRange, sawIfRange string
@@ -313,21 +313,88 @@ func TestDownloadResumesAfterSignedURLRotation(t *testing.T) {
 	mu.Lock()
 	gotRange, gotIfRange := sawRange, sawIfRange
 	mu.Unlock()
-	if gotRange != "bytes=10-" {
-		t.Errorf("Range header = %q, want %q (stale partial discarded on URL mismatch?)", gotRange, "bytes=10-")
+	if gotRange != "" {
+		t.Errorf("unverified resolved partial must not be resumed, Range header = %q", gotRange)
 	}
-	if gotIfRange != `"v1"` {
-		t.Errorf("If-Range header = %q, want %q", gotIfRange, `"v1"`)
+	if gotIfRange != "" {
+		t.Errorf("unverified resolved partial must not be resumed, If-Range header = %q", gotIfRange)
 	}
-	got, err := os.ReadFile(filepath.Join(dest, "rotated.bin"))
+	got, err := os.ReadFile(filepath.Join(dest, "rotated (2).bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "re-downloaded-from-scratch" {
+		t.Errorf("new copy = %q, want complete fresh response", got)
+	}
+	oldPartial, err := os.ReadFile(tempPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(oldPartial) != full[:10] {
+		t.Errorf("legacy partial was not preserved: %q", oldPartial)
+	}
+	if got := atomic.LoadInt32(&resolveCalls); got != 1 {
+		t.Errorf("expected 1 resolve call, got %d", got)
+	}
+}
+
+func TestDownloadResumesResolvedPartialWithMatchingIdentity(t *testing.T) {
+	const full = "verified-partial-content"
+	var rangeMu sync.Mutex
+	var gotRange string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rangeMu.Lock()
+		gotRange = r.Header.Get("Range")
+		rangeMu.Unlock()
+		w.Header().Set("ETag", `"v1"`)
+		if gotRange == "" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(full))
+			return
+		}
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes 10-%d/%d", len(full)-1, len(full)))
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write([]byte(full[10:]))
+	}))
+	defer ts.Close()
+
+	item := model.MediaItem{
+		URL:   ts.URL + "/page",
+		Title: "verified.bin",
+		Resolve: func(context.Context) (string, error) {
+			return ts.URL + "/file?sig=fresh", nil
+		},
+	}
+	dest := t.TempDir()
+	tempPath := filepath.Join(dest, "verified.bin.part")
+	if err := os.WriteFile(tempPath, []byte(full[:10]), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeResumeMetadata(tempPath, resumeMetadata{
+		URL:          "https://cdn.example.com/file?sig=expired",
+		ETag:         `"v1"`,
+		ItemIdentity: itemIdentity(item),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	dl := newTestDownloader(1, 0, "")
+	path, err := dl.Download(item, dest)
+	if err != nil {
+		t.Fatalf("verified partial should resume: %v", err)
+	}
+	rangeMu.Lock()
+	rangeHeader := gotRange
+	rangeMu.Unlock()
+	if rangeHeader != "bytes=10-" {
+		t.Fatalf("Range header = %q, want bytes=10-", rangeHeader)
+	}
+	got, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(got) != full {
-		t.Errorf("final content = %q, want %q", got, full)
-	}
-	if got := atomic.LoadInt32(&resolveCalls); got != 1 {
-		t.Errorf("expected 1 resolve call, got %d", got)
+		t.Fatalf("final content = %q, want %q", got, full)
 	}
 }
 

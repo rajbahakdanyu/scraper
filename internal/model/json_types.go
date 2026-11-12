@@ -40,6 +40,7 @@ type JSONEvent struct {
 	Quality    string `json:"quality,omitempty"`
 	AudioOnly  string `json:"audioOnly,omitempty"`
 	RetryFile  string `json:"retryFile,omitempty"`
+	Partial    bool   `json:"partial,omitempty"`
 }
 
 func DownloadStatusString(s DownloadStatus) string {

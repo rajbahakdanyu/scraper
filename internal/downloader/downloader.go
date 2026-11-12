@@ -137,27 +137,47 @@ func (d *Downloader) Download(item model.MediaItem, dest string) (string, error)
 			filename = fileutil.SanitizeFilename(filename + ext)
 		}
 	}
-	finalPath := d.paths.Claim(filepath.Join(dest, filename), item.Key())
+	identity := itemIdentity(item)
+	finalPath, err := d.paths.ClaimAvailable(filepath.Join(dest, filename), item.Key(), func(path string) (bool, error) {
+		info, statErr := os.Lstat(path)
+		if statErr == nil {
+			if !info.Mode().IsRegular() {
+				return false, nil
+			}
+			return fileutil.VerifySource(path, identity, item.Size)
+		}
+		if !errors.Is(statErr, os.ErrNotExist) {
+			return false, statErr
+		}
+		partInfo, partErr := os.Lstat(path + ".part")
+		if errors.Is(partErr, os.ErrNotExist) {
+			return true, nil
+		}
+		if partErr != nil {
+			return false, partErr
+		}
+		if !partInfo.Mode().IsRegular() {
+			if partInfo.Mode()&os.ModeSymlink != 0 {
+				return false, fmt.Errorf("refusing to follow symlink %s", path+".part")
+			}
+			return false, nil
+		}
+		return resumablePartial(path, item, identity), nil
+	})
+	if err != nil {
+		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed})
+		return "", fmt.Errorf("select output path: %w", err)
+	}
 	tempPath := finalPath + ".part"
 	resumePath := resumeMetadataPath(tempPath)
 
-	// Skip if the file already exists, is non-empty, and (when a checksum
-	// sidecar is present) still matches it.
-	if info, err := os.Stat(finalPath); err == nil && info.Size() > 0 {
-		if d.skipChecksums {
-			d.sendProgress(model.ProgressEvent{
-				Item:     item,
-				Status:   model.StatusCompleted,
-				Filename: finalPath,
-			})
-			return finalPath, nil
-		}
-		present, matches, verifyErr := fileutil.VerifyChecksum(finalPath)
+	if info, statErr := os.Lstat(finalPath); statErr == nil && info.Mode().IsRegular() {
+		matches, verifyErr := fileutil.VerifySource(finalPath, identity, item.Size)
 		if verifyErr != nil {
 			d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed})
-			return "", fmt.Errorf("verify existing checksum for %s: %w", finalPath, verifyErr)
+			return "", fmt.Errorf("verify existing file %s: %w", finalPath, verifyErr)
 		}
-		if !present || matches {
+		if matches {
 			d.sendProgress(model.ProgressEvent{
 				Item:     item,
 				Status:   model.StatusCompleted,
@@ -165,14 +185,9 @@ func (d *Downloader) Download(item model.MediaItem, dest string) (string, error)
 			})
 			return finalPath, nil
 		}
-		// Existing file no longer matches its checksum — treat it as
-		// corrupt and redownload rather than trusting stale bytes.
-		if err := os.Remove(finalPath); err != nil {
-			return "", fmt.Errorf("remove corrupt file %s: %w", finalPath, err)
-		}
-		if err := os.Remove(fileutil.ChecksumPath(finalPath)); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return "", fmt.Errorf("remove stale checksum for %s: %w", finalPath, err)
-		}
+	} else if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed})
+		return "", fmt.Errorf("inspect existing file %s: %w", finalPath, statErr)
 	}
 
 	d.sendProgress(model.ProgressEvent{
@@ -232,6 +247,10 @@ func (d *Downloader) Download(item model.MediaItem, dest string) (string, error)
 				d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed})
 				return "", fmt.Errorf("write checksum for %s: %w", finalPath, err)
 			}
+		}
+		if err := fileutil.WriteSource(finalPath, identity, checksum); err != nil {
+			d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusFailed})
+			return "", fmt.Errorf("write source metadata for %s: %w", finalPath, err)
 		}
 		_ = removeFiles(resumePath)
 		d.sendProgress(model.ProgressEvent{Item: item, Status: model.StatusCompleted, Filename: finalPath})

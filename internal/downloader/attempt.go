@@ -38,7 +38,9 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, res
 		// response) — URL equality is only an extra guard for items whose
 		// URL is final and stable.
 		urlMismatch := item.Resolve == nil && metadata.URL != resolvedURL
-		if err != nil || metadata.validator() == "" || urlMismatch {
+		identityMismatch := metadata.ItemIdentity != "" && metadata.ItemIdentity != itemIdentity(item)
+		unverifiedResolvedPartial := item.Resolve != nil && metadata.ItemIdentity != itemIdentity(item)
+		if err != nil || metadata.validator() == "" || urlMismatch || identityMismatch || unverifiedResolvedPartial {
 			existing = 0
 		} else {
 			resume = metadata
@@ -137,6 +139,7 @@ func (d *Downloader) downloadOnce(ctx context.Context, item model.MediaItem, res
 	}
 	if existing == 0 {
 		resume = metadataFromResponse(resolvedURL, resp, item.Resolve == nil)
+		resume.ItemIdentity = itemIdentity(item)
 		if resume.validator() == "" {
 			if err := removeFiles(resumeMetadataPath(tempPath)); err != nil {
 				return "", errors.Join(err, out.Close())

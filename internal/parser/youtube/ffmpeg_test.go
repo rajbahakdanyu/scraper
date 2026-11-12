@@ -3,6 +3,7 @@ package youtube
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -129,15 +130,22 @@ func TestMuxWorkDirIsBesideTheOutput(t *testing.T) {
 func TestExtractAudio(t *testing.T) {
 	for _, tt := range []struct {
 		format, file, args string
+		copyM4A            bool
 	}{
-		{"m4a", workM4A, "-nostdin -hide_banner -loglevel error -y -i source -vn -acodec copy audio.m4a"},
-		{"mp3", workMP3, "-nostdin -hide_banner -loglevel error -y -i source -vn -codec:a libmp3lame -q:a 2 audio.mp3"},
+		{"m4a", workM4A, "-nostdin -hide_banner -loglevel error -y -i source -vn -acodec copy audio.m4a", true},
+		{"m4a-opus", workM4A, "-nostdin -hide_banner -loglevel error -y -i source -vn -c:a aac audio.m4a", false},
+		{"mp3", workMP3, "-nostdin -hide_banner -loglevel error -y -i source -vn -codec:a libmp3lame -q:a 2 audio.mp3", false},
 	} {
 		t.Run(tt.format, func(t *testing.T) {
 			argsFile := stubFFmpeg(t, `output=""; for arg do output="$arg"; done; printf audio > "$output"`)
 			work := t.TempDir()
 
-			got, err := extractAudio(t.Context(), work, tt.format)
+			format := tt.format
+			if format == "m4a-opus" {
+				format = "m4a"
+			}
+
+			got, err := extractAudio(t.Context(), work, format, tt.copyM4A)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -151,5 +159,37 @@ func TestExtractAudio(t *testing.T) {
 				t.Fatalf("ffmpeg args:\n got: %s\nwant: %s", args, tt.args)
 			}
 		})
+	}
+}
+
+func TestExtractM4ATranscodesOpusToAAC(t *testing.T) {
+	ffmpeg, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("ffmpeg is not installed")
+	}
+	ffprobe, err := exec.LookPath("ffprobe")
+	if err != nil {
+		t.Skip("ffprobe is not installed")
+	}
+	work := t.TempDir()
+	source := exec.Command(ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error",
+		"-f", "lavfi", "-i", "sine=frequency=1000:duration=1", "-c:a", "libopus",
+		"-f", "webm", "-y", workSource)
+	source.Dir = work
+	if output, err := source.CombinedOutput(); err != nil {
+		t.Skipf("ffmpeg cannot generate an Opus fixture: %v: %s", err, output)
+	}
+	if _, err := extractAudio(t.Context(), work, "m4a", false); err != nil {
+		t.Fatalf("transcode Opus to M4A: %v", err)
+	}
+	probe := exec.Command(ffprobe, "-v", "error", "-select_streams", "a:0",
+		"-show_entries", "stream=codec_name", "-of", "default=noprint_wrappers=1:nokey=1",
+		filepath.Join(work, workM4A))
+	codec, err := probe.Output()
+	if err != nil {
+		t.Fatalf("probe generated M4A: %v", err)
+	}
+	if strings.TrimSpace(string(codec)) != "aac" {
+		t.Fatalf("M4A codec = %q, want AAC", strings.TrimSpace(string(codec)))
 	}
 }

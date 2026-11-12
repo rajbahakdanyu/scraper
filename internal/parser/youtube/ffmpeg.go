@@ -39,8 +39,10 @@ var (
 		"-i", workVideo, "-i", workAudio, "-c:v", "copy", "-c:a", "copy", "-movflags", "+faststart", workMuxed}
 	muxTranscodeArgs = []string{"-nostdin", "-hide_banner", "-loglevel", "error", "-y",
 		"-i", workVideo, "-i", workAudio, "-c:v", "copy", "-c:a", "aac", "-movflags", "+faststart", workMuxed}
-	extractM4AArgs = []string{"-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+	extractM4ACopyArgs = []string{"-nostdin", "-hide_banner", "-loglevel", "error", "-y",
 		"-i", workSource, "-vn", "-acodec", "copy", workM4A}
+	extractM4ATranscodeArgs = []string{"-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+		"-i", workSource, "-vn", "-c:a", "aac", workM4A}
 	extractMP3Args = []string{"-nostdin", "-hide_banner", "-loglevel", "error", "-y",
 		"-i", workSource, "-vn", "-codec:a", "libmp3lame", "-q:a", "2", workMP3}
 )
@@ -62,11 +64,15 @@ func muxStreams(ctx context.Context, workDir string, audioCopy bool) error {
 // extractAudio turns workDir's source stream into workM4A (stream copy) or,
 // for format "mp3", workMP3 (libmp3lame transcode). It returns the name of
 // the file it wrote inside workDir.
-func extractAudio(ctx context.Context, workDir, format string) (string, error) {
+func extractAudio(ctx context.Context, workDir, format string, copyM4A bool) (string, error) {
 	if format == "mp3" {
 		return workMP3, runFFmpeg("extract audio", workDir, exec.CommandContext(ctx, "ffmpeg", extractMP3Args...))
 	}
-	return workM4A, runFFmpeg("extract audio", workDir, exec.CommandContext(ctx, "ffmpeg", extractM4AArgs...))
+	args := extractM4ATranscodeArgs
+	if copyM4A {
+		args = extractM4ACopyArgs
+	}
+	return workM4A, runFFmpeg("extract audio", workDir, exec.CommandContext(ctx, "ffmpeg", args...))
 }
 
 func runFFmpeg(op, workDir string, cmd *exec.Cmd) error {

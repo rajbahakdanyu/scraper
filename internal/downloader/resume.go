@@ -39,6 +39,7 @@ type resumeMetadata struct {
 	URL          string `json:"url"`
 	ETag         string `json:"etag,omitempty"`
 	LastModified string `json:"last_modified,omitempty"`
+	ItemIdentity string `json:"item_identity,omitempty"`
 }
 
 func metadataFromResponse(rawURL string, resp *http.Response, storeURL bool) resumeMetadata {

@@ -41,6 +41,15 @@ func TestFilterScraperScrapeDelay(t *testing.T) {
 	}
 }
 
+func TestNewFilterScraperSetsYouTubeDownloadOptions(t *testing.T) {
+	inner := &configurableMockScraper{}
+	cfg := &config.Config{Quality: "720p", AudioOnly: "m4a"}
+	NewFilterScraper(inner, cfg, 0, false, Hooks{})
+	if inner.quality != "720p" || inner.audioOnly != "m4a" {
+		t.Fatalf("download options = %q, %q; want 720p, m4a", inner.quality, inner.audioOnly)
+	}
+}
+
 func TestApplyAlbumItemCap(t *testing.T) {
 	items := []model.MediaItem{{Title: "a.mp4"}, {Title: "b.mp4"}, {Title: "c.mp4"}}
 
@@ -246,6 +255,16 @@ type mockScraper struct {
 	name  string
 	items []model.MediaItem
 	err   error
+}
+
+type configurableMockScraper struct {
+	mockScraper
+	quality   string
+	audioOnly string
+}
+
+func (m *configurableMockScraper) SetDownloadOptions(quality, audioOnly string) {
+	m.quality, m.audioOnly = quality, audioOnly
 }
 
 func (m *mockScraper) Name() string {

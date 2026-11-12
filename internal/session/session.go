@@ -101,6 +101,7 @@ type Session struct {
 	BatchIdx       int
 	BatchRemaining int
 	ScrapeErrs     []error
+	ScrapeFailures []model.FailedItem
 
 	Folded           map[int]bool
 	ManuallyUnfolded map[int]bool
@@ -236,6 +237,10 @@ func downloadTask(item model.MediaItem, dest string) Task {
 func (s *Session) applyScrape(items []model.MediaItem, err error) []Task {
 	if err != nil && len(items) == 0 {
 		s.LoadingErr = err.Error()
+		s.ScrapeErrs = append(s.ScrapeErrs, err)
+		s.ScrapeFailures = append(s.ScrapeFailures, model.FailedItem{
+			Item: model.MediaItem{URL: s.SourceURL}, Err: err, AlbumURL: s.SourceURL,
+		})
 		s.AppendError(err.Error())
 		s.Phase = PhaseDone
 		return nil
@@ -247,6 +252,10 @@ func (s *Session) applyScrape(items []model.MediaItem, err error) []Task {
 	}
 	if err != nil {
 		s.SetStatus("warning: %v", err)
+		s.ScrapeErrs = append(s.ScrapeErrs, err)
+		s.ScrapeFailures = append(s.ScrapeFailures, model.FailedItem{
+			Item: model.MediaItem{URL: s.SourceURL}, Err: err, AlbumURL: s.SourceURL,
+		})
 		s.AppendError(err.Error())
 	}
 
@@ -285,6 +294,9 @@ func (s *Session) applyBatchScrape(album model.Album, items []model.MediaItem, e
 	if err != nil && len(items) == 0 {
 		s.LoadingErr = fmt.Sprintf("%s: %v", album.URL, err)
 		s.ScrapeErrs = append(s.ScrapeErrs, errors.New(s.LoadingErr))
+		s.ScrapeFailures = append(s.ScrapeFailures, model.FailedItem{
+			Item: model.MediaItem{URL: album.URL}, Err: err, AlbumURL: album.URL,
+		})
 		s.AppendError(s.LoadingErr)
 		s.BatchRemaining--
 		s.BatchIdx++
@@ -297,6 +309,10 @@ func (s *Session) applyBatchScrape(album model.Album, items []model.MediaItem, e
 
 	if err != nil {
 		s.SetStatus("warning: %v", err)
+		s.ScrapeErrs = append(s.ScrapeErrs, err)
+		s.ScrapeFailures = append(s.ScrapeFailures, model.FailedItem{
+			Item: model.MediaItem{URL: album.URL}, Err: err, AlbumURL: album.URL,
+		})
 		s.AppendError(fmt.Sprintf("%s: %v", album.URL, err))
 	}
 
@@ -958,6 +974,12 @@ func (s *Session) Failures() []model.FailedItem {
 		}
 		out = append(out, model.FailedItem{Item: st.Item, Err: st.Err, AlbumURL: st.AlbumURL})
 	}
+	return out
+}
+
+func (s *Session) RetryFailures() []model.FailedItem {
+	out := s.Failures()
+	out = append(out, s.ScrapeFailures...)
 	return out
 }
 

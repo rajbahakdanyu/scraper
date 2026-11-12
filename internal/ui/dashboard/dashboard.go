@@ -327,7 +327,7 @@ func (d *Dashboard) handleSummaryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if d.writeRetryList == nil {
 			return d, nil
 		}
-		if path, err := d.writeRetryList(d.Failures()); err != nil {
+		if path, err := d.writeRetryList(d.RetryFailures()); err != nil {
 			d.SetStatus("retry list: %v", err)
 		} else {
 			d.SetStatus("retry list written: %s", path)

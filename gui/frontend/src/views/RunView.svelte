@@ -207,8 +207,8 @@
       k: () => select(selected.row - 1),
       c: () => guard(() => CancelItem(idx)),
       C: () => guard(CancelAll),
-      r: () => guard(() => RetryItem(idx)),
-      R: () => guard(RetryAllFailed),
+      r: () => run.running && guard(() => RetryItem(idx)),
+      R: () => run.running && guard(RetryAllFailed),
       F: nextFailed,
       '/': () => searchBox?.focus(),
       n: nextMatch,
@@ -303,7 +303,7 @@
         <button disabled={!stats?.failed} onclick={nextFailed}>Next failed <kbd>F</kbd></button>
         <span class="grow"></span>
         <button disabled={!active} onclick={() => guard(CancelAll)}>Cancel all <kbd>C</kbd></button>
-        <button disabled={!stats?.failed} onclick={() => guard(RetryAllFailed)}>Retry failed <kbd>R</kbd></button>
+        <button disabled={!run.running || !stats?.failed} onclick={() => guard(RetryAllFailed)}>Retry failed <kbd>R</kbd></button>
         <button class:on={showErrors} onclick={() => (showErrors = !showErrors)}>Errors ({run.errors}) <kbd>e</kbd></button>
       </div>
 
@@ -320,6 +320,7 @@
                 height={ROW_H}
                 selected={r.row === selected.row}
                 mark={statusMarks[r.status] ?? ''}
+                retryDisabled={!run.running}
                 onselect={() => select(r.row, r.index, false)}
                 onfold={() => guard(() => ToggleFold(r.index))}
                 oncancel={() => guard(() => CancelItem(r.index))}

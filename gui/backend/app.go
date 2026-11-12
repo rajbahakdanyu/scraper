@@ -476,7 +476,11 @@ func (a *App) withSession(f func(r *runner, s *session.Session)) {
 }
 
 func (a *App) mutate(f func(r *runner, s *session.Session)) {
-	a.withSession(func(r *runner, s *session.Session) {
+	a.with(func(r *runner) {
+		if r.finished || r.sess == nil {
+			return
+		}
+		s := r.sess
 		f(r, s)
 		r.bump()
 	})
@@ -572,7 +576,7 @@ func (a *App) SaveRetryList() (string, error) {
 	var err error
 	a.withSession(func(r *runner, s *session.Session) {
 		var rep app.RetryReport
-		rep, err = app.WriteRetryReport(r.cfg.OutputDir, s.Failures(), time.Now())
+		rep, err = app.WriteRetryReport(r.cfg.OutputDir, s.RetryFailures(), time.Now())
 		path = rep.Path
 	})
 	return path, err

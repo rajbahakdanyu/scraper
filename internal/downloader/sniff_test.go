@@ -1,6 +1,7 @@
 package downloader
 
 import (
+	"archive/zip"
 	"bytes"
 	"errors"
 	"net/http"
@@ -13,6 +14,30 @@ import (
 
 	"github.com/rajbahakdanyu/scraper/internal/model"
 )
+
+func TestDownloadAllowsValidArchiveContainingHTML(t *testing.T) {
+	var body bytes.Buffer
+	writer := zip.NewWriter(&body)
+	entry, err := writer.Create("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := entry.Write([]byte("<!DOCTYPE html><html>archive member</html>")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(body.Bytes())
+	}))
+	defer ts.Close()
+	dl := newTestDownloader(1, 0, "")
+	defer dl.Shutdown()
+	if _, err := dl.Download(model.MediaItem{URL: ts.URL + "/archive.zip", Title: "archive.zip"}, t.TempDir()); err != nil {
+		t.Fatalf("valid ZIP containing HTML was rejected: %v", err)
+	}
+}
 
 func TestDownloadRejectsHTMLMasqueradingAsMedia(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

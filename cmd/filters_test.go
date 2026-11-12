@@ -178,9 +178,11 @@ func TestDryRunKeepsPartialMediaItems(t *testing.T) {
 			runErr = runDryRunWithDiskCheck(wrapped, "https://example.com/a", t.TempDir(), false)
 		})
 	})
-	if runErr != nil {
-		t.Fatalf("a partial scrape must warn, not fail the dry-run: %v", runErr)
+	var partial *model.PartialError
+	if !errors.As(runErr, &partial) {
+		t.Fatalf("a partial scrape must return a partial error after listing items, got %v", runErr)
 	}
+
 	if !strings.Contains(stderr, "page 2 failed") {
 		t.Fatalf("expected the partial error as a warning, got %q", stderr)
 	}
@@ -189,5 +191,23 @@ func TestDryRunKeepsPartialMediaItems(t *testing.T) {
 	}
 	if strings.Contains(out, "b.exe") {
 		t.Fatalf("expected the skipped non-media item to stay out of dry-run output, got %q", out)
+	}
+}
+
+func TestDryRunJSONReportsPartialScrape(t *testing.T) {
+	scraper := &fakeDryRunScraper{
+		items: []model.MediaItem{{URL: "https://cdn.example.com/a.mp4", Title: "a.mp4"}},
+		err:   errors.New("page 2 failed"),
+	}
+	var out bytes.Buffer
+	err := runDryRunJSONWithDiskCheck(scraper, "https://example.com/a", "test", "", &out, t.TempDir(), false)
+	var partial *model.PartialError
+	if !errors.As(err, &partial) {
+		t.Fatalf("expected partial error, got %v", err)
+	}
+	if !strings.Contains(out.String(), `"partial":true`) ||
+		!strings.Contains(out.String(), `"warning":"page 2 failed"`) ||
+		!strings.Contains(out.String(), `"a.mp4"`) {
+		t.Fatalf("partial dry-run JSON must include items and warning, got %s", out.String())
 	}
 }
