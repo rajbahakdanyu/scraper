@@ -1,0 +1,70 @@
+name: Live site checks
+
+# Downloads one real item from every site that has a LIVE_URL_<SITE>
+# repository variable (Settings > Secrets and variables > Actions >
+# Variables), catching site-side changes the offline tests can't. A failed
+# scheduled run opens (or comments on) a "live-check" issue.
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-checks
+  cancel-in-progress: false
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      LIVE_URL_BUNKER: ${{ vars.LIVE_URL_BUNKER }}
+      LIVE_URL_CYBERDROP: ${{ vars.LIVE_URL_CYBERDROP }}
+      LIVE_URL_FILESTER: ${{ vars.LIVE_URL_FILESTER }}
+      LIVE_URL_GOONBOX: ${{ vars.LIVE_URL_GOONBOX }}
+      LIVE_URL_PIXELDRAIN: ${{ vars.LIVE_URL_PIXELDRAIN }}
+      LIVE_URL_TURBO: ${{ vars.LIVE_URL_TURBO }}
+      LIVE_URL_YOUTUBE: ${{ vars.LIVE_URL_YOUTUBE }}
+      LIVE_MAX_BYTES: ${{ vars.LIVE_MAX_BYTES }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install ffmpeg
+        if: env.LIVE_URL_YOUTUBE != ''
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Live checks
+        run: go test -tags live -count=1 -v -timeout 25m ./internal/livetest
+
+  report:
+    needs: live
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the live-check issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh label create live-check --color B60205 --description "Nightly live site check failed" 2>/dev/null || true
+          issue="$(gh issue list --label live-check --state open --json number --jq '.[0].number')"
+          body="A live site check failed: $RUN_URL"
+          if [ -n "$issue" ]; then
+            gh issue comment "$issue" --body "$body"
+          else
+            gh issue create --title "Live site check failing" --label live-check --body "$body"
+          fi

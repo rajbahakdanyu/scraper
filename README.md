@@ -451,3 +451,22 @@ wails generate module   # after changing the bound backend API
 Shared code: `internal/app` (site detection, filters, previews, downloaders,
 retry lists), `internal/session` (the download-run state machine both the TUI
 dashboard and the GUI drive), `internal/config` (load/save).
+
+### Live site checks
+
+The offline tests use fake servers, so they can't notice when a site changes
+its pages or API. `internal/livetest` downloads one real item per site; it
+only builds with `-tags live` and only checks sites whose `LIVE_URL_<SITE>`
+variable is set (`BUNKER`, `CYBERDROP`, `FILESTER`, `GOONBOX`, `PIXELDRAIN`,
+`TURBO`, `YOUTUBE`; several URLs may be space- or comma-separated):
+
+```bash
+LIVE_URL_PIXELDRAIN=https://pixeldrain.com/u/<id> \
+LIVE_URL_YOUTUBE='https://www.youtube.com/watch?v=<id>' \
+go test -tags live -v ./internal/livetest
+```
+
+It picks each album's smallest item up to `LIVE_MAX_BYTES` (default 200 MiB)
+and fetches YouTube at 360p. The `Live site checks` workflow runs it nightly
+(and on demand) with the same names set as repository **variables**; a failed
+nightly run opens or comments on a `live-check` issue.
