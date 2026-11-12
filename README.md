@@ -60,7 +60,7 @@ The GUI also opens the output folder, reveals finished files, and copies
 item URLs.
 
 To build it yourself you need Node.js `^22.22.2 || ^24.15.0 || >=26.0.0`
-(`gui/frontend/.nvmrc` pins 24; pnpm refuses older versions),
+(`gui/frontend/.nvmrc` pins 26; pnpm refuses older versions),
 [pnpm](https://pnpm.io/installation) (the version is pinned by
 `packageManager` in `gui/frontend/package.json`; `npm i -g pnpm@12.18.0`), the
 [Wails v2 CLI](https://wails.io/docs/gettingstarted/installation), and on
