@@ -367,10 +367,6 @@ func commitOutput(tempPath, finalPath string, skipChecksums bool) error {
 	return commitOutputForSource(tempPath, finalPath, skipChecksums, "", "")
 }
 
-func commitOutputWithChecksum(tempPath, finalPath string, skipChecksums bool, checksum string) error {
-	return commitOutputForSource(tempPath, finalPath, skipChecksums, checksum, "")
-}
-
 func commitOutputForSource(tempPath, finalPath string, skipChecksums bool, checksum, identity string) error {
 	if err := os.Rename(tempPath, finalPath); err != nil {
 		return model.NewNonRetryable(err)

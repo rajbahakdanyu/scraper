@@ -426,10 +426,9 @@ func (s *Scraper) resolveFileOnce(ctx context.Context, slug, knownName string) (
 	if err := netutil.NewStrictPolicy(allowedURLs...).ValidateURL(server); err != nil {
 		return model.MediaItem{}, model.NewNonRetryable(fmt.Errorf("filester: unsafe CDN server for %s: %w", slug, err))
 	}
-	for _, segment := range strings.Split(tok.File, "/") {
-		if segment == "." || segment == ".." {
-			return model.MediaItem{}, model.NewNonRetryable(fmt.Errorf("filester: unsafe CDN path for %s", slug))
-		}
+	filePath, err := safeTokenFilePath(tok.File)
+	if err != nil {
+		return model.MediaItem{}, model.NewNonRetryable(fmt.Errorf("filester: unsafe CDN path for %s: %w", slug, err))
 	}
 
 	// Prefer the filename already known from the folder listing (the
@@ -444,7 +443,7 @@ func (s *Scraper) resolveFileOnce(ctx context.Context, slug, knownName string) (
 		title = slug
 	}
 
-	downloadURL, err := url.JoinPath(server, "v2", tok.File)
+	downloadURL, err := url.JoinPath(server, "v2")
 	if err != nil {
 		return model.MediaItem{}, err
 	}
@@ -452,6 +451,8 @@ func (s *Scraper) resolveFileOnce(ctx context.Context, slug, knownName string) (
 	if err != nil {
 		return model.MediaItem{}, err
 	}
+	parsedDownloadURL.Path = strings.TrimRight(parsedDownloadURL.Path, "/") + "/" + filePath
+	parsedDownloadURL.RawPath = ""
 	query := parsedDownloadURL.Query()
 	query.Set("token", tok.Token)
 	query.Set("download", "true")
@@ -465,6 +466,36 @@ func (s *Scraper) resolveFileOnce(ctx context.Context, slug, knownName string) (
 		MimeType: "application/octet-stream",
 		Type:     model.MediaTypeForName(title),
 	}, nil
+}
+
+func safeTokenFilePath(file string) (string, error) {
+	if file == "" || strings.HasPrefix(file, "/") || strings.Contains(file, "\\") {
+		return "", fmt.Errorf("invalid file path")
+	}
+
+	segments := strings.Split(file, "/")
+	for i, segment := range segments {
+		if segment == "" {
+			return "", fmt.Errorf("invalid file path")
+		}
+		decoded, err := url.PathUnescape(segment)
+		if err != nil {
+			return "", fmt.Errorf("invalid file path")
+		}
+		for {
+			if decoded == "." || decoded == ".." || strings.ContainsAny(decoded, `/\`) {
+				return "", fmt.Errorf("invalid file path")
+			}
+			unescaped, err := url.PathUnescape(decoded)
+			if err != nil || unescaped == decoded {
+				break
+			}
+			decoded = unescaped
+		}
+		segments[i] = decoded
+	}
+
+	return strings.Join(segments, "/"), nil
 }
 
 func (s *Scraper) fetchDoc(ctx context.Context, pageURL string) (*goquery.Document, error) {

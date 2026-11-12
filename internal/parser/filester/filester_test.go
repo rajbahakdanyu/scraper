@@ -396,3 +396,57 @@ func TestParseFilesterRejectsUnlistedCDNServer(t *testing.T) {
 		t.Fatalf("error = %v, want unsafe CDN server", err)
 	}
 }
+
+func TestSafeTokenFilePath(t *testing.T) {
+	tests := []struct {
+		name    string
+		file    string
+		want    string
+		wantErr bool
+	}{
+		{name: "nested path", file: "d/abc", want: "d/abc"},
+		{name: "encoded filename", file: "d/my%20file.bin", want: "d/my file.bin"},
+		{name: "dot segment", file: "d/../secret", wantErr: true},
+		{name: "encoded dot segment", file: "d/%2e%2e/secret", wantErr: true},
+		{name: "double encoded dot segment", file: "d/%252e%252e/secret", wantErr: true},
+		{name: "encoded separator", file: "d%2f..%2fsecret", wantErr: true},
+		{name: "absolute path", file: "/secret", wantErr: true},
+		{name: "backslash separator", file: `d\..\secret`, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := safeTokenFilePath(tt.file)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("safeTokenFilePath(%q) error = %v, wantErr %v", tt.file, err, tt.wantErr)
+			}
+			if err == nil && got != tt.want {
+				t.Errorf("safeTokenFilePath(%q) = %q, want %q", tt.file, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveFilePreservesEscapedTokenFilePath(t *testing.T) {
+	var ts *httptest.Server
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v2/api/public/download", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"file": "folder/my%20file.bin", "token": "tok", "server": ts.URL, "name": "video.bin",
+		})
+	})
+	ts = httptest.NewServer(mux)
+	defer ts.Close()
+
+	scraper := newTestFilesterScraper()
+	scraper.baseURL = ts.URL
+	item, err := scraper.resolveFile(context.Background(), "slug", "")
+	if err != nil {
+		t.Fatalf("resolveFile failed: %v", err)
+	}
+	want := ts.URL + "/v2/folder/my%20file.bin?download=true&n=video.bin&token=tok"
+	if item.URL != want {
+		t.Errorf("resolved URL = %q, want %q", item.URL, want)
+	}
+}
