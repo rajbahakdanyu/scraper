@@ -185,6 +185,8 @@
       }
       return
     }
+    // ⌘C/Ctrl+C, ⌘R and friends belong to the system, not to c/r/q.
+    if (e.metaKey || e.ctrlKey || e.altKey) return
     if (run.phase === 'summary') {
       const summaryKeys: Record<string, () => unknown> = {
         Enter: () => guard(DismissSummary),

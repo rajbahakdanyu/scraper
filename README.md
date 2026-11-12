@@ -57,7 +57,10 @@ keys are kept).
 | `--notify`, `--log-file` | Same settings |
 
 The GUI also opens the output folder, reveals finished files, and copies
-item URLs.
+item URLs. It behaves like a native app: only one copy runs at a time
+(launching it again focuses the open window), the standard macOS menu bar, ⌘/Ctrl+1–3 to
+switch between Download, Run, and Settings (⌘/Ctrl+, opens Settings), and
+browser shortcuts such as reload and print are disabled.
 
 To build it yourself you need Node.js `^22.22.2 || ^24.15.0 || >=26.0.0`
 (`gui/frontend/.nvmrc` pins 26; pnpm refuses older versions),

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { ClearNotices } from '../wailsjs/go/backend/App'
-  import { initEvents, ui } from './lib/state.svelte'
+  import { initEvents, ui, type View } from './lib/state.svelte'
   import Home from './views/Home.svelte'
   import PreviewView from './views/PreviewView.svelte'
   import RunView from './views/RunView.svelte'
@@ -22,7 +22,44 @@
     await ClearNotices()
     ui.notices = []
   }
+
+  // Browser shortcuts that would reload or print the webview and lose state.
+  const browserKeys = new Set(['r', 'p'])
+
+  function onKey(e: KeyboardEvent) {
+    const mod = e.metaKey || e.ctrlKey
+    if (e.key === 'F5' || (mod && browserKeys.has(e.key.toLowerCase()))) {
+      e.preventDefault()
+      return
+    }
+    if (e.key === 'Escape' && showNotices) {
+      showNotices = false
+      return
+    }
+    if (!mod || e.altKey || e.shiftKey) return
+    const views: Record<string, () => boolean> = {
+      '1': () => go('home'),
+      '2': () => !!ui.run && go('run'),
+      '3': () => go('settings'),
+      ',': () => go('settings'),
+    }
+    if (views[e.key]?.()) e.preventDefault()
+  }
+
+  function go(view: View) {
+    ui.view = view
+    return true
+  }
+
+  // Dropping a file would navigate the webview to it, like a browser tab.
+  function blockFileDrop(e: DragEvent) {
+    if (!e.dataTransfer?.types.includes('Files')) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'none'
+  }
 </script>
+
+<svelte:window onkeydown={onKey} ondragover={blockFileDrop} ondrop={blockFileDrop} />
 
 <div class="shell">
   <header class="row">
@@ -150,6 +187,7 @@
     flex: 1;
     min-height: 0;
     overflow: auto;
+    overscroll-behavior: none;
   }
   .notices {
     position: fixed;

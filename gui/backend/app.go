@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/wailsapp/wails/v2"
@@ -77,18 +78,27 @@ func (a *App) loadConfig() (*config.Config, error) {
 // Run starts the desktop app serving the built frontend from assets.
 func Run(assets fs.FS) error {
 	a := New(config.DefaultPath(), nil)
+	var ctxVal atomic.Value
+	macOpts, winOpts, single := nativeOptions(&ctxVal)
 	return wails.Run(&options.App{
-		Title:            "Scraper",
-		Width:            1180,
-		Height:           780,
-		MinWidth:         820,
-		MinHeight:        560,
-		AssetServer:      &assetserver.Options{Assets: assets},
-		BackgroundColour: &options.RGBA{R: 14, G: 17, B: 23, A: 1},
-		OnStartup:        func(ctx context.Context) { a.host = wailsHost{ctx: ctx} },
-		OnBeforeClose:    func(context.Context) bool { return a.beforeClose() },
-		OnShutdown:       func(context.Context) { a.stopEverything() },
-		Bind:             []any{a},
+		Title:              "Scraper",
+		Width:              1180,
+		Height:             780,
+		MinWidth:           820,
+		MinHeight:          560,
+		AssetServer:        &assetserver.Options{Assets: assets},
+		BackgroundColour:   &options.RGBA{R: 14, G: 17, B: 23, A: 1},
+		Menu:               appMenu(),
+		Mac:                macOpts,
+		Windows:            winOpts,
+		SingleInstanceLock: single,
+		OnStartup: func(ctx context.Context) {
+			ctxVal.Store(ctx)
+			a.host = wailsHost{ctx: ctx}
+		},
+		OnBeforeClose: func(context.Context) bool { return a.beforeClose() },
+		OnShutdown:    func(context.Context) { a.stopEverything() },
+		Bind:          []any{a},
 	})
 }
 

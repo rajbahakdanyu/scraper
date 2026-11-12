@@ -95,7 +95,7 @@
   }
   .item.header {
     background: var(--panel-2);
-    cursor: pointer;
+    cursor: default;
   }
   .accent {
     color: var(--accent);
