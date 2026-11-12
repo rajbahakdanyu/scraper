@@ -272,6 +272,9 @@ func TestDownloadAndMuxDownloadsSeparateStreams(t *testing.T) {
 		t.Fatalf("muxed output %q missing or empty: stat error=%v", path, err)
 	}
 	assertDownloadedFile(t, dest, "Muxed title.mp4", "predictable muxed output")
+	if dirs := workDirs(t, dest); len(dirs) != 0 {
+		t.Fatalf("work dirs after a successful mux = %v, want none", dirs)
+	}
 	present, matches, err := fileutil.VerifyChecksum(path)
 	if err != nil || !present || !matches {
 		t.Fatalf("muxed checksum verification = present %v matches %v err %v", present, matches, err)

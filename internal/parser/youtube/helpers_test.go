@@ -35,6 +35,9 @@ type fakeYouTube struct {
 	streamRequests atomic.Int32
 	streamStarted  chan struct{}
 	streamOnce     sync.Once
+	// streamHook, when set, sees every /stream request first and may
+	// answer it itself by returning true.
+	streamHook func(w http.ResponseWriter, r *http.Request) bool
 }
 
 // startFakeYouTube serves every endpoint the ytdl client touches: the front
@@ -81,6 +84,9 @@ func startFakeYouTube(t *testing.T, videoID, title, content string) *fakeYouTube
 		case strings.HasPrefix(r.URL.Path, "/stream"):
 			f.streamRequests.Add(1)
 			f.streamOnce.Do(func() { close(f.streamStarted) })
+			if f.streamHook != nil && f.streamHook(w, r) {
+				return
+			}
 			if f.blockStream {
 				<-r.Context().Done() // hang until the client aborts
 				return

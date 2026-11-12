@@ -118,12 +118,17 @@ func TestMuxStreamsTranscodesAudioWhenNotAAC(t *testing.T) {
 
 func TestMuxWorkDirIsBesideTheOutput(t *testing.T) {
 	dest := t.TempDir()
-	dir, err := newMuxWorkDir(dest)
+	output := filepath.Join(dest, "video.mp4")
+	dir, err := streamWorkDir(dest, output, "id")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if filepath.Dir(dir) != dest {
 		t.Fatalf("mux work dir %q must be inside %q", dir, dest)
+	}
+	again, err := streamWorkDir(dest, output, "id")
+	if err != nil || again != dir {
+		t.Fatalf("work dir for the same output = %q, %v; want %q so a retry can resume", again, err, dir)
 	}
 }
 

@@ -7,19 +7,29 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/rajbahakdanyu/scraper/internal/model"
 )
 
-// newMuxWorkDir holds the separate streams before muxing. It lives beside
-// the output, not in the system temp dir, which may be a small tmpfs or a
-// different filesystem than a multi-GB download needs.
-func newMuxWorkDir(dest string) (string, error) {
-	return os.MkdirTemp(dest, ".scraper-yt-")
+// discardStreams empties workDir after ffmpeg rejected its streams, so the
+// retry downloads them afresh instead of feeding ffmpeg the same bytes.
+// A cancelled ffmpeg run says nothing about the streams, so they are kept.
+func discardStreams(ctx context.Context, workDir string) {
+	if ctx.Err() != nil {
+		return
+	}
+	entries, err := os.ReadDir(workDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		_ = os.RemoveAll(filepath.Join(workDir, e.Name()))
+	}
 }
 
-// ffmpeg runs inside a work dir from newMuxWorkDir and only ever sees these
+// ffmpeg runs inside a work dir from streamWorkDir and only ever sees these
 // fixed relative names, so no title, destination, or other outside string
 // reaches its argument list. Inputs carry no extension: ffmpeg probes input
 // containers by content; outputs keep one because it selects the muxer.

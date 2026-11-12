@@ -401,8 +401,11 @@ instead of retrying in a burst. If a host such as a Bunkr CDN node still
 returns many 503s, try `--per-host 1`.
 
 Interrupted direct HTTP downloads retain validated `.part` files and resume
-with Range requests. YouTube streams restart after interruption because the
-YouTube client library does not expose a stable entity validator/range contract.
+with Range requests. YouTube streams also resume, after a retry or in a later
+run: partial streams wait in a hidden `.scraper-yt-*` folder beside the output
+and are reused only if the video, format, size, and last-modified time still
+match. The folder is removed once the video is saved. Delete leftover
+`.scraper-yt-*` folders to discard partial YouTube downloads you no longer want.
 
 ## Supported Sites
 

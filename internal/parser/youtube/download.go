@@ -77,7 +77,7 @@ func (s *Scraper) downloadBest(ctx context.Context, videoID, dest, owner string,
 	return paths.Load(owner), err
 }
 
-func (s *Scraper) downloadAudioOnly(ctx context.Context, video *ytdl.Video, videoFmt, audioFmt *ytdl.Format, title, dest, owner string, paths *fileutil.PathAllocator, limiter *rate.Limiter, skipChecksums bool, audioFormat, identity string, onProgress func(int64, int64)) error {
+func (s *Scraper) downloadAudioOnly(ctx context.Context, video *ytdl.Video, videoFmt, audioFmt *ytdl.Format, title, dest, owner string, paths *fileutil.PathAllocator, limiter *rate.Limiter, skipChecksums bool, audioFormat, identity string, onProgress func(int64, int64)) (err error) {
 	var srcFormat *ytdl.Format
 	if audioFmt != nil {
 		srcFormat = audioFmt
@@ -105,28 +105,26 @@ func (s *Scraper) downloadAudioOnly(ctx context.Context, video *ytdl.Video, vide
 		}
 		return nil
 	}
-	workDir, err := newMuxWorkDir(dest)
+	workDir, err := streamWorkDir(dest, finalPath, identity)
 	if err != nil {
 		return model.NewNonRetryable(err)
 	}
-	defer os.RemoveAll(workDir)
+	defer func() { releaseWorkDir(workDir, err) }()
 
-	if _, err := s.downloadStreamToFileProgress(ctx, video, srcFormat, filepath.Join(workDir, workSource), limiter, func(n, total int64) {
-		if onProgress != nil {
-			onProgress(n, total)
-		}
-	}); err != nil {
+	if _, err = s.downloadStreamToFileProgress(ctx, video, srcFormat, filepath.Join(workDir, workSource), limiter, onProgress); err != nil {
 		return err
 	}
 
 	extracted, err := extractAudio(ctx, workDir, audioFormat, audioCopyable(srcFormat))
 	if err != nil {
+		discardStreams(ctx, workDir)
 		return err
 	}
-	return commitOutputForSource(filepath.Join(workDir, extracted), finalPath, skipChecksums, "", identity)
+	err = commitOutputForSource(filepath.Join(workDir, extracted), finalPath, skipChecksums, "", identity)
+	return err
 }
 
-func (s *Scraper) downloadStreamDirect(ctx context.Context, video *ytdl.Video, format *ytdl.Format, title, dest, owner string, paths *fileutil.PathAllocator, limiter *rate.Limiter, skipChecksums bool, identity string, onProgress func(int64, int64)) error {
+func (s *Scraper) downloadStreamDirect(ctx context.Context, video *ytdl.Video, format *ytdl.Format, title, dest, owner string, paths *fileutil.PathAllocator, limiter *rate.Limiter, skipChecksums bool, identity string, onProgress func(int64, int64)) (err error) {
 	ext := "mp4"
 	if strings.Contains(format.MimeType, "webm") {
 		ext = "webm"
@@ -149,17 +147,22 @@ func (s *Scraper) downloadStreamDirect(ctx context.Context, video *ytdl.Video, f
 		}
 		return nil
 	}
-	tempPath := finalPath + ".part"
-	defer os.Remove(tempPath)
+	workDir, err := streamWorkDir(dest, finalPath, identity)
+	if err != nil {
+		return model.NewNonRetryable(err)
+	}
+	defer func() { releaseWorkDir(workDir, err) }()
 
+	tempPath := filepath.Join(workDir, workSource)
 	checksum, err := s.downloadStreamToFileProgress(ctx, video, format, tempPath, limiter, onProgress)
 	if err != nil {
 		return err
 	}
-	return commitOutputForSource(tempPath, finalPath, skipChecksums, checksum, identity)
+	err = commitOutputForSource(tempPath, finalPath, skipChecksums, checksum, identity)
+	return err
 }
 
-func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFmt, audioFmt *ytdl.Format, title, dest, owner string, paths *fileutil.PathAllocator, limiter *rate.Limiter, skipChecksums bool, identity string, onProgress func(int64, int64)) error {
+func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFmt, audioFmt *ytdl.Format, title, dest, owner string, paths *fileutil.PathAllocator, limiter *rate.Limiter, skipChecksums bool, identity string, onProgress func(int64, int64)) (err error) {
 	outputPath, err := claimYouTubeOutput(paths, safeOutputPath(dest, title), owner, identity)
 	if err != nil {
 		return model.NewNonRetryable(err)
@@ -172,11 +175,11 @@ func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFm
 		return nil
 	}
 
-	tmpDir, err := newMuxWorkDir(dest)
+	tmpDir, err := streamWorkDir(dest, outputPath, identity)
 	if err != nil {
 		return model.NewNonRetryable(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { releaseWorkDir(tmpDir, err) }()
 
 	videoPath := filepath.Join(tmpDir, workVideo)
 	audioPath := filepath.Join(tmpDir, workAudio)
@@ -223,7 +226,7 @@ func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFm
 		}
 	}()
 	wg.Wait()
-	if err := streamPairErr(videoErr, audioErr); err != nil {
+	if err = streamPairErr(videoErr, audioErr); err != nil {
 		return err
 	}
 
@@ -231,10 +234,11 @@ func (s *Scraper) downloadAndMux(ctx context.Context, video *ytdl.Video, videoFm
 	if onProgress != nil {
 		onProgress(combinedTotal-1, combinedTotal)
 	}
-	if err := muxStreams(ctx, tmpDir, audioCopyable(audioFmt)); err != nil {
+	if err = muxStreams(ctx, tmpDir, audioCopyable(audioFmt)); err != nil {
+		discardStreams(ctx, tmpDir)
 		return err
 	}
-	if err := commitOutputForSource(filepath.Join(tmpDir, workMuxed), outputPath, skipChecksums, "", identity); err != nil {
+	if err = commitOutputForSource(filepath.Join(tmpDir, workMuxed), outputPath, skipChecksums, "", identity); err != nil {
 		return err
 	}
 
@@ -256,23 +260,29 @@ func streamPairErr(videoErr, audioErr error) error {
 	return nil
 }
 
-func (s *Scraper) downloadStreamToFileProgress(ctx context.Context, video *ytdl.Video, format *ytdl.Format, path string, limiter *rate.Limiter, onProgress func(int64, int64)) (string, error) {
-	s.videoMu.Lock()
-	stream, size, err := s.video.GetStreamContext(ctx, video, format)
-	s.videoMu.Unlock()
-	if err != nil {
-		return "", err
-	}
-	defer stream.Close()
-	return copyStreamToFile(ctx, stream, size, path, limiter, onProgress)
-}
-
 // copyStreamToFile writes stream to path, reporting progress along the way.
 // When size > 0 the stream must deliver exactly that many bytes: a stream
 // that ends early (io.EOF before size bytes) is rejected as truncated so a
 // partial file can never be committed and blessed with a checksum sidecar.
 func copyStreamToFile(ctx context.Context, stream io.Reader, size int64, path string, limiter *rate.Limiter, onProgress func(int64, int64)) (string, error) {
-	f, err := fileutil.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	return copyStreamToFileFrom(ctx, stream, 0, size, path, limiter, onProgress)
+}
+
+// copyStreamToFileFrom appends stream to the first offset bytes already in
+// path (offset 0 truncates). The returned checksum covers the whole file.
+func copyStreamToFileFrom(ctx context.Context, stream io.Reader, offset, size int64, path string, limiter *rate.Limiter, onProgress func(int64, int64)) (string, error) {
+	hasher := sha256.New()
+	flag := os.O_CREATE | os.O_WRONLY | os.O_TRUNC
+	if offset > 0 {
+		if err := hashFilePrefix(path, offset, hasher); err != nil {
+			return "", model.NewNonRetryable(err)
+		}
+		flag = os.O_WRONLY | os.O_APPEND
+		if onProgress != nil {
+			onProgress(offset, size)
+		}
+	}
+	f, err := fileutil.OpenFile(path, flag, 0644)
 	if err != nil {
 		// Local filesystem failures are permanent — a retry can't make
 		// the destination writable.
@@ -286,8 +296,7 @@ func copyStreamToFile(ctx context.Context, stream io.Reader, size int64, path st
 		}
 	}()
 
-	var read int64
-	hasher := sha256.New()
+	read := offset
 	reader := io.TeeReader(stream, hasher)
 	buf := make([]byte, 512*1024)
 	for {
