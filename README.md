@@ -60,7 +60,9 @@ The GUI also opens the output folder, reveals finished files, and copies
 item URLs.
 
 To build it yourself you need Node.js `^22.22.2 || ^24.15.0 || >=26.0.0`
-(`gui/frontend/.nvmrc` pins 24; npm refuses older versions), the
+(`gui/frontend/.nvmrc` pins 24; pnpm refuses older versions),
+[pnpm](https://pnpm.io/installation) (the version is pinned by
+`packageManager` in `gui/frontend/package.json`; `npm i -g pnpm@12.18.0`), the
 [Wails v2 CLI](https://wails.io/docs/gettingstarted/installation), and on
 Linux `libgtk-3-dev libwebkit2gtk-4.1-dev`:
 
@@ -446,7 +448,7 @@ go test ./...
 The GUI is a separate Go module in `gui/` (so the CLI stays CGO-free):
 
 ```bash
-cd gui/frontend && npm ci && npm run check && npm test && npm run build
+cd gui/frontend && pnpm install --frozen-lockfile && pnpm run check && pnpm test && pnpm run build
 cd .. && go test ./...
 wails generate module   # after changing the bound backend API
 ```
