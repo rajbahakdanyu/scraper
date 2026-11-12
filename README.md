@@ -56,7 +56,8 @@ keys are kept).
 The GUI also opens the output folder, reveals finished files, and copies
 item URLs.
 
-To build it yourself you need Node.js 24.15 or later in the 24.x series, the
+To build it yourself you need Node.js `^22.22.2 || ^24.15.0 || >=26.0.0`
+(`gui/frontend/.nvmrc` pins 24; npm refuses older versions), the
 [Wails v2 CLI](https://wails.io/docs/gettingstarted/installation), and on
 Linux `libgtk-3-dev libwebkit2gtk-4.1-dev`:
 
