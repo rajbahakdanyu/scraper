@@ -37,6 +37,7 @@ type Downloader struct {
 	skipChecksums bool
 	paths         *fileutil.PathAllocator
 	sleeper       netutil.Sleeper
+	hosts         *hostGate
 }
 
 // NewDownloaderWithConfig creates a Downloader using settings from a config.
@@ -67,6 +68,7 @@ func NewDownloaderWithConfig(concurrency int, timeout time.Duration, userAgent, 
 		userAgent: userAgent,
 		paths:     fileutil.NewPathAllocator(),
 		sleeper:   netutil.RealSleeper{},
+		hosts:     newHostGate(0),
 	}, nil
 }
 
@@ -76,6 +78,13 @@ func (d *Downloader) SetSleeper(s netutil.Sleeper) { d.sleeper = s }
 
 func (d *Downloader) Prepare(item model.MediaItem) {
 	d.Core.Prepare(item.Key())
+}
+
+// SetPerHostLimit caps simultaneous requests to any one host (n <= 0
+// removes the cap; the default). Call this before starting downloads, not
+// concurrently with them.
+func (d *Downloader) SetPerHostLimit(n int) {
+	d.hosts = newHostGate(n)
 }
 
 // SetRateLimit caps the combined download speed across all concurrent
@@ -205,6 +214,7 @@ func (d *Downloader) Download(item model.MediaItem, dest string) (string, error)
 		resolvedURL = ""
 	}
 	reResolved := false
+	var waivedCooldown time.Time
 
 	var lastErr error
 	var checksum string
@@ -218,7 +228,17 @@ func (d *Downloader) Download(item model.MediaItem, dest string) (string, error)
 			}
 			resolvedURL = u
 		}
+		host := hostKey(resolvedURL)
+		releaseHost, err := d.hosts.acquire(ctx, host, waivedCooldown, d.sleeper)
+		if err != nil {
+			return err
+		}
 		attemptChecksum, err := d.downloadOnce(ctx, item, resolvedURL, tempPath)
+		releaseHost()
+		var statusErr *model.HTTPStatusError
+		if errors.As(err, &statusErr) && (statusErr.StatusCode == http.StatusTooManyRequests || statusErr.StatusCode == http.StatusServiceUnavailable) {
+			waivedCooldown = d.hosts.penalize(host, max(statusErr.Delay, netutil.BackoffWithJitter(netutil.RetryBaseDelay, attempts-1)))
+		}
 		if err == nil {
 			checksum = attemptChecksum
 			return nil

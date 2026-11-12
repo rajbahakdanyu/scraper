@@ -17,9 +17,14 @@ import (
 
 const DefaultUserAgent = "Scraper/1.0"
 
+// DefaultPerHostConcurrency keeps a run from opening more than this many
+// simultaneous downloads to one CDN node, which some hosts answer with 503s.
+const DefaultPerHostConcurrency = 2
+
 type Config struct {
 	OutputDir           string        `yaml:"output_dir"`
 	ConcurrentDownloads int           `yaml:"concurrent_downloads"`
+	PerHostConcurrency  int           `yaml:"per_host_concurrency"` // 0 = no per-server cap
 	Timeout             time.Duration `yaml:"timeout"`
 	UserAgent           string        `yaml:"user_agent"`
 	// RateLimit caps the combined download speed across all concurrent
@@ -168,6 +173,7 @@ func defaultConfig() *Config {
 	return &Config{
 		OutputDir:           defaultOutputDir(),
 		ConcurrentDownloads: 3,
+		PerHostConcurrency:  DefaultPerHostConcurrency,
 		Timeout:             30 * time.Second,
 		UserAgent:           DefaultUserAgent,
 		RateLimit:           "",

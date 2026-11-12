@@ -235,6 +235,7 @@ per URL — same as albums).
 | `-u, --url`      | (none)  | Content URL (alternative to positional arg; subcommand-only) |
 | `-o, --output`   | `~/Downloads` | Output directory (config default)                   |
 | `--concurrent`   | `3`     | Maximum concurrent downloads                 |
+| `--per-host`     | `2`     | Maximum concurrent downloads from one server (`0` = no limit) |
 | `--config`       | (none)  | Config file path (default: `~/.scraper.yaml`)|
 | `-i, --input-file`| (none) | Read URLs from a file, one per line (batch mode); an optional tab-separated album URL per line keeps retries in the album folder |
 | `--limit-rate`   | (none)  | Cap total download speed (e.g. `500K`, `2M`, `1G`); unlimited by default |
@@ -333,6 +334,8 @@ original album folder, so retried files land next to the rest of the album:
 
     ./scraper --input-file ~/Downloads/scraper-failed-20260926-060900.txt
 
+Many 503s from one host mean it is overloaded; retry with `--per-host 1`.
+
 Single-URL lines still work (extension exports, hand-written lists) and
 download to the URL's own folder; lines starting with `#` are comments.
 Items that have no page of their own (goonbox's direct image links, for
@@ -356,6 +359,7 @@ A YAML config file can be placed at `~/.scraper.yaml`:
 ```yaml
 output_dir: ~/Downloads
 concurrent_downloads: 10
+per_host_concurrency: 2  # per server; 0 = no limit
 timeout: 30s
 user_agent: "Scraper/1.0"
 rate_limit: 2M
@@ -389,6 +393,12 @@ verifies the existing file and redownloads it if the sidecar no longer
 matches (a corrupted file) instead of trusting it as-is.
 `rate_limit`/`--limit-rate` caps the *combined* speed across all concurrent
 downloads, not each one individually.
+
+`per_host_concurrency`/`--per-host` caps how many of those downloads hit the
+same server (CDN node) at once. When a server answers 429 or 503, every
+download from it pauses for the `Retry-After` time (or the retry backoff)
+instead of retrying in a burst. If a host such as a Bunkr CDN node still
+returns many 503s, try `--per-host 1`.
 
 Interrupted direct HTTP downloads retain validated `.part` files and resume
 with Range requests. YouTube streams restart after interruption because the

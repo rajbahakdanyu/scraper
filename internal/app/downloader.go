@@ -51,6 +51,7 @@ func BuildDownloader(scraper model.Scraper, siteName string, cfg *config.Config,
 		return nil, fmt.Errorf("downloader: %w", err)
 	}
 	dl.SetRateLimit(rateLimitBytesPerSec)
+	dl.SetPerHostLimit(cfg.PerHostConcurrency)
 	dl.SetSkipChecksums(!cfg.Checksums)
 	return dl, nil
 }

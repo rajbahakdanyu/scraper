@@ -280,6 +280,7 @@ export namespace backend {
 	export class Settings {
 	    outputDir: string;
 	    concurrency: number;
+	    perHost: number;
 	    rateLimit: string;
 	    checksums: boolean;
 	    proxy: string;
@@ -309,6 +310,7 @@ export namespace backend {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.outputDir = source["outputDir"];
 	        this.concurrency = source["concurrency"];
+	        this.perHost = source["perHost"];
 	        this.rateLimit = source["rateLimit"];
 	        this.checksums = source["checksums"];
 	        this.proxy = source["proxy"];

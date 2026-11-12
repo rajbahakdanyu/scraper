@@ -17,6 +17,8 @@ type globalOptions struct {
 	outputSet             bool
 	concurrency           int
 	concurrencySet        bool
+	perHost               int
+	perHostSet            bool
 	rateLimit             string
 	rateLimitSet          bool
 	checksums             bool
@@ -74,6 +76,9 @@ func loadGlobalConfig(opts globalOptions) (*config.Config, error) {
 	}
 	if opts.concurrencySet {
 		cfg.ConcurrentDownloads = opts.concurrency
+	}
+	if opts.perHostSet {
+		cfg.PerHostConcurrency = opts.perHost
 	}
 	if opts.rateLimitSet {
 		cfg.RateLimit = opts.rateLimit
@@ -155,6 +160,10 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 		return globalOptions{}, err
 	}
 	concurrency, err := flags.GetInt("concurrent")
+	if err != nil {
+		return globalOptions{}, err
+	}
+	perHost, err := flags.GetInt("per-host")
 	if err != nil {
 		return globalOptions{}, err
 	}
@@ -264,6 +273,8 @@ func globalOptionsFromCommand(cmd *cobra.Command) (globalOptions, error) {
 		outputSet:             flags.Changed("output"),
 		concurrency:           concurrency,
 		concurrencySet:        flags.Changed("concurrent"),
+		perHost:               perHost,
+		perHostSet:            flags.Changed("per-host"),
 		rateLimit:             rateLimit,
 		rateLimitSet:          flags.Changed("limit-rate"),
 		checksums:             checksums,

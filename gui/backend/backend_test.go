@@ -297,6 +297,11 @@ func TestSettingsSaveAndValidate(t *testing.T) {
 		t.Fatal("concurrency 0 must be rejected")
 	}
 	s.Concurrency = 5
+	s.PerHost = -1
+	if err := a.ApplySettings(s); err == nil {
+		t.Fatal("a negative per-server limit must be rejected")
+	}
+	s.PerHost = 0
 	s.Quality, s.AudioOnly = "720p", "m4a"
 	if err := a.ApplySettings(s); err == nil {
 		t.Fatal("quality and audio-only together must be rejected")
@@ -315,7 +320,7 @@ func TestSettingsSaveAndValidate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ConcurrentDownloads != 5 || cfg.Quality != "720p" || cfg.ScrapeDelay != 250*time.Millisecond || len(cfg.Include) != 1 {
+	if cfg.ConcurrentDownloads != 5 || cfg.PerHostConcurrency != 0 || cfg.Quality != "720p" || cfg.ScrapeDelay != 250*time.Millisecond || len(cfg.Include) != 1 {
 		t.Fatalf("saved config = %+v", cfg)
 	}
 	reloaded, err := a.ReloadSettings()

@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/rajbahakdanyu/scraper/internal/config"
 	"github.com/rajbahakdanyu/scraper/internal/model"
 )
 
@@ -91,6 +92,7 @@ func NewRootCmd() *cobra.Command {
 	root.PersistentFlags().String("config", "", "Config file path (default: ~/.scraper.yaml)")
 	root.PersistentFlags().StringP("output", "o", "", "Output directory (default: ~/Downloads)")
 	root.PersistentFlags().Int("concurrent", 3, "Maximum concurrent downloads")
+	root.PersistentFlags().Int("per-host", config.DefaultPerHostConcurrency, "Maximum concurrent downloads from one server (0 = no limit)")
 	root.PersistentFlags().String("limit-rate", "", "Cap total download speed (e.g. 500K, 2M, 1G; default: unlimited)")
 	root.PersistentFlags().Bool("checksums", false, "Write and verify .sha256 checksum sidecar files (default: off)")
 	root.PersistentFlags().BoolP("dry-run", "n", false, "List items and total size without downloading anything")

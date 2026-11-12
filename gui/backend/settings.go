@@ -16,6 +16,7 @@ import (
 type Settings struct {
 	OutputDir          string   `json:"outputDir"`
 	Concurrency        int      `json:"concurrency"`
+	PerHost            int      `json:"perHost"`
 	RateLimit          string   `json:"rateLimit"`
 	Checksums          bool     `json:"checksums"`
 	Proxy              string   `json:"proxy"`
@@ -51,6 +52,7 @@ func settingsFromConfig(c *config.Config) Settings {
 	return Settings{
 		OutputDir:          c.OutputDir,
 		Concurrency:        c.ConcurrentDownloads,
+		PerHost:            c.PerHostConcurrency,
 		RateLimit:          c.RateLimit,
 		Checksums:          c.Checksums,
 		Proxy:              c.Proxy,
@@ -86,6 +88,7 @@ func (s Settings) apply(c *config.Config) error {
 	}
 	c.OutputDir = strings.TrimSpace(s.OutputDir)
 	c.ConcurrentDownloads = s.Concurrency
+	c.PerHostConcurrency = s.PerHost
 	c.RateLimit = strings.TrimSpace(s.RateLimit)
 	c.Checksums = s.Checksums
 	c.Proxy = strings.TrimSpace(s.Proxy)

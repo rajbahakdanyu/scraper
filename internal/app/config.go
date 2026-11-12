@@ -26,6 +26,9 @@ func FinalizeConfig(cfg *config.Config) error {
 	if cfg.ConcurrentDownloads < 1 || cfg.ConcurrentDownloads > 256 {
 		return fmt.Errorf("invalid --concurrent %d (must be between 1 and 256)", cfg.ConcurrentDownloads)
 	}
+	if cfg.PerHostConcurrency < 0 || cfg.PerHostConcurrency > 256 {
+		return fmt.Errorf("invalid --per-host %d (must be between 0 and 256; 0 = no limit)", cfg.PerHostConcurrency)
+	}
 	if cfg.Quality != "" && cfg.AudioOnly != "" {
 		return fmt.Errorf("cannot use --quality and --audio-only together")
 	}

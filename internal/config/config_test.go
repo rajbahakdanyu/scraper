@@ -172,6 +172,9 @@ func TestLoadConfigOmittingDiskCheckKeepsDefault(t *testing.T) {
 	if cfg.ConcurrentDownloads != 3 {
 		t.Errorf("concurrent_downloads omitted must keep default 3, got %d", cfg.ConcurrentDownloads)
 	}
+	if cfg.PerHostConcurrency != DefaultPerHostConcurrency {
+		t.Errorf("per_host_concurrency omitted must keep default %d, got %d", DefaultPerHostConcurrency, cfg.PerHostConcurrency)
+	}
 }
 
 func TestLoadExplicitMissingConfigErrors(t *testing.T) {

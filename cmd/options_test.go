@@ -203,6 +203,24 @@ func TestLoadGlobalConfigRejectsUnreasonableConcurrency(t *testing.T) {
 	}
 }
 
+func TestLoadGlobalConfigPerHostOverride(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cfg.yaml")
+	if err := os.WriteFile(path, []byte("per_host_concurrency: 4\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadGlobalConfig(globalOptions{configPath: path})
+	if err != nil || cfg.PerHostConcurrency != 4 {
+		t.Fatalf("config per_host_concurrency = %v, %v; want 4", cfg, err)
+	}
+	cfg, err = loadGlobalConfig(globalOptions{configPath: path, perHost: 0, perHostSet: true})
+	if err != nil || cfg.PerHostConcurrency != 0 {
+		t.Fatalf("--per-host 0 (no limit) = %v, %v; want 0", cfg, err)
+	}
+	if _, err := loadGlobalConfig(globalOptions{configPath: path, perHost: -1, perHostSet: true}); err == nil {
+		t.Fatal("expected an error for --per-host -1")
+	}
+}
+
 func TestExpandHomePath(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

@@ -84,6 +84,7 @@
         <span class="row"><input class="grow" type="text" bind:value={s.outputDir} /><button onclick={() => pick(ChooseOutputDir, (v) => (s!.outputDir = v))}>Choose…</button></span>
       </label>
       <label>Concurrent downloads <input type="number" min="1" max="256" bind:value={s.concurrency} /></label>
+      <label title="0 = no limit">Downloads per server <input type="number" min="0" max="256" bind:value={s.perHost} /></label>
       <label>Speed limit <input type="text" bind:value={s.rateLimit} placeholder="unlimited (e.g. 500K, 2M)" /></label>
       <label class="check"><input type="checkbox" bind:checked={s.checksums} /> Write and verify .sha256 checksum files</label>
       <label class="check"><input type="checkbox" bind:checked={s.diskCheck} /> Warn when free disk space is short</label>
