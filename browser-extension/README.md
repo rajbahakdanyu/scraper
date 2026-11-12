@@ -7,10 +7,12 @@ domain as `--input-file` lists in your Downloads folder.
 
 1. Open `about:debugging#/runtime/this-firefox`.
 2. Click **Load Temporary Add-on…**.
-3. Select `browser-extension/manifest.json`.
+3. Select `browser-extension/manifest.json`, or the unsigned
+   `scraper-tab-export-<version>.xpi` attached to each GitHub release.
 
 The add-on stays loaded until Firefox restarts. This is fine for personal
-use; there is no build step and no packaging.
+use; there is no build step. The release workflow packages the `.xpi` from
+this folder, so it is not committed.
 
 ## Use
 

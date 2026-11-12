@@ -31,3 +31,11 @@ go.work.sum
 scraper-tabs*.txt
 scraper-youtube*.txt
 scraper-failed-*.txt
+
+# Personal AI-tool settings
+/opencode.json
+/tui.json
+/.opencodeignore
+
+# Packaged browser extension (built by the release workflow)
+*.xpi
