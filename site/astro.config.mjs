@@ -1,5 +1,6 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
+import { readFileSync } from 'node:fs';
 import starlight from '@astrojs/starlight';
 
 const repo = 'https://github.com/rajbahakdanyu/scraper';
@@ -19,6 +20,12 @@ export default defineConfig({
 			editLink: { baseUrl: `${repo}/edit/main/site/` },
 			lastUpdated: true,
 			customCss: ['./src/styles/custom.css'],
+			head: [
+				{
+					tag: 'script',
+					content: readFileSync(new URL('./src/scripts/header.js', import.meta.url), 'utf8'),
+				},
+			],
 			sidebar: [
 				{
 					label: 'Getting started',

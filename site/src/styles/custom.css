@@ -31,15 +31,49 @@
 	--scraper-glow: hsla(243, 75%, 58%, 0.18);
 }
 
+/* Header: frosted background, hidden while scrolling down. */
+header.header {
+	background-color: color-mix(in srgb, var(--sl-color-bg-nav) 82%, transparent);
+	-webkit-backdrop-filter: blur(12px) saturate(1.5);
+	backdrop-filter: blur(12px) saturate(1.5);
+	border-bottom-color: var(--sl-color-gray-5);
+	box-shadow: 0 0.5rem 1.5rem -1rem hsla(236, 40%, 5%, 0.6);
+}
+:root[data-theme='light'] header.header {
+	box-shadow: 0 0.5rem 1.5rem -1rem hsla(236, 40%, 30%, 0.25);
+}
+header.header,
+.sl-menu-button,
+mobile-starlight-toc nav {
+	transition: transform 0.25s ease;
+}
+:root[data-header-hidden] header.header,
+:root[data-header-hidden] .sl-menu-button {
+	transform: translateY(calc(-1 * var(--sl-nav-height) - 1rem));
+}
+:root[data-header-hidden] mobile-starlight-toc nav {
+	transform: translateY(calc(1px - var(--sl-nav-height)));
+}
+@media (min-width: 50rem) {
+	.sidebar-pane {
+		transition: inset-block-start 0.25s ease;
+	}
+	.right-sidebar {
+		transition: padding-top 0.25s ease;
+	}
+	:root[data-header-hidden] .sidebar-pane {
+		inset-block-start: 0;
+	}
+	:root[data-header-hidden] .right-sidebar {
+		padding-top: 0;
+	}
+}
+
 /* Landing page */
 [data-has-hero] .page {
 	background:
 		radial-gradient(ellipse 70% 40rem at 70% -10rem, var(--scraper-glow), transparent),
 		var(--sl-color-black);
-}
-[data-has-hero] header.header {
-	background-color: transparent;
-	border-bottom-color: transparent;
 }
 .hero {
 	padding-block: clamp(2rem, 6vw, 5rem) 0;
@@ -183,6 +217,11 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+	header.header,
+	.sl-menu-button,
+	mobile-starlight-toc nav,
+	.sidebar-pane,
+	.right-sidebar,
 	.sites a,
 	.card {
 		transition: none;
