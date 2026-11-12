@@ -27,12 +27,12 @@
 <div class="shell">
   <header class="row">
     <span class="logo">◢◤ SCRAPER ◢◤</span>
-    <nav class="row">
-      <button class:active={ui.view === 'home' || ui.view === 'preview'} onclick={() => (ui.view = 'home')}>Download</button>
-      <button class:active={ui.view === 'run'} disabled={!ui.run} onclick={() => (ui.view = 'run')}>
+    <nav class="row" aria-label="Main navigation">
+      <button class:active={ui.view === 'home' || ui.view === 'preview'} aria-current={ui.view === 'home' || ui.view === 'preview' ? 'page' : undefined} onclick={() => (ui.view = 'home')}>Download</button>
+      <button class:active={ui.view === 'run'} aria-current={ui.view === 'run' ? 'page' : undefined} disabled={!ui.run} onclick={() => (ui.view = 'run')}>
         Run{#if ui.run?.running}<span class="dot"></span>{/if}
       </button>
-      <button class:active={ui.view === 'settings'} onclick={() => (ui.view = 'settings')}>Settings</button>
+      <button class:active={ui.view === 'settings'} aria-current={ui.view === 'settings' ? 'page' : undefined} onclick={() => (ui.view = 'settings')}>Settings</button>
     </nav>
     <span class="grow"></span>
     <button onclick={toggleNotices} title="Warnings from scrapes and filters">
@@ -102,6 +102,32 @@
   nav button.active {
     border-color: var(--accent);
     color: var(--accent);
+  }
+  @media (max-width: 520px) {
+    header {
+      padding: 8px;
+      gap: 5px;
+    }
+    .logo {
+      font-size: 11px;
+      letter-spacing: 0;
+      margin-right: 2px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    nav {
+      gap: 2px;
+    }
+    nav button,
+    header > button {
+      padding: 5px 7px;
+      font-size: 12px;
+    }
+  }
+  @media (max-width: 380px) {
+    .logo {
+      display: none;
+    }
   }
   .dot {
     display: inline-block;

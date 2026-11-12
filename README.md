@@ -72,7 +72,9 @@ wails build                    # Linux: wails build -tags webkit2_41
 ```
 
 `wails dev` (in `gui/`) runs it with hot reload and also serves the UI at
-<http://localhost:34115> with live Go bindings.
+<http://localhost:34115> with live Go bindings. The Vite-only URL (usually
+port 5173) lacks those bindings, so site detection and downloads won't work
+there.
 
 ## Usage
 
