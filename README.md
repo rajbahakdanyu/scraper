@@ -487,6 +487,18 @@ and fetches YouTube at 360p. The `Live site checks` workflow runs it nightly
 (and on demand) with the same names set as repository **variables**; a failed
 nightly run opens or comments on a `live-check` issue.
 
+### Releasing
+
+Run **Actions → Release → Run workflow** on `main` (or
+`gh workflow run release.yml`). The version is bumped from the
+[Conventional Commits](https://www.conventionalcommits.org) since the last
+`vX.Y.Z` tag: `type!:` or a `BREAKING CHANGE:` footer is major, `feat:` is
+minor, anything else is patch. Pick `patch`/`minor`/`major` to override it.
+The CLI, GUI, and browser extension are all stamped with that version and
+built first; the tag and release (with generated notes) are created only once
+every build succeeds. **Dry run** builds everything and attaches it to the run
+as artifacts without tagging or publishing.
+
 ### Signing releases
 
 The release workflow signs the GUI only for platforms whose credentials are
