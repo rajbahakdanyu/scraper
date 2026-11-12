@@ -32,9 +32,10 @@ go install github.com/rajbahakdanyu/scraper/cmd/scraper@latest
 `scraper-gui` is a desktop app ([Wails](https://wails.io) + Svelte) built on
 the same scraping, download, and run-state code as the TUI. Release builds
 for macOS (universal), Windows, and Linux are attached to each
-[release](https://github.com/rajbahakdanyu/scraper/releases). They are
-unsigned: on macOS, right-click the app and choose **Open** the first time;
-on Windows, choose **More info → Run anyway**. Linux needs the WebKitGTK 4.1
+[release](https://github.com/rajbahakdanyu/scraper/releases). Unless a
+release says it is signed, the builds are unsigned: on macOS, right-click the
+app and choose **Open** the first time; on Windows, choose **More info → Run
+anyway**. Linux needs the WebKitGTK 4.1
 runtime (`libwebkit2gtk-4.1-0` on Debian/Ubuntu).
 
 The GUI reads and writes the same `~/.scraper.yaml` as the CLI. Settings can
@@ -470,3 +471,17 @@ It picks each album's smallest item up to `LIVE_MAX_BYTES` (default 200 MiB)
 and fetches YouTube at 360p. The `Live site checks` workflow runs it nightly
 (and on demand) with the same names set as repository **variables**; a failed
 nightly run opens or comments on a `live-check` issue.
+
+### Signing releases
+
+The release workflow signs the GUI only for platforms whose credentials are
+configured in the repository settings; without them it publishes unsigned
+builds, as before.
+
+| Platform | Secrets | Variables |
+| --- | --- | --- |
+| macOS (sign) | `MACOS_CERTIFICATE_P12` (base64 Developer ID Application `.p12`), `MACOS_CERTIFICATE_PASSWORD`, `MACOS_SIGN_IDENTITY` (e.g. `Developer ID Application: Name (TEAMID)`) | |
+| macOS (notarize) | `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_PASSWORD` (app-specific password) | |
+| Windows ([Artifact Signing](https://learn.microsoft.com/azure/artifact-signing/)) | `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` | `AZURE_SIGNING_ENDPOINT`, `AZURE_SIGNING_ACCOUNT`, `AZURE_CERTIFICATE_PROFILE` |
+
+Notarization runs only after signing succeeds. The CLI binaries stay unsigned.

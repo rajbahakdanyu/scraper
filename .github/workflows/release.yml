@@ -153,6 +153,78 @@ jobs:
           if [ -n "$TAGS" ]; then tags=(-tags "$TAGS"); fi
           wails build -clean -trimpath -platform "$PLATFORM" "${tags[@]}"
 
+      # Signing is optional: each platform signs only when its credentials
+      # are configured, so forks and unsigned releases keep working.
+      - name: Check signing credentials
+        id: signing
+        env:
+          MACOS: ${{ secrets.MACOS_CERTIFICATE_P12 != '' && secrets.MACOS_CERTIFICATE_PASSWORD != '' && secrets.MACOS_SIGN_IDENTITY != '' }}
+          NOTARIZE: ${{ secrets.APPLE_ID != '' && secrets.APPLE_TEAM_ID != '' && secrets.APPLE_APP_PASSWORD != '' }}
+          WINDOWS: ${{ secrets.AZURE_TENANT_ID != '' && secrets.AZURE_CLIENT_ID != '' && secrets.AZURE_CLIENT_SECRET != '' && vars.AZURE_SIGNING_ENDPOINT != '' && vars.AZURE_SIGNING_ACCOUNT != '' && vars.AZURE_CERTIFICATE_PROFILE != '' }}
+        run: |
+          {
+            echo "macos=$MACOS"
+            echo "notarize=$NOTARIZE"
+            echo "windows=$WINDOWS"
+          } >> "$GITHUB_OUTPUT"
+          if { [ "$RUNNER_OS" = macOS ] && [ "$MACOS" != true ]; } || { [ "$RUNNER_OS" = Windows ] && [ "$WINDOWS" != true ]; }; then
+            echo "::notice::No signing credentials for $RUNNER_OS; publishing an unsigned build."
+          fi
+
+      - name: Sign (macOS)
+        if: runner.os == 'macOS' && steps.signing.outputs.macos == 'true'
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+          cert="$RUNNER_TEMP/certificate.p12"
+          trap 'rm -f "$cert"' EXIT
+          printf '%s' "$MACOS_CERTIFICATE_P12" | base64 --decode > "$cert"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$cert" -k "$keychain" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -k "$keychain_password" "$keychain" > /dev/null
+          codesign --force --options runtime --timestamp --keychain "$keychain" \
+            --sign "$MACOS_SIGN_IDENTITY" build/bin/scraper-gui.app
+          codesign --verify --strict --verbose=2 build/bin/scraper-gui.app
+
+      - name: Notarize (macOS)
+        if: runner.os == 'macOS' && steps.signing.outputs.macos == 'true' && steps.signing.outputs.notarize == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          submission="$RUNNER_TEMP/notarize.zip"
+          ditto -c -k --keepParent build/bin/scraper-gui.app "$submission"
+          xcrun notarytool submit "$submission" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" --wait --timeout 30m
+          # Fails unless Apple accepted the submission.
+          xcrun stapler staple build/bin/scraper-gui.app
+          spctl --assess --type execute --verbose=2 build/bin/scraper-gui.app
+
+      - name: Remove signing keychain
+        if: always() && runner.os == 'macOS'
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
+
+      - name: Sign (Windows)
+        if: runner.os == 'Windows' && steps.signing.outputs.windows == 'true'
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_CERTIFICATE_PROFILE }}
+          files: ${{ github.workspace }}\gui\build\bin\scraper-gui.exe
+          file-digest: SHA256
+          timestamp-digest: SHA256
+
       - name: Package
         run: |
           mkdir -p ../dist
